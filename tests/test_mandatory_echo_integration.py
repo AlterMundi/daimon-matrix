@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.daemon import _run_egress_worker
+from daimon_matrix.mandatory_echo import ConversationJournalTransport
 from daimon_matrix.messaging_config import BINDING_DOMAIN, verify_public_binding
 from daimon_matrix.native_egress import (
     MandatoryEgressController,
@@ -247,6 +248,77 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
         ]
         document["policy"]["acceptance_digest"] = self._digest(acceptance)
         return document
+
+    def _portable_document(self) -> dict[str, Any]:
+        document = copy.deepcopy(self.document)
+        document["schema"] = "dm.messaging.visibility-installation/v2"
+        publication = {
+            "kind": "conversation-journal/v1",
+            "surface_ref": "fixture:general-conversation",
+            "audience": ["human:fixture"],
+            "receipt_key": b64url(self.owner_key.public_key().public_bytes_raw()),
+        }
+        disclosure = document["disclosure"]
+        disclosure["schema"] = "dm.messaging.visibility-disclosure/v2"
+        disclosure["destination"] = {
+            "publication": publication,
+            "representation": "plain-json/v2",
+        }
+        disclosure["risk"] = (
+            "all-inter-daimon-communication-will-be-published-as-plaintext-to-the-fixed-conversation-audience"
+        )
+        acceptance = document["acceptance_set"]
+        acceptance["disclosure_sha256"] = self._digest(disclosure)
+        acceptance["bindings"] = [
+            self._binding(p, disclosure) for p in disclosure["participants"]
+        ]
+        policy = document["policy"]
+        for name in ("bot_id", "chat_id", "topic_id"):
+            del policy[name]
+        policy["schema"] = "daimon-visibility-policy/v3"
+        policy["publication"] = copy.deepcopy(publication)
+        policy["acceptance_digest"] = self._digest(acceptance)
+        document["secrets"] = {"proof_key_file": "echo-proof.key"}
+        del document["telegram_qualification"]
+        document["publication_backend"] = {
+            "kind": "owner-unix/v1",
+            "socket_path": str(self.root / "app.sock"),
+        }
+        return document
+
+    def test_portable_signed_installation_loads_offline_without_telegram(self) -> None:
+        (self.root / "telegram.token").unlink()
+        with patch.object(
+            ConversationJournalTransport,
+            "_exchange",
+            side_effect=AssertionError("offline load must not contact App"),
+        ):
+            controller = self._load(self._portable_document())
+        self.assertIsInstance(controller._transport, ConversationJournalTransport)
+        self.assertFalse(controller.mirror_sibling_conversations)
+
+    def test_portable_installation_refuses_changed_scope_secret_or_backend(
+        self,
+    ) -> None:
+        for field in ("audience", "backend", "relative", "telegram", "missing-proof"):
+            document = self._portable_document()
+            if field == "audience":
+                document["policy"]["publication"]["audience"] = ["human:other"]
+            elif field == "backend":
+                document["publication_backend"]["kind"] = "arbitrary-executor"
+            elif field == "relative":
+                document["publication_backend"]["socket_path"] = "relative.sock"
+            elif field == "telegram":
+                document["secrets"]["telegram_token_file"] = "telegram.token"
+            else:
+                document["secrets"]["proof_key_file"] = "missing.key"
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(
+                    NativeEgressError, "egress_installation_invalid"
+                ),
+            ):
+                self._load(document)
 
     def test_sibling_mirror_requires_signed_scope_and_acceptances(
         self,

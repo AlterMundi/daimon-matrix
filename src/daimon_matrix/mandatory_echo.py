@@ -11,7 +11,11 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import socket
 import sqlite3
+import stat
+import struct
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -70,6 +74,112 @@ class RetryDecision:
 
 class EchoTransport(Protocol):
     def send(self, request: dict[str, Any]) -> bytes: ...
+
+
+class ConversationJournalTransport:
+    """Connect-only typed adapter to the existing owner-local App control socket.
+
+    Its path is pinned by the signed native installation. It starts no service,
+    executes no command line and has no model-facing general control operation.
+    """
+
+    def __init__(self, path: Path) -> None:
+        if not path.is_absolute() or len(str(path).encode()) > 107:
+            raise EchoError("echo_publication_backend_invalid")
+        self.path = path
+
+    def _exchange(self, command: str, deadline_ns: int) -> dict[str, Any]:
+        try:
+            metadata = self.path.lstat()
+            if (
+                not stat.S_ISSOCK(metadata.st_mode)
+                or metadata.st_uid != os.geteuid()
+                or metadata.st_mode & 0o077
+            ):
+                raise ValueError
+            envelope = (
+                _json({"command": command, "nonce": str(uuid.uuid4())}).encode() + b"\n"
+            )
+            if len(envelope) > 262144:
+                raise ValueError
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+
+                def remaining() -> None:
+                    seconds = (deadline_ns - time.monotonic_ns()) / 1e9
+                    if seconds <= 0:
+                        raise TimeoutError
+                    stream.settimeout(seconds)
+
+                remaining()
+                stream.connect(str(self.path))
+                credentials = stream.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, 12
+                )
+                if struct.unpack("3i", credentials)[1] != os.geteuid():
+                    raise ValueError
+                remaining()
+                stream.sendall(envelope)
+                raw = bytearray()
+                while not raw.endswith(b"\n"):
+                    remaining()
+                    chunk = stream.recv(min(65536, 262145 - len(raw)))
+                    if not chunk:
+                        raise ValueError
+                    raw.extend(chunk)
+                    if len(raw) > 262144:
+                        raise ValueError
+            value = json.loads(raw)
+            if not isinstance(value, dict) or value.get("ok") is not True:
+                raise ValueError
+            result = value["result"]
+            if not isinstance(result, dict):
+                raise ValueError
+            return result
+        except Exception:
+            # The owner may have committed already. Never expose a rejection as
+            # proof of no effect, nor retry this exchange automatically.
+            raise EchoError("echo_publication_outcome_unknown") from None
+
+    def send(self, request: dict[str, Any]) -> bytes:
+        raw = _json(request)
+        if (
+            len(raw.encode()) > 65536
+            or request.get("schema") != "dm.visibility.publication/v1"
+        ):
+            raise EchoError("echo_publication_request_invalid")
+        deadline_ms = request.get("not_after_ms")
+        if not isinstance(deadline_ms, int):
+            raise EchoError("echo_publication_request_invalid")
+        _millis(deadline_ms)
+        remaining_ms = deadline_ms - time.time_ns() // 1_000_000
+        if remaining_ms <= 0:
+            raise EchoError("echo_publication_expired")
+        deadline_ns = time.monotonic_ns() + min(remaining_ms, 5000) * 1_000_000
+        result = self._exchange("matrix publication commit " + raw, deadline_ns)
+        return _json(result).encode()
+
+    def confirm_publications(self, values: list[dict[str, str]]) -> None:
+        if not 1 <= len(values) <= 32:
+            raise EchoError("echo_publication_confirmation_invalid")
+        deadline_ns = time.monotonic_ns() + 5_000_000_000
+        for value in values:
+            _fields(value, {"publication_id", "request_sha256"})
+            identifier = value["publication_id"]
+            if str(uuid.UUID(identifier)) != identifier:
+                raise EchoError("echo_publication_confirmation_invalid")
+            _digest_field(value["request_sha256"])
+            result = self._exchange(
+                "matrix publication confirm "
+                + identifier
+                + " "
+                + value["request_sha256"],
+                deadline_ns,
+            )
+            if (
+                result.get("publication_id") != identifier
+                or result.get("publication_acknowledged") is not True
+            ):
+                raise EchoError("echo_publication_confirmation_invalid")
 
 
 def _json(value: Any) -> str:

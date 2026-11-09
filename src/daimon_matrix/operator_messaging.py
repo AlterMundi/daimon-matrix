@@ -1385,6 +1385,10 @@ def _reissue_installation(
     if not isinstance(envelope, dict) or set(envelope) != {"document", "binding"}:
         raise MessagingConfigError("messaging_visibility_installation_rejected")
     previous = envelope["document"]
+    portable = (
+        isinstance(previous, dict)
+        and previous.get("schema") == "dm.messaging.visibility-installation/v2"
+    )
     if not isinstance(previous, dict) or set(previous) != {
         "schema",
         "generation",
@@ -1394,7 +1398,7 @@ def _reissue_installation(
         "acceptance_set",
         "policy",
         "secrets",
-        "telegram_qualification",
+        "publication_backend" if portable else "telegram_qualification",
     }:
         raise MessagingConfigError("messaging_visibility_installation_rejected")
     if previous["application_sha256"] == application_sha256:
@@ -1407,7 +1411,12 @@ def _reissue_installation(
 
     being_ref = _runtime_epoch(runtime).manifest.being_ref
     if (
-        previous["schema"] != "dm.messaging.visibility-installation/v1"
+        previous["schema"]
+        != (
+            "dm.messaging.visibility-installation/v2"
+            if portable
+            else "dm.messaging.visibility-installation/v1"
+        )
         or type(previous["generation"]) is not int
         or previous["runtime_id"] != runtime.service.runtime_id
     ):
@@ -1451,7 +1460,8 @@ def _reissue_installation(
     if (
         document["disclosure"] != previous["disclosure"]
         or document["secrets"] != previous["secrets"]
-        or document["telegram_qualification"] != previous["telegram_qualification"]
+        or document["publication_backend" if portable else "telegram_qualification"]
+        != previous["publication_backend" if portable else "telegram_qualification"]
         or successor_acceptance["disclosure_sha256"] != acceptance["disclosure_sha256"]
         or [row for i, row in enumerate(successor_bindings) if i != owner_index]
         != foreign_before
@@ -2227,31 +2237,54 @@ def group_visibility_disclosure(
     only to verify that participant's proposal before signing with this owner.
     This public reader neither signs nor publishes nor changes membership.
     """
-    from .native_egress import VISIBILITY_SCOPE_RISKS
+    from .mandatory_echo import validate_policy
+    from .native_egress import PORTABLE_VISIBILITY_SCOPE_RISKS, VISIBILITY_SCOPE_RISKS
     from .telegram_mirror import REPRESENTATIONS
 
     application, members = _group_visibility_context(runtime, app_directory)
     destination = dict(approved_destination)
-    if (
-        set(destination) != {"bot_id", "chat_id", "topic_id", "representation"}
-        or type(destination["bot_id"]) is not int
-        or not 0 < destination["bot_id"] < 2**52
-        or type(destination["chat_id"]) is not int
-        or not 0 < abs(destination["chat_id"]) < 2**52
-        or (
-            destination["topic_id"] is not None
-            and (
-                type(destination["topic_id"]) is not int
-                or not 0 < destination["topic_id"] < 2**52
+    portable = "publication" in destination
+    try:
+        if portable:
+            if set(destination) != {"publication", "representation"}:
+                raise ValueError
+            validate_policy(
+                {
+                    "schema": "daimon-visibility-policy/v3",
+                    "generation": 1,
+                    "origin": "owner-disclosure-validation",
+                    "acceptance_digest": "0" * 64,
+                    "proof_key_id": "validation-only",
+                    **destination,
+                }
             )
-        )
-        or not isinstance(destination["representation"], str)
-        or destination["representation"] not in REPRESENTATIONS
-        or type(issued_at_ms) is not int
-        or not 0 <= issued_at_ms <= runtime.service.clock()
-        or issued_at_ms >= 2**52
-    ):
-        raise MessagingConfigError("messaging_group_visibility_disclosure_rejected")
+        elif (
+            set(destination) != {"bot_id", "chat_id", "topic_id", "representation"}
+            or type(destination["bot_id"]) is not int
+            or not 0 < destination["bot_id"] < 2**52
+            or type(destination["chat_id"]) is not int
+            or not 0 < abs(destination["chat_id"]) < 2**52
+            or (
+                destination["topic_id"] is not None
+                and (
+                    type(destination["topic_id"]) is not int
+                    or not 0 < destination["topic_id"] < 2**52
+                )
+            )
+            or not isinstance(destination["representation"], str)
+            or destination["representation"] not in REPRESENTATIONS
+        ):
+            raise ValueError
+        if (
+            type(issued_at_ms) is not int
+            or not 0 <= issued_at_ms <= runtime.service.clock()
+            or issued_at_ms >= 2**52
+        ):
+            raise ValueError
+    except ValueError:
+        raise MessagingConfigError(
+            "messaging_group_visibility_disclosure_rejected"
+        ) from None
     owner = _runtime_epoch(runtime).manifest.being_ref
     local = owner if local_being_ref is None else local_being_ref
     if not isinstance(local, str) or local not in members:
@@ -2272,13 +2305,17 @@ def group_visibility_disclosure(
         "projected_content": "complete-plaintext-content-and-metadata",
     }
     return {
-        "schema": "dm.messaging.visibility-disclosure/v1",
+        "schema": "dm.messaging.visibility-disclosure/v2"
+        if portable
+        else "dm.messaging.visibility-disclosure/v1",
         "issued_at_ms": issued_at_ms,
         "destination": destination,
         "scope": scope,
         "scope_sha256": config_digest(scope),
         "participants": participants,
-        "risk": VISIBILITY_SCOPE_RISKS["all-inter-daimon-communications"],
+        "risk": (
+            PORTABLE_VISIBILITY_SCOPE_RISKS if portable else VISIBILITY_SCOPE_RISKS
+        )["all-inter-daimon-communications"],
     }
 
 
@@ -2375,40 +2412,54 @@ def publish_group_visibility(
         )
         prior = None
         if expected_installation_sha256 is None:
-            if initial_configuration is None or set(initial_configuration) != {
-                "destination",
-                "secrets",
-                "telegram_qualification",
-            }:
+            if (
+                initial_configuration is None
+                or "destination" not in initial_configuration
+            ):
                 raise MessagingConfigError("messaging_group_visibility_conflict")
             approved_destination = initial_configuration["destination"]
+            portable = (
+                isinstance(approved_destination, Mapping)
+                and "publication" in approved_destination
+            )
+            qualifier = "publication_backend" if portable else "telegram_qualification"
+            if set(initial_configuration) != {"destination", "secrets", qualifier}:
+                raise MessagingConfigError("messaging_group_visibility_conflict")
             references = initial_configuration["secrets"]
+            secret_fields = (
+                {"proof_key_file"}
+                if portable
+                else {"telegram_token_file", "telegram_token_sha256", "proof_key_file"}
+            )
+            secret_files = (
+                ("proof_key_file",)
+                if portable
+                else ("telegram_token_file", "proof_key_file")
+            )
             if (
                 not isinstance(references, Mapping)
-                or set(references)
-                != {"telegram_token_file", "telegram_token_sha256", "proof_key_file"}
+                or set(references) != secret_fields
                 or any(
                     not isinstance(references[name], str)
                     or _SAFE_LEAF.fullmatch(references[name]) is None
-                    for name in ("telegram_token_file", "proof_key_file")
+                    for name in secret_files
                 )
             ):
                 raise MessagingConfigError("messaging_group_visibility_conflict")
-            # The complete native loader verifies the token/proof-key references
-            # and retained qualification before any installation publication.
-            proof_key = protected_read(
-                root / initial_configuration["secrets"]["proof_key_file"], size=32
-            )
+            # Complete native validation verifies private references before publication.
+            proof_key = protected_read(root / references["proof_key_file"], size=32)
             generation = 1
             base = {
-                "schema": "dm.messaging.visibility-installation/v1",
+                "schema": "dm.messaging.visibility-installation/v2"
+                if portable
+                else "dm.messaging.visibility-installation/v1",
                 "runtime_id": runtime.service.runtime_id,
-                "secrets": copy.deepcopy(initial_configuration["secrets"]),
-                "telegram_qualification": copy.deepcopy(
-                    initial_configuration["telegram_qualification"]
-                ),
+                "secrets": copy.deepcopy(references),
+                qualifier: copy.deepcopy(initial_configuration[qualifier]),
                 "policy": {
-                    "schema": "daimon-visibility-policy/v2",
+                    "schema": "daimon-visibility-policy/v3"
+                    if portable
+                    else "daimon-visibility-policy/v2",
                     "origin": "owner-signed-installation",
                     **approved_destination,
                     "proof_key_id": "sha256:" + hashlib.sha256(proof_key).hexdigest(),

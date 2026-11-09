@@ -86,12 +86,49 @@ another reasoning session. Keep the signing key in the backend's existing
 custody, separate from the Matrix caller. A generic model-callable publication
 signer is not the receiving adapter.
 
-The native owner installer must bind the selected backend, public key,
-surface/audience and participant disclosure through the existing signed
-installation route. Its loader, registry authentication and authority/revocation
-checks must accept that exact portable installation. The current native loader
-still selects Telegram V2 installations; the new journal primitive alone does
-not make a portable installation selectable or reopen any child egress.
+## Prepared native installation and App connection
+
+The existing `group_visibility_disclosure`, `accept_group_visibility` and
+`publish_group_visibility` APIs now also accept an approved destination with
+exact fields `publication` (the App's public descriptor) and
+`representation: plain-json/v2`. The same current native membership/authorities
+and participant-binding writers apply. This is the recorded human's authorized
+installation, not a new approval round or a peer-selected destination.
+
+The initial configuration keeps `destination`, `secrets: {proof_key_file}` and
+`publication_backend: {kind: owner-unix/v1, socket_path: ...}`. It writes a
+`dm.messaging.visibility-installation/v2` envelope with a V2 disclosure and V3
+policy. No Telegram token, bot identity or Telegram qualification is required.
+The backend's signing key stays in App custody; Matrix holds its verification
+key and its own existing journal HMAC key. Private local socket/secret references
+belong in the protected installation, not shared records.
+
+`load_owner_visibility` verifies the same owner/participant bindings and exact
+application digest, destination, backend and proof-key reference. Its new branch
+constructs `ConversationJournalTransport` offline. Unknown fields, relative
+sockets, extra Telegram secrets and changed audience/policy refuse. The existing
+owner reissue operation preserves foreign signatures and the selected backend
+byte-for-byte. Telegram installations keep their existing format and behavior.
+
+The transport connects only to the existing owner-only App Unix socket. It
+checks socket ownership/mode and Linux peer credentials, uses fixed typed
+publication/confirmation commands, and bounds request/response bytes and each
+exchange by the earlier native deadline or five seconds. The complete metadata
+acknowledgment batch shares five seconds. It starts no server, executable, model
+or alternate router. An interrupted publication stays unknown; it is never
+automatically retransmitted. Confirmation acknowledges only an already retained
+native proof and can safely repeat that exact metadata acknowledgment.
+
+The real App socket fixture now drives the actual native journal and transport:
+native intent, App commit and signed receipt, native response commit, then App
+acknowledgment. It also checks authenticated presentation, restart recovery and
+absence of Telegram/native inference. This uses synthetic identities and a
+native harness fixture; it does not establish live group delivery or model use.
+
+The native journal's own steady-state retirement still needs the composing
+parent's authoritative completion state, preserving unknown effects and old
+policies. App retirement alone does not make the complete production composition
+bounded. Neither prepared installation nor this fixture reopens a living child.
 
 Qualify the compatible successor on all seven current receivers before selection.
 Then observe an actual committed App publication with Telegram absent, technical
