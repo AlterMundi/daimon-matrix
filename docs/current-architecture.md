@@ -5,6 +5,17 @@ owns naming and scope; linked contracts own behavior.
 [CURRENT-STATE.md](../CURRENT-STATE.md) owns dated deployment evidence and gaps.
 Historical RC, Bridge and provisional records do not select a runtime.
 
+## DaimonGateway lifecycle direction — 9 November 2026
+
+DaimonGateway is the selected common backend direction, independent of Telegram,
+DaimonApp and an individual harness. Native Codex remains an execution component,
+not the entire Gateway. The [fleet maintenance plan](fleet-maintenance.md) extends
+one-command onboarding into ordinary update, diagnosis, repair, compatible rollback
+and local reconciliation. Current all-participant publication coupling and the
+256-body group ceiling remain implementation work under #508, not additional
+manual rollout gates. Existing services and old proof meanings remain authoritative
+until their compatible successors are actually selected.
+
 ## Physical placement and fleet maintenance
 
 A signed body can move without re-enrollment or identity recreation. Current
