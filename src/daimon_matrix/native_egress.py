@@ -28,6 +28,7 @@ from typing import Any, Final, Literal, Protocol, TypeVar
 from .canonical import canonical_bytes
 from .identity import validate_validity, validity_contains
 from .mandatory_echo import (
+    ConversationJournalTransport,
     EchoError,
     EchoJournal,
     EchoTransport,
@@ -282,6 +283,11 @@ def load_owner_visibility(
 
     try:
         envelope = _closed(dict(installation), {"document", "binding"})
+        portable = (
+            isinstance(envelope["document"], dict)
+            and envelope["document"].get("schema")
+            == "dm.messaging.visibility-installation/v2"
+        )
         document = _closed(
             envelope["document"],
             {
@@ -293,11 +299,16 @@ def load_owner_visibility(
                 "acceptance_set",
                 "policy",
                 "secrets",
-                "telegram_qualification",
+                "publication_backend" if portable else "telegram_qualification",
             },
         )
         if (
-            document["schema"] != "dm.messaging.visibility-installation/v1"
+            document["schema"]
+            != (
+                "dm.messaging.visibility-installation/v2"
+                if portable
+                else "dm.messaging.visibility-installation/v1"
+            )
             or type(document["generation"]) is not int
             or not 0 < document["generation"] < 2**52
             or not isinstance(document["runtime_id"], str)
@@ -328,13 +339,22 @@ def load_owner_visibility(
         )
         destination = _closed(
             disclosure["destination"],
-            {"bot_id", "chat_id", "topic_id", "representation"},
+            (
+                {"publication", "representation"}
+                if portable
+                else {"bot_id", "chat_id", "topic_id", "representation"}
+            ),
         )
         scope = _closed(disclosure["scope"], {"mode", "channels", "projected_content"})
         channels = scope["channels"]
         participants = disclosure["participants"]
         if (
-            disclosure["schema"] != "dm.messaging.visibility-disclosure/v1"
+            disclosure["schema"]
+            != (
+                "dm.messaging.visibility-disclosure/v2"
+                if portable
+                else "dm.messaging.visibility-disclosure/v1"
+            )
             or type(disclosure["issued_at_ms"]) is not int
             or not 0 <= disclosure["issued_at_ms"] < 2**52
             or disclosure["scope_sha256"] != _digest(canonical_bytes(scope))
@@ -345,7 +365,10 @@ def load_owner_visibility(
             or not isinstance(participants, list)
             or participants != sorted(set(participants))
             or owner_actor not in participants
-            or disclosure["risk"] != VISIBILITY_SCOPE_RISKS.get(scope["mode"])
+            or disclosure["risk"]
+            != (
+                PORTABLE_VISIBILITY_SCOPE_RISKS if portable else VISIBILITY_SCOPE_RISKS
+            ).get(scope["mode"])
         ):
             raise ValueError
         disclosed_participants: set[str] = set()
@@ -430,13 +453,11 @@ def load_owner_visibility(
                 "schema",
                 "generation",
                 "origin",
-                "bot_id",
-                "chat_id",
-                "topic_id",
                 "representation",
                 "acceptance_digest",
                 "proof_key_id",
-            },
+            }
+            | ({"publication"} if portable else {"bot_id", "chat_id", "topic_id"}),
         )
         validate_policy(policy)
         if (
@@ -444,71 +465,99 @@ def load_owner_visibility(
             or policy["acceptance_digest"] != _digest(canonical_bytes(acceptance_set))
             or any(
                 destination[name] != policy[name]
-                for name in ("bot_id", "chat_id", "topic_id", "representation")
+                for name in (
+                    ("publication", "representation")
+                    if portable
+                    else ("bot_id", "chat_id", "topic_id", "representation")
+                )
             )
         ):
             raise ValueError
 
-        secrets = _closed(
-            document["secrets"],
-            {"telegram_token_file", "telegram_token_sha256", "proof_key_file"},
-        )
-        for name in ("telegram_token_file", "proof_key_file"):
+        transport: EchoTransport
+        if portable:
+            if policy["schema"] != "daimon-visibility-policy/v3":
+                raise ValueError
+            secrets = _closed(document["secrets"], {"proof_key_file"})
             if (
-                not isinstance(secrets[name], str)
-                or _SAFE_LEAF.fullmatch(secrets[name]) is None
+                not isinstance(secrets["proof_key_file"], str)
+                or _SAFE_LEAF.fullmatch(secrets["proof_key_file"]) is None
             ):
                 raise ValueError
-        token_raw = _owner_file(directory / secrets["telegram_token_file"], maximum=160)
-        proof_key = _owner_file(directory / secrets["proof_key_file"], maximum=32)
-        token_sha256 = _digest(token_raw)
-        if (
-            secrets["telegram_token_sha256"] != token_sha256
-            or len(proof_key) != 32
-            or policy["proof_key_id"] != "sha256:" + _digest(proof_key)
-        ):
-            raise ValueError
-        token = token_raw.decode("ascii")
-        if token.split(":", 1)[0] != str(policy["bot_id"]):
-            raise ValueError
+            proof_key = _owner_file(directory / secrets["proof_key_file"], maximum=32)
+            if len(proof_key) != 32 or policy["proof_key_id"] != "sha256:" + _digest(
+                proof_key
+            ):
+                raise ValueError
+            backend = _closed(document["publication_backend"], {"kind", "socket_path"})
+            if backend["kind"] != "owner-unix/v1" or not isinstance(
+                backend["socket_path"], str
+            ):
+                raise ValueError
+            transport = ConversationJournalTransport(Path(backend["socket_path"]))
+        else:
+            secrets = _closed(
+                document["secrets"],
+                {"telegram_token_file", "telegram_token_sha256", "proof_key_file"},
+            )
+            for name in ("telegram_token_file", "proof_key_file"):
+                if (
+                    not isinstance(secrets[name], str)
+                    or _SAFE_LEAF.fullmatch(secrets[name]) is None
+                ):
+                    raise ValueError
+            token_raw = _owner_file(
+                directory / secrets["telegram_token_file"], maximum=160
+            )
+            proof_key = _owner_file(directory / secrets["proof_key_file"], maximum=32)
+            token_sha256 = _digest(token_raw)
+            if (
+                secrets["telegram_token_sha256"] != token_sha256
+                or len(proof_key) != 32
+                or policy["proof_key_id"] != "sha256:" + _digest(proof_key)
+            ):
+                raise ValueError
+            token = token_raw.decode("ascii")
+            if token.split(":", 1)[0] != str(policy["bot_id"]):
+                raise ValueError
 
-        qualification = _closed(
-            document["telegram_qualification"],
-            {
-                "schema",
-                "qualified_at_ms",
-                "token_sha256",
-                "get_me_bot_id",
-                "probe_chat_id",
-                "probe_topic_id",
-                "probe_message_id",
-                "probe_text_sha256",
-            },
-        )
-        if (
-            qualification["schema"] != "dm.messaging.telegram-qualification/v1"
-            or type(qualification["qualified_at_ms"]) is not int
-            or not 0 <= qualification["qualified_at_ms"] < 2**52
-            or qualification["token_sha256"] != token_sha256
-            or qualification["get_me_bot_id"] != policy["bot_id"]
-            or qualification["probe_chat_id"] != policy["chat_id"]
-            or qualification["probe_topic_id"] != policy["topic_id"]
-            or type(qualification["probe_message_id"]) is not int
-            or qualification["probe_message_id"] <= 0
-        ):
-            raise ValueError
-        _sha256(qualification["probe_text_sha256"])
-        transport = PlainTelegramTransport(
-            token=token,
-            bot_id=policy["bot_id"],
-            chat_id=policy["chat_id"],
-            topic_id=policy["topic_id"],
-            reference_directory=(
-                Path(os.environ["DM_TRIBU_REFERENCE_DIRECTORY"])
-                if os.environ.get("DM_TRIBU_REFERENCE_DIRECTORY")
-                else None
-            ),
-        )
+            qualification = _closed(
+                document["telegram_qualification"],
+                {
+                    "schema",
+                    "qualified_at_ms",
+                    "token_sha256",
+                    "get_me_bot_id",
+                    "probe_chat_id",
+                    "probe_topic_id",
+                    "probe_message_id",
+                    "probe_text_sha256",
+                },
+            )
+            if (
+                qualification["schema"] != "dm.messaging.telegram-qualification/v1"
+                or type(qualification["qualified_at_ms"]) is not int
+                or not 0 <= qualification["qualified_at_ms"] < 2**52
+                or qualification["token_sha256"] != token_sha256
+                or qualification["get_me_bot_id"] != policy["bot_id"]
+                or qualification["probe_chat_id"] != policy["chat_id"]
+                or qualification["probe_topic_id"] != policy["topic_id"]
+                or type(qualification["probe_message_id"]) is not int
+                or qualification["probe_message_id"] <= 0
+            ):
+                raise ValueError
+            _sha256(qualification["probe_text_sha256"])
+            transport = PlainTelegramTransport(
+                token=token,
+                bot_id=policy["bot_id"],
+                chat_id=policy["chat_id"],
+                topic_id=policy["topic_id"],
+                reference_directory=(
+                    Path(os.environ["DM_TRIBU_REFERENCE_DIRECTORY"])
+                    if os.environ.get("DM_TRIBU_REFERENCE_DIRECTORY")
+                    else None
+                ),
+            )
         return MandatoryEgressController(
             policy=policy,
             proof_key=proof_key,
@@ -580,6 +629,16 @@ VISIBILITY_SCOPE_RISKS: Final[dict[str, str]] = {
     "all-inter-daimon-and-sibling-conversations": (
         "all-inter-daimon-communication-and-sibling-conversations-will-be-posted-"
         "as-plaintext-to-the-fixed-telegram-destination"
+    ),
+}
+PORTABLE_VISIBILITY_SCOPE_RISKS: Final[dict[str, str]] = {
+    "all-inter-daimon-communications": (
+        "all-inter-daimon-communication-will-be-published-as-plaintext-"
+        "to-the-fixed-conversation-audience"
+    ),
+    "all-inter-daimon-and-sibling-conversations": (
+        "all-inter-daimon-communication-and-sibling-conversations-will-be-"
+        "published-as-plaintext-to-the-fixed-conversation-audience"
     ),
 }
 SIBLING_CONVERSATION_PATHS: Final[frozenset[str]] = frozenset(
@@ -2422,6 +2481,11 @@ class MandatoryEgressController:
                 self._policy,
                 telegram_reference=reference,
                 presentation=presentation,
+                publication_not_after_ms=(
+                    deadline_ms
+                    if self._policy["schema"] == "daimon-visibility-policy/v3"
+                    else None
+                ),
             )
         except EchoError as exception:
             raise NativeEgressError(str(exception)) from None

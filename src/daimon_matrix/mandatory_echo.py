@@ -11,7 +11,11 @@ import base64
 import hashlib
 import hmac
 import json
+import os
+import socket
 import sqlite3
+import stat
+import struct
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -19,6 +23,8 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext, supp
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .relationship_store import _prepare_path
 from .telegram_mirror import (
@@ -70,6 +76,126 @@ class EchoTransport(Protocol):
     def send(self, request: dict[str, Any]) -> bytes: ...
 
 
+class ConversationJournalTransport:
+    """Connect-only typed adapter to the existing owner-local App control socket.
+
+    Its path is pinned by the signed native installation. It starts no service,
+    executes no command line and has no model-facing general control operation.
+    """
+
+    def __init__(self, path: Path) -> None:
+        if not path.is_absolute() or len(str(path).encode()) > 107:
+            raise EchoError("echo_publication_backend_invalid")
+        self.path = path
+
+    def _exchange(self, command: str, deadline_ns: int) -> dict[str, Any]:
+        try:
+            metadata = self.path.lstat()
+            if (
+                not stat.S_ISSOCK(metadata.st_mode)
+                or metadata.st_uid != os.geteuid()
+                or metadata.st_mode & 0o077
+            ):
+                raise ValueError
+            envelope = (
+                _json({"command": command, "nonce": str(uuid.uuid4())}).encode() + b"\n"
+            )
+            if len(envelope) > 262144:
+                raise ValueError
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+
+                def remaining() -> None:
+                    seconds = (deadline_ns - time.monotonic_ns()) / 1e9
+                    if seconds <= 0:
+                        raise TimeoutError
+                    stream.settimeout(seconds)
+
+                remaining()
+                stream.connect(str(self.path))
+                credentials = stream.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, 12
+                )
+                if struct.unpack("3i", credentials)[1] != os.geteuid():
+                    raise ValueError
+                remaining()
+                stream.sendall(envelope)
+                raw = bytearray()
+                while not raw.endswith(b"\n"):
+                    remaining()
+                    chunk = stream.recv(min(65536, 262145 - len(raw)))
+                    if not chunk:
+                        raise ValueError
+                    raw.extend(chunk)
+                    if len(raw) > 262144:
+                        raise ValueError
+            value = json.loads(raw)
+            if not isinstance(value, dict) or value.get("ok") is not True:
+                raise ValueError
+            result = value["result"]
+            if not isinstance(result, dict):
+                raise ValueError
+            return result
+        except Exception:
+            # The owner may have committed already. Never expose a rejection as
+            # proof of no effect, nor retry this exchange automatically.
+            raise EchoError("echo_publication_outcome_unknown") from None
+
+    def send(self, request: dict[str, Any]) -> bytes:
+        raw = _json(request)
+        if (
+            len(raw.encode()) > 65536
+            or request.get("schema") != "dm.visibility.publication/v1"
+        ):
+            raise EchoError("echo_publication_request_invalid")
+        deadline_ms = request.get("not_after_ms")
+        if not isinstance(deadline_ms, int):
+            raise EchoError("echo_publication_request_invalid")
+        _millis(deadline_ms)
+        remaining_ms = deadline_ms - time.time_ns() // 1_000_000
+        if remaining_ms <= 0:
+            raise EchoError("echo_publication_expired")
+        deadline_ns = time.monotonic_ns() + min(remaining_ms, 5000) * 1_000_000
+        result = self._exchange("matrix publication commit " + raw, deadline_ns)
+        return _json(result).encode()
+
+    def confirm_publications(self, values: list[dict[str, str]]) -> None:
+        if not 1 <= len(values) <= 32:
+            raise EchoError("echo_publication_confirmation_invalid")
+        deadline_ns = time.monotonic_ns() + 5_000_000_000
+        for value in values:
+            _fields(value, {"publication_id", "request_sha256"})
+            identifier = value["publication_id"]
+            if str(uuid.UUID(identifier)) != identifier:
+                raise EchoError("echo_publication_confirmation_invalid")
+
+            _digest_field(value["request_sha256"])
+            result = self._exchange(
+                "matrix publication confirm "
+                + identifier
+                + " "
+                + value["request_sha256"],
+                deadline_ns,
+            )
+            if (
+                result.get("publication_id") != identifier
+                or result.get("publication_acknowledged") is not True
+            ):
+                raise EchoError("echo_publication_confirmation_invalid")
+
+    def inspect_publication(self, request: dict[str, Any]) -> bytes:
+        identifier = request["publication_id"]
+        if str(uuid.UUID(identifier)) != identifier:
+            raise EchoError("echo_publication_request_invalid")
+        remaining_ms = request["not_after_ms"] - time.time_ns() // 1_000_000
+        if remaining_ms <= 0:
+            raise EchoError("echo_publication_expired")
+        result = self._exchange(
+            "matrix publication inspect " + identifier,
+            time.monotonic_ns() + min(remaining_ms, 5000) * 1_000_000,
+        )
+        return _json(result).encode()
+
+
 def _json(value: Any) -> str:
     return json.dumps(
         value,
@@ -111,6 +237,45 @@ def _fields(value: Any, keys: set[str]) -> None:
 def validate_policy(policy: dict[str, Any]) -> None:
     """Closed public policy shape; signature/enrollment authority is external."""
     try:
+        if policy.get("schema") == "daimon-visibility-policy/v3":
+            _fields(
+                policy,
+                {
+                    "schema",
+                    "generation",
+                    "origin",
+                    "representation",
+                    "acceptance_digest",
+                    "proof_key_id",
+                    "publication",
+                },
+            )
+            if (
+                type(policy["generation"]) is not int
+                or not 0 < policy["generation"] < 2**52
+                or policy["representation"] != "plain-json/v2"
+            ):
+                raise ValueError
+            _text(policy["origin"], 128)
+            _text(policy["proof_key_id"], 128)
+            _digest_field(policy["acceptance_digest"])
+            publication = policy["publication"]
+            _fields(publication, {"kind", "surface_ref", "audience", "receipt_key"})
+            if publication["kind"] != "conversation-journal/v1":
+                raise ValueError
+            _text(publication["surface_ref"])
+            audience = publication["audience"]
+            if (
+                type(audience) is not list
+                or not 1 <= len(audience) <= 256
+                or audience != sorted(set(audience))
+                or len(_json(audience).encode()) > 32768
+            ):
+                raise ValueError
+            for actor in audience:
+                _text(actor)
+            _publication_key(publication["receipt_key"])
+            return
         _fields(
             policy,
             {
@@ -145,6 +310,77 @@ def validate_policy(policy: dict[str, Any]) -> None:
         )
     except Exception:
         raise EchoError("echo_policy_invalid") from None
+
+
+def _publication_key(value: Any) -> bytes:
+    _text(value, 43)
+    raw = base64.urlsafe_b64decode(value + "=")
+    if len(raw) != 32 or base64.urlsafe_b64encode(raw).decode().rstrip("=") != value:
+        raise ValueError
+    return raw
+
+
+def _classify_response(
+    raw: bytes, request: dict[str, Any], policy: dict[str, Any]
+) -> tuple[str, int]:
+    if policy["schema"] != "daimon-visibility-policy/v3":
+        return classify_plain_response(raw, request, bot_id=policy["bot_id"])
+    # The installed backend key attests a committed, audience-bound publication.
+    # A socket ACK, unsigned App result or Telegram-shaped response cannot do so.
+    if type(raw) is not bytes or len(raw) > 65536:
+        raise ValueError("echo_publication_receipt_invalid")
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError
+            value[key] = item
+        return value
+
+    receipt = json.loads(raw.decode(), object_pairs_hook=unique)
+    _fields(
+        receipt,
+        {
+            "schema",
+            "request_sha256",
+            "publication_id",
+            "surface_ref",
+            "audience",
+            "text_sha256",
+            "committed_at_ms",
+            "sequence",
+            "durable",
+            "signature",
+        },
+    )
+    if (
+        receipt["schema"] != "dm.visibility.publication-receipt/v1"
+        or receipt["request_sha256"] != _hash(request)
+        or any(
+            receipt[key] != request[key]
+            for key in ("publication_id", "surface_ref", "audience")
+        )
+        or receipt["text_sha256"]
+        != hashlib.sha256(request["text"].encode()).hexdigest()
+        or receipt["durable"] is not True
+        or type(receipt["sequence"]) is not int
+        or not 0 < receipt["sequence"] < 2**52
+    ):
+        raise ValueError("echo_publication_receipt_invalid")
+    _millis(receipt["committed_at_ms"])
+    signature = receipt.pop("signature")
+    _text(signature, 86)
+    decoded = base64.urlsafe_b64decode(signature + "==")
+    if (
+        len(decoded) != 64
+        or base64.urlsafe_b64encode(decoded).decode().rstrip("=") != signature
+    ):
+        raise ValueError("echo_publication_receipt_invalid")
+    Ed25519PublicKey.from_public_bytes(
+        _publication_key(policy["publication"]["receipt_key"])
+    ).verify(decoded, _json(receipt).encode())
+    return "confirmed", 0
 
 
 def validate_projection(projection: dict[str, Any]) -> None:
@@ -246,23 +482,29 @@ def _millis(value: Any) -> None:
 
 
 def _part_result(
-    part: dict[str, Any], policy: dict[str, Any], *, reply_message_id: int | None = None
+    part: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    reply_message_id: int | None = None,
+    request: dict[str, Any] | None = None,
 ) -> tuple[str, int]:
     if not part["attempts"]:
         return "queued", 0
     attempt = part["attempts"][-1]
     if attempt["response"] is None:
         return "ambiguous", 0
-    result, delay = classify_plain_response(
+    result, delay = _classify_response(
         attempt["response"].encode(),
-        plain_request(
+        request
+        if request is not None
+        else plain_request(
             part["text"],
             chat_id=policy["chat_id"],
             topic_id=policy["topic_id"],
             readable=policy["representation"] == READABLE_REPRESENTATION,
             reply_message_id=reply_message_id,
         ),
-        bot_id=policy["bot_id"],
+        policy,
     )
     return result, attempt["response_at_ms"] + delay * 1000
 
@@ -287,6 +529,29 @@ def _record_reply(record: dict[str, Any], index: int) -> int | None:
 
 def _record_request(record: dict[str, Any], index: int) -> dict[str, Any]:
     policy = record["binding"]["policy"]
+    if policy["schema"] == "daimon-visibility-policy/v3":
+        destination = policy["publication"]
+        return {
+            "schema": "dm.visibility.publication/v1",
+            "publication_id": str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    "dm:visibility:"
+                    + record["binding_digest"]
+                    + ":"
+                    + str(record["binding"]["publication_not_after_ms"])
+                    + ":"
+                    + str(index),
+                )
+            ),
+            "binding_sha256": record["binding_digest"],
+            "not_after_ms": record["binding"]["publication_not_after_ms"],
+            "surface_ref": destination["surface_ref"],
+            "audience": _copy(destination["audience"]),
+            "part_index": index,
+            "part_count": len(record["parts"]),
+            "text": record["parts"][index]["text"],
+        }
     return plain_request(
         record["parts"][index]["text"],
         chat_id=policy["chat_id"],
@@ -301,6 +566,7 @@ def _record_part_result(record: dict[str, Any], index: int) -> tuple[str, int]:
         record["parts"][index],
         record["binding"]["policy"],
         reply_message_id=_record_reply(record, index),
+        request=_record_request(record, index),
     )
 
 
@@ -366,6 +632,9 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
         _digest_field(record["binding_digest"])
         binding = record["binding"]
         binding_keys = {"operation_id", "projection", "policy"}
+        if binding["policy"].get("schema") == "daimon-visibility-policy/v3":
+            binding_keys.add("publication_not_after_ms")
+            _millis(binding["publication_not_after_ms"])
         if "telegram_reference" in binding:
             binding_keys.add("telegram_reference")
         if "presentation" in binding:
@@ -427,6 +696,22 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
             request = _record_request(record, index)
             previous = None
             for attempt in attempts:
+                extras = set()
+                if "inspection_at_ms" in attempt:
+                    if binding["policy"]["schema"] != "daimon-visibility-policy/v3":
+                        raise ValueError
+                    extras.add("inspection_at_ms")
+                    _millis(attempt["inspection_at_ms"])
+                    if attempt["inspection_at_ms"] < attempt["at_ms"]:
+                        raise ValueError
+                    revision += 1
+                    if attempt["response"] is not None:
+                        extras.add("response_source")
+                        if (
+                            attempt.get("response_source") != "retained-publication"
+                            or attempt["response_at_ms"] < attempt["inspection_at_ms"]
+                        ):
+                            raise ValueError
                 _fields(
                     attempt,
                     {
@@ -436,7 +721,8 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                         "at_ms",
                         "response_at_ms",
                         "retry_authorization",
-                    },
+                    }
+                    | extras,
                 )
                 _millis(attempt["at_ms"])
                 if previous is not None:
@@ -444,6 +730,7 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                         {"text": text, "attempts": [previous]},
                         binding["policy"],
                         reply_message_id=_record_reply(record, index),
+                        request=request,
                     )
                     if result == "ambiguous":
                         _validate_retry(
@@ -478,10 +765,10 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                     _millis(attempt["response_at_ms"])
                     if attempt["response_at_ms"] < attempt["at_ms"]:
                         raise ValueError
-                    classify_plain_response(
+                    _classify_response(
                         attempt["response"].encode(),
                         request,
-                        bot_id=binding["policy"]["bot_id"],
+                        binding["policy"],
                     )
                     revision += 1
                 elif attempt["response_at_ms"] is not None:
@@ -640,6 +927,7 @@ class EchoJournal:
         *,
         telegram_reference: dict[str, Any] | None = None,
         presentation: dict[str, Any] | None = None,
+        publication_not_after_ms: int | None = None,
     ) -> str:
         """Trusted producer; SAME parent transaction as logical admission."""
         try:
@@ -649,6 +937,7 @@ class EchoJournal:
                 policy,
                 telegram_reference=telegram_reference,
                 presentation=presentation,
+                publication_not_after_ms=publication_not_after_ms,
             )
         except EchoError:
             raise
@@ -663,6 +952,7 @@ class EchoJournal:
         *,
         telegram_reference: dict[str, Any] | None = None,
         presentation: dict[str, Any] | None = None,
+        publication_not_after_ms: int | None = None,
     ) -> str:
         self._check_catalog()
         if not self.db.in_transaction:
@@ -678,6 +968,14 @@ class EchoJournal:
             "policy": _copy(policy),
             "projection": _copy(projection),
         }
+        if policy["schema"] == "daimon-visibility-policy/v3":
+            try:
+                _millis(publication_not_after_ms)
+            except Exception:
+                raise EchoError("echo_publication_deadline_required") from None
+            binding["publication_not_after_ms"] = publication_not_after_ms
+        elif publication_not_after_ms is not None:
+            raise EchoError("echo_publication_deadline_not_applicable")
         if telegram_reference is not None:
             binding["telegram_reference"] = _copy(telegram_reference)
         if presentation is not None:
@@ -1133,6 +1431,25 @@ class MandatoryEcho:
 
     def _publish_reference(self, record: dict[str, Any]) -> None:
         if (
+            record["binding"]["policy"]["schema"] == "daimon-visibility-policy/v3"
+            and _status(record)["state"] == "confirmed"
+        ):
+            confirm = getattr(self._transport, "confirm_publications", None)
+            if confirm is not None:
+                # Invoked after durable native confirmation. Repetition only
+                # acknowledges the same proof; it never republishes content.
+                confirm(
+                    [
+                        {
+                            "publication_id": _record_request(record, i)[
+                                "publication_id"
+                            ],
+                            "request_sha256": _hash(_record_request(record, i)),
+                        }
+                        for i in range(len(record["parts"]))
+                    ]
+                )
+        if (
             record["binding"]["policy"]["representation"] == READABLE_REPRESENTATION
             and _status(record)["state"] == "confirmed"
         ):
@@ -1166,9 +1483,18 @@ class MandatoryEcho:
     ) -> dict[str, Any]:
         try:
             with self._execution_guard() if self._execution_guard else nullcontext():
-                return self._advance(
+                state = self._advance(
                     operation_id, expected_binding_digest, authorization
                 )
+                if state["state"] == "confirmed":
+                    with self._storage_guard():
+                        record = self._journal._load(
+                            operation_id, expected_binding_digest
+                        )
+                    # No native SQLite transaction is held during App I/O,
+                    # including warm reads of an already confirmed obligation.
+                    self._publish_reference(record)
+                return state
         except EchoError:
             raise
         except Exception:
@@ -1181,6 +1507,17 @@ class MandatoryEcho:
         authorization: bytes | None,
     ) -> dict[str, Any]:
         journal = self._journal
+        if (
+            authorization is None
+            and getattr(self._transport, "inspect_publication", None) is not None
+        ):
+            with self._storage_guard(), journal._transaction():
+                previous = journal._load(operation_id, expected_binding_digest)
+            if (
+                previous["binding"]["policy"]["schema"] == "daimon-visibility-policy/v3"
+                and _status(previous)["state"] == "ambiguous"
+            ):
+                return self._inspect_retained_publication(previous)
         with self._storage_guard(), journal._transaction():
             record = journal._load(operation_id, expected_binding_digest)
             self._current(record)
@@ -1198,7 +1535,6 @@ class MandatoryEcho:
             ):
                 return state  # Lost-return retry of an already admitted decision.
             if state["state"] in {"confirmed", "suppressed"} or self._transport is None:
-                self._publish_reference(record)
                 return state
             if state["state"] == "ambiguous" and authorization is None:
                 return state
@@ -1213,6 +1549,11 @@ class MandatoryEcho:
             part = record["parts"][index]
             now = self._clock()
             _millis(now)
+            if (
+                policy["schema"] == "daimon-visibility-policy/v3"
+                and now >= record["binding"]["publication_not_after_ms"]
+            ):
+                raise EchoError("echo_publication_expired")
             if len(part["attempts"]) >= MAX_ATTEMPTS:
                 raise EchoError("echo_attempt_limit")
             if now < _record_part_result(record, index)[1]:
@@ -1254,7 +1595,7 @@ class MandatoryEcho:
             self._current(record)
         try:
             raw = self._transport.send(_copy(request))
-            classify_plain_response(raw, request, bot_id=policy["bot_id"])
+            _classify_response(raw, request, policy)
         except Exception as exception:
             reason = getattr(exception, "reason", None)
             if not isinstance(reason, str) or reason not in {
@@ -1274,7 +1615,7 @@ class MandatoryEcho:
                     self._clock(),
                     attempt["attempt_id"],
                 )
-            return _status(record)
+            return self._inspect_retained_publication(record)
         self._checkpoint("response_verified")
         with self._storage_guard(), journal._transaction():
             latest = journal._load(operation_id, expected_binding_digest)
@@ -1290,6 +1631,62 @@ class MandatoryEcho:
             latest["revision"] += 1
             journal._write(latest)
         self._checkpoint("response_committed")
-        self._publish_reference(latest)
         with self._storage_guard():
             return self.inspect(operation_id, expected_binding_digest)
+
+    def _inspect_retained_publication(self, record: dict[str, Any]) -> dict[str, Any]:
+        """One durable, bounded read attempt; never a second publication call."""
+        inspector = getattr(self._transport, "inspect_publication", None)
+        if (
+            record["binding"]["policy"]["schema"] != "daimon-visibility-policy/v3"
+            or inspector is None
+        ):
+            return _status(record)
+        journal = self._journal
+        operation = record["binding"]["operation_id"]
+        digest = record["binding_digest"]
+        with self._storage_guard(), journal._transaction():
+            latest = journal._load(operation, digest)
+            if latest != record:
+                raise EchoError("echo_state_conflict")
+            self._current(record)
+            index = next(
+                i
+                for i in range(len(record["parts"]))
+                if _record_part_result(record, i)[0] != "confirmed"
+            )
+            attempt = record["parts"][index]["attempts"][-1]
+            if "inspection_at_ms" in attempt:
+                return _status(record)
+            now = self._clock()
+            _millis(now)
+            if (
+                now >= record["binding"]["publication_not_after_ms"]
+                or now < attempt["at_ms"]
+            ):
+                return _status(record)
+            attempt["inspection_at_ms"] = now
+            record["revision"] += 1
+            journal._write(record)
+        request = _record_request(record, index)
+        try:
+            raw = inspector(_copy(request))
+            _classify_response(raw, request, record["binding"]["policy"])
+        except Exception:
+            return _status(record)
+        with self._storage_guard(), journal._transaction():
+            latest = journal._load(operation, digest)
+            if latest != record:
+                raise EchoError("echo_state_conflict")
+            observed = self._clock()
+            _millis(observed)
+            if observed < now:
+                raise EchoError("echo_clock_invalid")
+            latest["parts"][index]["attempts"][-1].update(
+                response=raw.decode("utf-8"),
+                response_at_ms=observed,
+                response_source="retained-publication",
+            )
+            latest["revision"] += 1
+            journal._write(latest)
+        return _status(latest)

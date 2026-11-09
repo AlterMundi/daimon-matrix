@@ -3225,6 +3225,97 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         )
         return installation, configuration, result
 
+    def test_portable_group_install_and_owner_reissue_preserve_foreign_bindings(self):
+        from daimon_matrix.operator_messaging import (
+            _reissue_installation,
+            publish_group_visibility,
+        )
+
+        self.accept()
+        self.publish()
+        root = self.app.parent / "portable-group-visibility"
+        root.mkdir(mode=0o700)
+        proof = root / "proof.key"
+        proof.write_bytes(b"v" * 32)
+        proof.chmod(0o600)
+        publication = {
+            "kind": "conversation-journal/v1",
+            "surface_ref": "fixture:general",
+            "audience": ["human:fixture"],
+            "receipt_key": b64url(
+                Ed25519PrivateKey.from_private_bytes(b"p" * 32)
+                .public_key()
+                .public_bytes_raw()
+            ),
+        }
+        configuration = {
+            "destination": {
+                "publication": publication,
+                "representation": "plain-json/v2",
+            },
+            "secrets": {"proof_key_file": "proof.key"},
+            "publication_backend": {
+                "kind": "owner-unix/v1",
+                "socket_path": str(root / "app.sock"),
+            },
+        }
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        installation = root / "installation.json"
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=None,
+            initial_configuration=configuration,
+        )
+        selected = json.loads(installation.read_bytes())
+        self.assertEqual(
+            config_digest(selected["document"]), result["installation_sha256"]
+        )
+        self.assertEqual(
+            selected["document"]["schema"], "dm.messaging.visibility-installation/v2"
+        )
+        self.assertEqual(
+            selected["document"]["policy"]["schema"], "daimon-visibility-policy/v3"
+        )
+        self.assertNotIn("telegram_qualification", selected["document"])
+        self.assertFalse(any(root.glob("*telegram*")))
+        again = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=None,
+            initial_configuration=configuration,
+        )
+        self.assertEqual(again["installation_sha256"], result["installation_sha256"])
+        reissued = _reissue_installation(
+            self.runtime, installation, application_sha256="b" * 64
+        )
+        self.assertTrue(reissued["reissued"])
+        successor = json.loads(installation.read_bytes())["document"]
+        self.assertEqual(
+            successor["publication_backend"],
+            selected["document"]["publication_backend"],
+        )
+        self.assertEqual(successor["disclosure"], disclosure)
+        owner = self.fixture.founder.state.being_ref
+
+        def foreign(values):
+            return {
+                row["body"]["being_ref"]: row
+                for row in values
+                if row["body"]["being_ref"] != owner
+            }
+
+        self.assertEqual(
+            foreign(successor["acceptance_set"]["bindings"]),
+            foreign(selected["document"]["acceptance_set"]["bindings"]),
+        )
+
     def test_initial_and_expanded_visibility_preserve_keys_qualification_and_retry(
         self,
     ):
