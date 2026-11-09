@@ -1,11 +1,26 @@
 # Human-requested complete same-being delta
 
-Matrix#376 owns the unfinished integrated workflow. Its unit is all customization
-relative to each versioned harness baseline, plus memory and selected skills.
-The merged inventory supplies read-only discovery/comparison; DMK PR32 supplies
-native exchange, and Cluster PR295 supplies selected behavioral materialization.
-Cluster#296 composes these with the existing selective Skills installer. The full
-end-to-end increment and actual two-body use remain unfinished.
+The finite Source/Legion integration in Matrix#376 is complete. Its retained
+[receiving acceptance](https://github.com/AlterMundi/daimon-matrix/issues/376#issuecomment-6450739231)
+includes meaningful memory retrieval, selected-skill use and behavioral-context
+consumption on both bodies. The exact-version skill application and signed
+result in [#228](https://github.com/AlterMundi/daimon-matrix/issues/228#issuecomment-6563484357)
+and the actual two-way conversation in
+[#407](https://github.com/AlterMundi/daimon-matrix/issues/407) remain separate valid
+evidence. Do not reinstall or repeat that pilot merely to obtain fresh receipts.
+Earlier empty-record verification and ambiguous messages retain their outcomes.
+
+This runbook also supports later explicitly selected same-being deltas. Its unit
+is customization relative to each versioned harness baseline, plus memory and
+selected skills. The inventory supplies read-only discovery/comparison; DMK PR32
+supplies native exchange, and Cluster PR295 supplies selected behavioral
+materialization. Cluster#296 composes them with the selective Skills installer.
+A later change is a new attributed delta, not proof that the completed pilot
+failed or permission for continuous synchronization. Resolve current living bodies
+from their actual bindings; historical pilot placements are not update targets.
+Cross-being learning with Eko or Oliva belongs to Sources and their own local
+adoption, not `/we`. The single current full-foundation coverage map remains
+[#437](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440).
 
 Use the owning ordinary checkout and receiving-private operation directory. Reuse
 `tools.export_being` for file inventory, source selection and credential checks;
