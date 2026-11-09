@@ -35,7 +35,11 @@ No additional queue or scheduler is introduced.
 
 Each `dm.visibility.publication/v1` request binds the exact native obligation
 digest, selected surface/audience, part index/count and complete part text.
-Its stable publication UUID derives from that obligation digest and part index.
+Its stable publication UUID derives from that obligation digest, original native
+deadline and part index. The native `publication_not_after_ms` is immutable in
+the obligation binding and appears as `not_after_ms` in the request. Expired
+fresh requests refuse. Changing the deadline changes identity; it cannot make a
+retired original into a valid exact retry.
 The backend must atomically retain that exact immutable request in the existing
 audience-protected conversation journal before signing a receipt. A conflicting
 request for the same publication UUID must fail. A closed browser does not affect
@@ -61,10 +65,19 @@ The App writer candidate now retains the exact publication before signing and
 exposes it through the existing authenticated Conversation feed/part reader.
 Its real owner-socket/SQLite/HTTP/restart fixture passed without Telegram or
 inference. This candidate is not selected on a living body. Its 4096-part / 64-MiB
-cap must have bounded retirement before production: retain pending/ambiguous
-obligations and the durable human-readable record, prevent deleted IDs from
-republishing, and bound proof/tombstone storage. Deleting on carrier expiry or
-moving content to another unbounded table is insufficient.
+cap now has staged bounded retirement: technical copies become eligible 24 hours
+after both native expiry and the host acknowledgment of committed native
+confirmation. Pending/ambiguous copies stay pinned. Each commit or owner
+retirement handles at most 64 eligible rows, transactionally advancing one
+per-conversation deadline fence before deletion. Retired exact requests cannot
+republish even after clock regression; there is no unbounded tombstone archive.
+Native histories and ordinary inbox/response records remain separate.
+
+The native worker's `confirm_publications` transport callback runs only from an
+authenticated confirmed journal record, after the response commit. It passes
+exact publication IDs and request hashes; repetition never republishes. The live
+native installer/transport must connect this acknowledgment and the original
+deadline to the App route before production selection.
 
 Extend the existing App/Gateway conversation writer and its actor/resource grant
 with this typed publication and retained-receipt operation. Reuse its canonical

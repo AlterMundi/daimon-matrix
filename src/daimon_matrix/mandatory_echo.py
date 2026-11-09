@@ -412,10 +412,16 @@ def _record_request(record: dict[str, Any], index: int) -> dict[str, Any]:
             "publication_id": str(
                 uuid.uuid5(
                     uuid.NAMESPACE_URL,
-                    "dm:visibility:" + record["binding_digest"] + ":" + str(index),
+                    "dm:visibility:"
+                    + record["binding_digest"]
+                    + ":"
+                    + str(record["binding"]["publication_not_after_ms"])
+                    + ":"
+                    + str(index),
                 )
             ),
             "binding_sha256": record["binding_digest"],
+            "not_after_ms": record["binding"]["publication_not_after_ms"],
             "surface_ref": destination["surface_ref"],
             "audience": _copy(destination["audience"]),
             "part_index": index,
@@ -502,6 +508,9 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
         _digest_field(record["binding_digest"])
         binding = record["binding"]
         binding_keys = {"operation_id", "projection", "policy"}
+        if binding["policy"].get("schema") == "daimon-visibility-policy/v3":
+            binding_keys.add("publication_not_after_ms")
+            _millis(binding["publication_not_after_ms"])
         if "telegram_reference" in binding:
             binding_keys.add("telegram_reference")
         if "presentation" in binding:
@@ -777,6 +786,7 @@ class EchoJournal:
         *,
         telegram_reference: dict[str, Any] | None = None,
         presentation: dict[str, Any] | None = None,
+        publication_not_after_ms: int | None = None,
     ) -> str:
         """Trusted producer; SAME parent transaction as logical admission."""
         try:
@@ -786,6 +796,7 @@ class EchoJournal:
                 policy,
                 telegram_reference=telegram_reference,
                 presentation=presentation,
+                publication_not_after_ms=publication_not_after_ms,
             )
         except EchoError:
             raise
@@ -800,6 +811,7 @@ class EchoJournal:
         *,
         telegram_reference: dict[str, Any] | None = None,
         presentation: dict[str, Any] | None = None,
+        publication_not_after_ms: int | None = None,
     ) -> str:
         self._check_catalog()
         if not self.db.in_transaction:
@@ -815,6 +827,14 @@ class EchoJournal:
             "policy": _copy(policy),
             "projection": _copy(projection),
         }
+        if policy["schema"] == "daimon-visibility-policy/v3":
+            try:
+                _millis(publication_not_after_ms)
+            except Exception:
+                raise EchoError("echo_publication_deadline_required") from None
+            binding["publication_not_after_ms"] = publication_not_after_ms
+        elif publication_not_after_ms is not None:
+            raise EchoError("echo_publication_deadline_not_applicable")
         if telegram_reference is not None:
             binding["telegram_reference"] = _copy(telegram_reference)
         if presentation is not None:
@@ -1270,6 +1290,25 @@ class MandatoryEcho:
 
     def _publish_reference(self, record: dict[str, Any]) -> None:
         if (
+            record["binding"]["policy"]["schema"] == "daimon-visibility-policy/v3"
+            and _status(record)["state"] == "confirmed"
+        ):
+            confirm = getattr(self._transport, "confirm_publications", None)
+            if confirm is not None:
+                # Invoked after durable native confirmation. Repetition only
+                # acknowledges the same proof; it never republishes content.
+                confirm(
+                    [
+                        {
+                            "publication_id": _record_request(record, i)[
+                                "publication_id"
+                            ],
+                            "request_sha256": _hash(_record_request(record, i)),
+                        }
+                        for i in range(len(record["parts"]))
+                    ]
+                )
+        if (
             record["binding"]["policy"]["representation"] == READABLE_REPRESENTATION
             and _status(record)["state"] == "confirmed"
         ):
@@ -1350,6 +1389,11 @@ class MandatoryEcho:
             part = record["parts"][index]
             now = self._clock()
             _millis(now)
+            if (
+                policy["schema"] == "daimon-visibility-policy/v3"
+                and now >= record["binding"]["publication_not_after_ms"]
+            ):
+                raise EchoError("echo_publication_expired")
             if len(part["attempts"]) >= MAX_ATTEMPTS:
                 raise EchoError("echo_attempt_limit")
             if now < _record_part_result(record, index)[1]:

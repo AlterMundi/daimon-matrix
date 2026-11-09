@@ -25,6 +25,7 @@ class JournalPublisher:
         self.calls = 0
         self.change = lambda receipt: None
         self.lose_ack = False
+        self.confirmations = []
         with closing(sqlite3.connect(path)) as db, db:
             db.execute(
                 "CREATE TABLE publications (id TEXT PRIMARY KEY, request TEXT NOT NULL)"
@@ -66,6 +67,9 @@ class JournalPublisher:
         self.change(receipt)
         receipt["signature"] = encoded(self.key.sign(echo._json(receipt).encode()))
         return echo._json(receipt).encode()
+
+    def confirm_publications(self, values):
+        self.confirmations.extend(values)
 
 
 class PortablePublicationTests(unittest.TestCase):
@@ -109,7 +113,12 @@ class PortablePublicationTests(unittest.TestCase):
 
     def admit(self):
         self.db.execute("BEGIN IMMEDIATE")
-        digest = self.journal.admit("portable-operation", self.source, self.policy)
+        digest = self.journal.admit(
+            "portable-operation",
+            self.source,
+            self.policy,
+            publication_not_after_ms=4102444800000,
+        )
         self.db.commit()
         return digest
 
@@ -121,6 +130,29 @@ class PortablePublicationTests(unittest.TestCase):
         # exceed the shared backend budget.
         with self.assertRaises(echo.EchoError):
             echo.validate_policy(self.policy)
+
+    def test_original_deadline_is_bound_and_expiry_never_sends(self):
+        digest = self.admit()
+        record = self.journal._load("portable-operation", digest)
+        request = echo._record_request(record, 0)
+        self.assertEqual(request["not_after_ms"], 4102444800000)
+        self.worker._clock = lambda: 4102444800000
+        with self.assertRaisesRegex(echo.EchoError, "echo_publication_expired"):
+            self.worker.advance("portable-operation", digest)
+        self.assertEqual(self.publisher.calls, 0)
+        self.assertEqual(self.publisher.confirmations, [])
+        # Changing an admitted operation's deadline conflicts with its digest.
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaises(echo.EchoError):
+                self.journal.admit(
+                    "portable-operation",
+                    self.source,
+                    self.policy,
+                    publication_not_after_ms=4102444800001,
+                )
+        finally:
+            self.db.rollback()
 
     def test_committed_signed_publication_survives_native_journal_reopen(self):
         digest = self.admit()
@@ -144,6 +176,10 @@ class PortablePublicationTests(unittest.TestCase):
         self.assertEqual(request["audience"], ["fixture:paired-human"])
         self.assertIn(self.source["content"]["text"], request["text"])
         self.assertEqual(self.publisher.calls, 1)
+        self.assertEqual(len(self.publisher.confirmations), 1)
+        self.assertEqual(
+            self.publisher.confirmations[0]["request_sha256"], echo._hash(request)
+        )
 
     def test_complete_multipart_publication_required(self):
         self.source = projection("0123456789😀" * 800)
@@ -202,6 +238,7 @@ class PortablePublicationTests(unittest.TestCase):
             self.worker.advance("portable-operation", digest)["state"], "ambiguous"
         )
         self.assertEqual(self.publisher.calls, 1)
+        self.assertEqual(self.publisher.confirmations, [])
         with closing(sqlite3.connect(self.publisher.path)) as db, db:
             self.assertEqual(
                 db.execute("SELECT count(*) FROM publications").fetchone()[0], 1

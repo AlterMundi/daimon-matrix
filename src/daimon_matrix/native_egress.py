@@ -2422,6 +2422,11 @@ class MandatoryEgressController:
                 self._policy,
                 telegram_reference=reference,
                 presentation=presentation,
+                publication_not_after_ms=(
+                    deadline_ms
+                    if self._policy["schema"] == "daimon-visibility-policy/v3"
+                    else None
+                ),
             )
         except EchoError as exception:
             raise NativeEgressError(str(exception)) from None
