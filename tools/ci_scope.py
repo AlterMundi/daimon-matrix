@@ -259,6 +259,7 @@ CONTEXT_DOC_FILES = frozenset(
         "README.md",
         "RESUME.md",
         "docs/current-architecture.md",
+        "docs/dm081-source-runtime.md",
         "docs/runbooks/tribu-human-mentions.md",
         "docs/runbooks/receiver-compatible-authority-updates.md",
         "docs/mandatory-telegram-visibility.md",
@@ -457,6 +458,7 @@ def profile(paths: list[str]) -> str:
     # Keep source and normative contract mixtures on their broader profiles.
     prose_entrypoints = {
         "docs/current-architecture.md",
+        "docs/dm081-source-runtime.md",
         "docs/runbooks/tribu-human-mentions.md",
     }
     if changed & prose_entrypoints and changed <= prose_entrypoints | {

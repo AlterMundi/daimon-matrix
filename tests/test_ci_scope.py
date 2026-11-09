@@ -566,6 +566,7 @@ class CIScopeTests(unittest.TestCase):
     def test_maintained_prose_alone_uses_existing_document_checks(self):
         for entry in (
             "docs/current-architecture.md",
+            "docs/dm081-source-runtime.md",
             "docs/runbooks/tribu-human-mentions.md",
         ):
             with self.subTest(entry=entry):

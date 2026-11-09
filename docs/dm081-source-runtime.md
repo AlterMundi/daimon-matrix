@@ -1,8 +1,18 @@
 # DM-081 source claims, quarantine, pull, and promotion
 
-Status: implemented as an owner-local synthetic V0 runtime. No live source,
-host, provider, corpus, model, Matrix.org service, personal memory, or Cluster
-effect is contacted or changed.
+Status: implemented owner-local native runtime, with selected-source V1 intake
+and actual cross-being receiving evidence. The original synthetic qualification
+remains test evidence, not the current deployment boundary. See the single
+[current initial-Matrix coverage map](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440)
+for deployed receivers and unfinished learning acceptance.
+
+The operations below use the receiving body's authenticated Matrix client and
+existing Source/relationship grants. They do not fetch a source URI, execute
+published content, install a skill, call a model or modify personal memory merely
+by publishing, previewing, pulling or promoting a reference. Actual selective
+installation and receiving-model use require their owning supported operations
+and observed outcomes; neither is implied by the runtime's implementation status.
+Matrix.org is not part of this contract.
 
 ## Meaning and authority
 
