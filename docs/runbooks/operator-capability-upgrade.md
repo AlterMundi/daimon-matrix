@@ -4,8 +4,14 @@
 
 A serving SDK with `durable-reader-recovery/v1` records authenticated reader
 controls in its existing group record store. Startup recovers the latest selected
-reader vector only when the qualified code/SDK, runtime, application, stores,
-visibility, controller, identity, authority and signed roster are unchanged.
+reader vector when runtime, application, stores, visibility, controller, identity,
+authority and signed roster are unchanged. A qualified package replacement may
+change only its public code/SDK/import fingerprints while preserving the complete
+reader contract, actual interpreter and isolation. Startup reconstructs the old
+binding using the current controller and credential, authenticates it against the
+latest signed local record, then records the new qualified binding. It requires
+no peer response, new capability grant or model action. Changed wire/store
+contracts, authority, policy or isolation still require explicit qualification.
 It preserves the selected validity and retains fresh process provenance. Legacy
 V1 reader rows keep their original finite expiry. With
 `credential-bound-reader-validity/v1`, an explicitly selected V2 reader instead
