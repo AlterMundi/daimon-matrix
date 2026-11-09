@@ -1322,6 +1322,95 @@ class ReceivingCompositionTests(unittest.TestCase):
     with_receiving_controller = True
     setUp = group_fixtures.GroupRuntimeTests.setUp
 
+    def test_cold_actual_reader_binding_uses_one_full_canonical_pass(self):
+        from daimon_matrix import messaging_config, messaging_store
+        from tests.test_messaging_runtime import loaded
+
+        _fixture, runtime, _reads = loaded(
+            self, self.fixture.founder, clock=lambda: self.fixture.now
+        )
+        records = TribeRecordStore(
+            runtime.state_root / "cold-reader.sqlite",
+            sign=lambda value: messaging_config.create_binding(runtime, value),
+            verify=lambda value, binding: messaging_config.verify_record_binding(
+                runtime, value, binding
+            ),
+            clock=runtime.service.clock,
+            cache_reader_bindings=True,
+        )
+        helper = DurableReaderRecoveryTests()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.records = records
+        helper.enabled_v2()
+        passes = []
+
+        def counted(label):
+            def encode(value):
+                if isinstance(value, dict) and ("boot" in value or "document" in value):
+                    passes.append(label)
+                return canonical_bytes(value)
+
+            return encode
+
+        with (
+            patch.object(messaging_store, "canonical_bytes", counted("raw")),
+            patch.object(messaging_config, "canonical_bytes", counted("signed")),
+        ):
+            records._reader_verified_bindings = set()
+            head = records.reader_control_head("tribe")
+            baseline = list(passes)
+            self.assertGreater(baseline.count("raw"), 0)
+            self.assertEqual(baseline.count("raw"), baseline.count("signed"))
+            passes.clear()
+            records.verify = messaging_config._RecordBindingVerifier(runtime)
+            self.assertEqual(records.reader_control_head("tribe"), head)
+            self.assertEqual(passes, ["signed"] * baseline.count("signed"))
+
+        # Warming the new verifier cannot hide a live clock rollback.
+        self.fixture.now -= 1
+        with self.assertRaisesRegex(ValueError, "messaging_binding_rejected"):
+            records.reader_control_head("tribe")
+        self.fixture.now += 1
+        self.assertEqual(records.reader_control_head("tribe"), head)
+
+        with records._database() as database:
+            row = database.execute(
+                "SELECT * FROM tribe_records WHERE kind='reader-control' "
+                "ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+        bad_binding = json.loads(row["binding"])
+        bad_binding["signature"] = "A" * 86
+        for field, changed in (
+            ("binding", canonical_bytes(bad_binding)),
+            ("request_hash", "0" * 64),
+        ):
+            with records._database() as database:
+                database.execute(
+                    f"UPDATE tribe_records SET {field}=? WHERE sequence=?",
+                    (changed, row["sequence"]),
+                )
+            with self.assertRaisesRegex(ValueError, "messaging_binding_rejected"):
+                records.reader_control_head("tribe")
+            with records._database() as database:
+                database.execute(
+                    f"UPDATE tribe_records SET {field}=? WHERE sequence=?",
+                    (row[field], row["sequence"]),
+                )
+        # Same decoded document/signature, different raw representation: refuse.
+        with records._database() as database:
+            noncanonical = json.dumps(json.loads(row["document"]), indent=1).encode()
+            database.execute(
+                "UPDATE tribe_records SET document=?,document_hash=? WHERE sequence=?",
+                (
+                    noncanonical,
+                    hashlib.sha256(noncanonical).hexdigest(),
+                    row["sequence"],
+                ),
+            )
+        with self.assertRaisesRegex(ValueError, "tribe_record_corrupt"):
+            records.reader_control_head("tribe")
+
     def test_warm_reader_binding_rejects_clock_rollback_with_actual_verifier(self):
         from daimon_matrix.messaging_config import create_binding, verify_record_binding
         from tests.test_messaging_runtime import loaded

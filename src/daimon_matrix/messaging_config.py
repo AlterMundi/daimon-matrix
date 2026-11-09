@@ -111,6 +111,17 @@ def _verify_public_binding(
     identity: dict[str, Any], public_key: bytes, application: Any, binding: Any
 ) -> None:
     try:
+        _verify_public_binding_digest(
+            identity, public_key, config_digest(application), binding
+        )
+    except Exception:
+        raise MessagingConfigError("messaging_binding_rejected") from None
+
+
+def _verify_public_binding_digest(
+    identity: dict[str, Any], public_key: bytes, application_sha256: str, binding: Any
+) -> None:
+    try:
         if (
             not isinstance(binding, dict)
             or set(binding) != {"schema", "body", "signature"}
@@ -119,7 +130,7 @@ def _verify_public_binding(
             raise ValueError()
         expected = {
             **identity,
-            "application_sha256": config_digest(application),
+            "application_sha256": application_sha256,
         }
         if binding["body"] != expected:
             raise ValueError()
@@ -205,6 +216,16 @@ def verify_record_binding(runtime: HostedRuntime, value: Any, binding: Any) -> N
     must name the same being and body; incarnation/credential renewal is retained
     evidence, never permission to send with an obsolete credential.
     """
+    _verify_record_binding(runtime, value, binding)
+
+
+def _verify_record_binding(
+    runtime: HostedRuntime,
+    value: Any,
+    binding: Any,
+    *,
+    application_sha256: str | None = None,
+) -> None:
     try:
         instant, body = value["recorded_at_ms"], binding["body"]
         authority = runtime.service.ledger.authority
@@ -230,9 +251,49 @@ def verify_record_binding(runtime: HostedRuntime, value: Any, binding: Any) -> N
         )
         credential = epoch.credentials[identity["credential_id"]]
         public_key = unb64url(credential["body"]["signing_key"]["public"], length=32)
-        _verify_public_binding(identity, public_key, value, binding)
+        _verify_public_binding_digest(
+            identity,
+            public_key,
+            config_digest(value) if application_sha256 is None else application_sha256,
+            binding,
+        )
     except Exception:
         raise MessagingConfigError("messaging_binding_rejected") from None
+
+
+@dataclass(frozen=True)
+class _RecordBindingVerifier:
+    """Reuse one canonical pass for a cold reader record and its signature.
+
+    Only the store's fixed signed wrapper uses this path. Its document is the
+    first canonical key; matching that exact prefix proves the retained raw
+    document is canonical before the same signed-wrapper digest is verified.
+    Every signature, historical authority and recording-time check still runs.
+    """
+
+    runtime: HostedRuntime
+
+    def __call__(self, value: Any, binding: Any) -> None:
+        verify_record_binding(self.runtime, value, binding)
+
+    def verify_canonical_record(self, value: Any, binding: Any, raw: bytes) -> None:
+        if not isinstance(value, dict) or set(value) != {
+            "kind",
+            "record_id",
+            "request_hash",
+            "recorded_at_ms",
+            "document",
+        }:
+            raise ValueError("tribe_record_corrupt")
+        signed = canonical_bytes(value)
+        if not signed.startswith(b'{"document":' + raw + b","):
+            raise ValueError("tribe_record_corrupt")
+        _verify_record_binding(
+            self.runtime,
+            value,
+            binding,
+            application_sha256=hashlib.sha256(signed).hexdigest(),
+        )
 
 
 def verify_visibility_participant(
@@ -1689,7 +1750,7 @@ def _compose_group(
     records = TribeRecordStore(
         stores["records"],
         sign=lambda value: create_binding(runtime, value),
-        verify=lambda value, binding: verify_record_binding(runtime, value, binding),
+        verify=_RecordBindingVerifier(runtime),
         clock=service.clock,
         cache_reader_bindings=True,
     )

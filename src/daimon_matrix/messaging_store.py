@@ -134,10 +134,18 @@ class TribeRecordStore:
         # Hash every current raw row and still validate the complete chain.
         # Re-encoding every large boot on each control exhausts its fixed budget.
         if not previously_verified:
-            if canonical_bytes(value) != raw:
-                raise ValueError("tribe_record_corrupt")
-            if self.verify is not None:
-                self.verify(signed, json.loads(bytes(row["binding"])))
+            canonical_verifier = (
+                getattr(self.verify, "verify_canonical_record", None)
+                if reader_bindings is not None
+                else None
+            )
+            if callable(canonical_verifier):
+                canonical_verifier(signed, json.loads(bytes(row["binding"])), raw)
+            else:
+                if canonical_bytes(value) != raw:
+                    raise ValueError("tribe_record_corrupt")
+                if self.verify is not None:
+                    self.verify(signed, json.loads(bytes(row["binding"])))
         if reader_bindings is not None and fingerprint is not None:
             reader_bindings[1].add(fingerprint)
         return dict(value)
