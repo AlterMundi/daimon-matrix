@@ -20,6 +20,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from .relationship_store import _prepare_path
 from .telegram_mirror import (
     COMPACT_REPRESENTATION,
@@ -111,6 +113,44 @@ def _fields(value: Any, keys: set[str]) -> None:
 def validate_policy(policy: dict[str, Any]) -> None:
     """Closed public policy shape; signature/enrollment authority is external."""
     try:
+        if policy.get("schema") == "daimon-visibility-policy/v3":
+            _fields(
+                policy,
+                {
+                    "schema",
+                    "generation",
+                    "origin",
+                    "representation",
+                    "acceptance_digest",
+                    "proof_key_id",
+                    "publication",
+                },
+            )
+            if (
+                type(policy["generation"]) is not int
+                or not 0 < policy["generation"] < 2**52
+                or policy["representation"] != "plain-json/v2"
+            ):
+                raise ValueError
+            _text(policy["origin"], 128)
+            _text(policy["proof_key_id"], 128)
+            _digest_field(policy["acceptance_digest"])
+            publication = policy["publication"]
+            _fields(publication, {"kind", "surface_ref", "audience", "receipt_key"})
+            if publication["kind"] != "conversation-journal/v1":
+                raise ValueError
+            _text(publication["surface_ref"])
+            audience = publication["audience"]
+            if (
+                type(audience) is not list
+                or not 1 <= len(audience) <= 256
+                or audience != sorted(set(audience))
+            ):
+                raise ValueError
+            for actor in audience:
+                _text(actor)
+            _publication_key(publication["receipt_key"])
+            return
         _fields(
             policy,
             {
@@ -145,6 +185,77 @@ def validate_policy(policy: dict[str, Any]) -> None:
         )
     except Exception:
         raise EchoError("echo_policy_invalid") from None
+
+
+def _publication_key(value: Any) -> bytes:
+    _text(value, 43)
+    raw = base64.urlsafe_b64decode(value + "=")
+    if len(raw) != 32 or base64.urlsafe_b64encode(raw).decode().rstrip("=") != value:
+        raise ValueError
+    return raw
+
+
+def _classify_response(
+    raw: bytes, request: dict[str, Any], policy: dict[str, Any]
+) -> tuple[str, int]:
+    if policy["schema"] != "daimon-visibility-policy/v3":
+        return classify_plain_response(raw, request, bot_id=policy["bot_id"])
+    # The installed backend key attests a committed, audience-bound publication.
+    # A socket ACK, unsigned App result or Telegram-shaped response cannot do so.
+    if type(raw) is not bytes or len(raw) > 65536:
+        raise ValueError("echo_publication_receipt_invalid")
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError
+            value[key] = item
+        return value
+
+    receipt = json.loads(raw.decode(), object_pairs_hook=unique)
+    _fields(
+        receipt,
+        {
+            "schema",
+            "request_sha256",
+            "publication_id",
+            "surface_ref",
+            "audience",
+            "text_sha256",
+            "committed_at_ms",
+            "sequence",
+            "durable",
+            "signature",
+        },
+    )
+    if (
+        receipt["schema"] != "dm.visibility.publication-receipt/v1"
+        or receipt["request_sha256"] != _hash(request)
+        or any(
+            receipt[key] != request[key]
+            for key in ("publication_id", "surface_ref", "audience")
+        )
+        or receipt["text_sha256"]
+        != hashlib.sha256(request["text"].encode()).hexdigest()
+        or receipt["durable"] is not True
+        or type(receipt["sequence"]) is not int
+        or not 0 < receipt["sequence"] < 2**52
+    ):
+        raise ValueError("echo_publication_receipt_invalid")
+    _millis(receipt["committed_at_ms"])
+    signature = receipt.pop("signature")
+    _text(signature, 86)
+    decoded = base64.urlsafe_b64decode(signature + "==")
+    if (
+        len(decoded) != 64
+        or base64.urlsafe_b64encode(decoded).decode().rstrip("=") != signature
+    ):
+        raise ValueError("echo_publication_receipt_invalid")
+    Ed25519PublicKey.from_public_bytes(
+        _publication_key(policy["publication"]["receipt_key"])
+    ).verify(decoded, _json(receipt).encode())
+    return "confirmed", 0
 
 
 def validate_projection(projection: dict[str, Any]) -> None:
@@ -246,23 +357,29 @@ def _millis(value: Any) -> None:
 
 
 def _part_result(
-    part: dict[str, Any], policy: dict[str, Any], *, reply_message_id: int | None = None
+    part: dict[str, Any],
+    policy: dict[str, Any],
+    *,
+    reply_message_id: int | None = None,
+    request: dict[str, Any] | None = None,
 ) -> tuple[str, int]:
     if not part["attempts"]:
         return "queued", 0
     attempt = part["attempts"][-1]
     if attempt["response"] is None:
         return "ambiguous", 0
-    result, delay = classify_plain_response(
+    result, delay = _classify_response(
         attempt["response"].encode(),
-        plain_request(
+        request
+        if request is not None
+        else plain_request(
             part["text"],
             chat_id=policy["chat_id"],
             topic_id=policy["topic_id"],
             readable=policy["representation"] == READABLE_REPRESENTATION,
             reply_message_id=reply_message_id,
         ),
-        bot_id=policy["bot_id"],
+        policy,
     )
     return result, attempt["response_at_ms"] + delay * 1000
 
@@ -287,6 +404,23 @@ def _record_reply(record: dict[str, Any], index: int) -> int | None:
 
 def _record_request(record: dict[str, Any], index: int) -> dict[str, Any]:
     policy = record["binding"]["policy"]
+    if policy["schema"] == "daimon-visibility-policy/v3":
+        destination = policy["publication"]
+        return {
+            "schema": "dm.visibility.publication/v1",
+            "publication_id": str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    "dm:visibility:" + record["binding_digest"] + ":" + str(index),
+                )
+            ),
+            "binding_sha256": record["binding_digest"],
+            "surface_ref": destination["surface_ref"],
+            "audience": _copy(destination["audience"]),
+            "part_index": index,
+            "part_count": len(record["parts"]),
+            "text": record["parts"][index]["text"],
+        }
     return plain_request(
         record["parts"][index]["text"],
         chat_id=policy["chat_id"],
@@ -301,6 +435,7 @@ def _record_part_result(record: dict[str, Any], index: int) -> tuple[str, int]:
         record["parts"][index],
         record["binding"]["policy"],
         reply_message_id=_record_reply(record, index),
+        request=_record_request(record, index),
     )
 
 
@@ -444,6 +579,7 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                         {"text": text, "attempts": [previous]},
                         binding["policy"],
                         reply_message_id=_record_reply(record, index),
+                        request=request,
                     )
                     if result == "ambiguous":
                         _validate_retry(
@@ -478,10 +614,10 @@ def validate_proof_shape(record: dict[str, Any]) -> None:
                     _millis(attempt["response_at_ms"])
                     if attempt["response_at_ms"] < attempt["at_ms"]:
                         raise ValueError
-                    classify_plain_response(
+                    _classify_response(
                         attempt["response"].encode(),
                         request,
-                        bot_id=binding["policy"]["bot_id"],
+                        binding["policy"],
                     )
                     revision += 1
                 elif attempt["response_at_ms"] is not None:
@@ -1254,7 +1390,7 @@ class MandatoryEcho:
             self._current(record)
         try:
             raw = self._transport.send(_copy(request))
-            classify_plain_response(raw, request, bot_id=policy["bot_id"])
+            _classify_response(raw, request, policy)
         except Exception as exception:
             reason = getattr(exception, "reason", None)
             if not isinstance(reason, str) or reason not in {

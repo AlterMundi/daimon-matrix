@@ -1,5 +1,11 @@
 # Mandatory Telegram visibility — independent V2 primitive
 
+The selected Telegram V2 contract below remains unchanged. The additional
+conversation-journal proof primitive for Telegram-independent delivery is
+documented in [portable human visibility](portable-human-visibility.md). Its
+backend/owner-installation integration is unfinished; it does not release a
+receive-only body or satisfy an existing Telegram obligation retroactively.
+
 ## 1. Status and scope
 
 The V2 journal and native egress barrier implement the owner-selected mandatory
