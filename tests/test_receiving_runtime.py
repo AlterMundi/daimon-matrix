@@ -540,6 +540,52 @@ class NativeAuthoringHorizonTests(ReceivingOwnerApiFixture):
 
 
 class ReceivingOwnerApiTests(ReceivingOwnerApiFixture):
+    def test_status_roster_validation_does_not_consume_reader_fence_wait(self):
+        monotonic = time.monotonic_ns
+        offset = 0
+        roster = self.group.receiving_roster
+
+        def slow_roster():
+            nonlocal offset
+            result = roster()
+            offset += 3_000_000_000
+            return result
+
+        with patch.object(self.group, "receiving_roster", slow_roster), patch(
+            "daimon_matrix.service.time.monotonic_ns", lambda: monotonic() + offset
+        ):
+            response = self.service.handle(
+                self.request({}, method="runtime.status", capability=self.observer)
+            )
+            self.assertTrue(response["ok"], response)
+            receiving = response["result"]["receiving"]
+            self.assertEqual(receiving["rosters"]["tribe"], roster())
+            self.assertTrue(receiving["channels"]["tribe"]["controlled"])
+
+    def test_status_still_bounds_a_contended_reader_fence(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def writer():
+            with self.group.egress._fence:
+                entered.set()
+                release.wait(5)
+
+        worker = threading.Thread(target=writer)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            response = self.service.handle(
+                self.request({}, method="runtime.status", capability=self.observer)
+            )
+            self.assertFalse(response["ok"])
+            self.assertEqual(response["error"]["code"], "egress_attempt_deadline")
+            self.assertTrue(response["error"]["retryable"])
+        finally:
+            release.set()
+            worker.join(5)
+        self.assertFalse(worker.is_alive())
+
     def test_bounded_select_waiting_on_native_writer_cannot_outlive_authority(self):
         row = self.credential_reader()
         self.assertTrue(

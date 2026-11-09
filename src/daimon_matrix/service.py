@@ -2801,7 +2801,6 @@ class HostedWeave:
                     raise ServiceError("loaded_application_base_changed")
                 result["loaded_application"] = application
             if self.receiving is not None:
-                deadline = time.monotonic_ns() + 2_000_000_000
                 try:
                     for channel_id, group in self.receiving.channels.items():
                         if (
@@ -2843,12 +2842,15 @@ class HostedWeave:
                             channel_id: self._receiving_roster_status(group)
                             for channel_id, group in self.receiving.channels.items()
                         },
-                        "channels": {
-                            channel_id: group.egress.reader_snapshot(
-                                channel_id, deadline_ns=deadline
-                            )
-                            for channel_id, group in self.receiving.channels.items()
-                        },
+                    }
+                    # This bounds waiting on the physical reader fence, not
+                    # the preceding authenticated roster reconstruction.
+                    deadline = time.monotonic_ns() + 2_000_000_000
+                    result["receiving"]["channels"] = {
+                        channel_id: group.egress.reader_snapshot(
+                            channel_id, deadline_ns=deadline
+                        )
+                        for channel_id, group in self.receiving.channels.items()
                     }
                 except NativeEgressError as exception:
                     raise ServiceError(str(exception), retryable=True) from None
