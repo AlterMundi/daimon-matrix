@@ -1359,7 +1359,10 @@ class HostedWeave:
             return group.egress.select_readers(
                 command,
                 request_sha256=request_hash,
-                deadline_ns=time.monotonic_ns() + 2_000_000_000,
+                # One bounded maintenance transaction includes roster validation and
+                # durable reader recovery. Keep it below the owner RPC bound;
+                # the command's earlier effect expiry remains authoritative.
+                deadline_ns=time.monotonic_ns() + 10_000_000_000,
                 selection_authorization=(
                     lambda: group.selection_authorization(
                         expected_roster, **({"readers": rows} if typed else {})

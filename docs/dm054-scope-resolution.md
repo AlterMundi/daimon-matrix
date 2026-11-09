@@ -47,6 +47,12 @@ CPU time spent validating a larger roster must not turn an uncontended reader
 into `egress_attempt_deadline`. A genuinely contended fence still returns that
 retryable error. The caller's operation deadline remains separate.
 
+Explicit reader maintenance has one ten-second native budget for roster
+validation, physical/CAS checks and durable recovery. A command's earlier
+`effect_not_after_ms` remains authoritative. Persistence failures retain their
+uncertain outcome and emit one closed diagnostic per distinct pending failure
+through the existing service log; arbitrary exception details stay private.
+
 ### Current client's Matrix method permissions
 
 The compact receiving response also reports `client_authority` with schema
