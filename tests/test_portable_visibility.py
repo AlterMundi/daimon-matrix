@@ -113,6 +113,15 @@ class PortablePublicationTests(unittest.TestCase):
         self.db.commit()
         return digest
 
+    def test_audience_utf8_budget_matches_backend_request_bound(self):
+        self.policy["publication"]["audience"] = [
+            f"human:{i:03d}:" + "😀" * 80 for i in range(128)
+        ]
+        # Each name fits the character limit, but their combined UTF-8 bytes
+        # exceed the shared backend budget.
+        with self.assertRaises(echo.EchoError):
+            echo.validate_policy(self.policy)
+
     def test_committed_signed_publication_survives_native_journal_reopen(self):
         digest = self.admit()
         self.worker.advance("portable-operation", digest)

@@ -145,6 +145,7 @@ def validate_policy(policy: dict[str, Any]) -> None:
                 type(audience) is not list
                 or not 1 <= len(audience) <= 256
                 or audience != sorted(set(audience))
+                or len(_json(audience).encode()) > 32768
             ):
                 raise ValueError
             for actor in audience:

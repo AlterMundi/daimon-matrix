@@ -22,7 +22,8 @@ origin, acceptance digest and proof-key identity. Its publication descriptor is:
 
 - `kind`: `conversation-journal/v1`;
 - `surface_ref`: the owner-selected conversation resource;
-- `audience`: the sorted, unique, nonempty authorized human/resource audience;
+- `audience`: the sorted, unique, nonempty authorized human/resource audience,
+  at most 256 entries and 32 KiB of serialized UTF-8 JSON;
 - `receipt_key`: the existing backend's Ed25519 public verification key, in
   unpadded canonical base64url form.
 
@@ -55,6 +56,15 @@ retained proof verification after reopen, audience/surface/content/key rejection
 and lost-ack handling. It is not evidence of live App publication or delivery.
 
 ## Remaining receiving integration
+
+The App writer candidate now retains the exact publication before signing and
+exposes it through the existing authenticated Conversation feed/part reader.
+Its real owner-socket/SQLite/HTTP/restart fixture passed without Telegram or
+inference. This candidate is not selected on a living body. Its 4096-part / 64-MiB
+cap must have bounded retirement before production: retain pending/ambiguous
+obligations and the durable human-readable record, prevent deleted IDs from
+republishing, and bound proof/tombstone storage. Deleting on carrier expiry or
+moving content to another unbounded table is insufficient.
 
 Extend the existing App/Gateway conversation writer and its actor/resource grant
 with this typed publication and retained-receipt operation. Reuse its canonical
