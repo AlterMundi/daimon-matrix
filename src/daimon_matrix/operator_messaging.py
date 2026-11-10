@@ -2772,7 +2772,11 @@ def visibility_presentation(
     old_disclosure = predecessor["disclosure"]
     old_acceptance = predecessor["acceptance_set"]
     current = previous["disclosure"]
-    pins = ("bot_id", "chat_id", "topic_id")
+    pins = (
+        ("publication",)
+        if "publication" in current["destination"]
+        else ("bot_id", "chat_id", "topic_id")
+    )
     if (
         set(old_disclosure) != set(current)
         or set(old_disclosure["destination"]) != set(current["destination"])

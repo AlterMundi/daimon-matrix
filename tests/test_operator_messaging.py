@@ -3292,6 +3292,53 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
             initial_configuration=configuration,
         )
         self.assertEqual(again["installation_sha256"], result["installation_sha256"])
+        # The existing same-audience presentation writer also handles V3.
+        from daimon_matrix.operator_messaging import visibility_presentation
+
+        key_before = (proof.stat().st_ino, proof.read_bytes())
+        proposal = visibility_presentation(
+            self.runtime,
+            self.app,
+            installation,
+            command="visibility-propose",
+            representation="compact-text/v1",
+        )
+        disclosure, bindings = self.accepted_disclosure(
+            {
+                **configuration["destination"],
+                "representation": "compact-text/v1",
+            }
+        )
+        self.assertEqual(proposal["disclosure"], disclosure)
+        proposal["bindings"] = bindings
+        changed_scope = copy.deepcopy(proposal)
+        changed_scope["predecessor"]["disclosure"]["destination"]["publication"][
+            "audience"
+        ] = ["human:other"]
+        with self.assertRaises(ValueError):
+            visibility_presentation(
+                self.runtime,
+                self.app,
+                installation,
+                command="visibility-apply",
+                proposal=changed_scope,
+            )
+        visibility_presentation(
+            self.runtime,
+            self.app,
+            installation,
+            command="visibility-apply",
+            proposal=proposal,
+        )
+        selected = json.loads(installation.read_bytes())
+        self.assertEqual(
+            selected["document"]["policy"]["representation"], "compact-text/v1"
+        )
+        self.assertEqual(
+            selected["document"]["publication_backend"],
+            configuration["publication_backend"],
+        )
+        self.assertEqual(key_before, (proof.stat().st_ino, proof.read_bytes()))
         reissued = _reissue_installation(
             self.runtime, installation, application_sha256="b" * 64
         )

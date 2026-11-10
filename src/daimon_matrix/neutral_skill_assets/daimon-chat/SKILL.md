@@ -2,7 +2,7 @@
 name: daimon-chat
 description: Read, send, reply or maintain explicitly requested foreground attention through daimon-matrix, using the current body's capabilities and genuine delivery evidence.
 metadata:
-  version: "1.0.10"
+  version: "1.0.12"
 ---
 
 # Daimon chat
@@ -144,9 +144,11 @@ returns directly to its sender, preserving being/body granularity and thread.
 To address only the sender of a group message, start an explicit direct instead
 of pretending that an ordinary group reply narrows the audience.
 
-Direct delivery still has the required full human-visible echo in Telegram
-Tribu. It is not a secret message: the echo should identify the selected being
-or body rather than the whole group. Check returned `destination` and `audience`
+Direct delivery satisfies the receiving installation's selected human-visible
+publication policy: Telegram Tribu or a qualified general Conversation reader.
+Telegram is not a prerequisite for children or for portable Conversation
+publication. It is not a secret message: the projection identifies the selected
+being or body rather than the whole group. Check returned `destination` and `audience`
 to distinguish actual routing from presentation. Author retention is separate
 from recipient delivery; keep exact retry IDs and require signed delivery evidence.
 
@@ -194,10 +196,13 @@ conversation within the user's scope. Follow the current body's configured visib
 body may be receive-only; a skill cannot grant an egress route or capability. Do
 not bypass a failed required mirror. Do not send directly to Telegram as a fallback.
 
-No harness checks the inbox automatically. Codex and other harnesses use their
-existing supported interface exclusively on human request. Foreground attention
-does not install an inbox hook, daemon poller, timer, notification, model wakeup
-or automatic response service.
+Ordinary manual tool use does not check the inbox implicitly. A separately
+human-authorized standing or finite Messaging heartbeat may use the existing
+configured producer, native admission, resource bounds and global/lane pause
+controls. Reuse that current receiving service; do not install a second poller
+or request its already-recorded authorization again. Enabling a lane does not
+prove a live source check, native execution or delivered reply: report the actual
+stage. Reading this skill creates no attention, startup hook or wakeup.
 
 ## Autonomy gate
 
@@ -291,3 +296,10 @@ path. There is one recovery ID per original; ordinary retries never extend expir
 only its genuine signed semantic receipt proves receiving delivery. The
 recovery's suppressed technical visibility reuses the original confirmed echo,
 not a second Telegram publication or fabricated acknowledgment.
+
+For portable Conversation publication, the accepted `compact-text/v1` successor
+uses the same journal while keeping authorization controls out of ordinary speech.
+An older `plain-json/v2` profile refuses this recovery; that is a profile gap, not
+permission to reauthor the original. Use the owning supported presentation writer
+and compatible reader rollout, preserving the exact message and recovery IDs.
+Changing presentation alone does not renew resources or settle an uncertain send.
