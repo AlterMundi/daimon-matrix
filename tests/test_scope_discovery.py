@@ -480,3 +480,161 @@ class NearDiscoveryTests(unittest.TestCase):
             near.write(path, result)
             self.assertEqual(json.loads(path.read_text()), result)
             self.assertEqual(len(list(Path(directory).iterdir())), 1)
+
+
+def resource_settings():
+    value = settings()
+    value["resources"] = [{"resource_ref": "host-device", "command": ["device-owner"]}]
+    return value
+
+
+def device_report():
+    return dict(
+        schema="dm.integrator-discovery/v1",
+        resource_ref="host-device",
+        evaluated_at=1,
+        integrator=dict(state="observed", observed_at=1),
+        perceptors=[
+            dict(
+                id="camera",
+                resource_ref="host-device",
+                state="no-use-detected",
+                observed_at=1,
+                fresh=True,
+                coverage_complete=True,
+                media_read=False,
+                private_process="must-not-leave",
+            )
+        ],
+        actuators=[
+            dict(
+                id="panel-view",
+                commands=[["view", "compact"], ["view", "expanded"]],
+                permission="existing-owner-control-required",
+                executed=False,
+                requested_compact=True,
+                observed_compact=False,
+            )
+        ],
+        limits=dict(
+            model_calls=0, device_capture_started=False, controls_executed=False
+        ),
+        private_output_path="must-not-leave",
+    )
+
+
+class ResourceDiscoveryTests(unittest.TestCase):
+    def observe(self, report=None, scope="/integrators", native=None):
+        calls = []
+
+        def call(command, request):
+            calls.append((command, request))
+            if command == ["root"]:
+                return (
+                    native
+                    if native is not None
+                    else response("root", "body", request["request_id"])
+                )
+            return report if report is not None else device_report()
+
+        result = near.resource_discovery(
+            resource_settings(),
+            scope=scope,
+            resource_ref="host-device",
+            now_ms=1000,
+            call=call,
+        )
+        return result, calls
+
+    def test_resource_is_associated_with_actual_native_observer_and_filtered(self):
+        result, calls = self.observe()
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["observer"], server("root"))
+        self.assertEqual(result["confirmed_native_calls"], 1)
+        self.assertEqual(result["confirmed_resource_reads"], 1)
+        self.assertFalse(result["partial"])
+        self.assertNotIn("must-not-leave", json.dumps(result))
+        self.assertEqual(result["resource_ownership"], "not-established-by-discovery")
+        control = result["members"][0]["actuators"][0]
+        self.assertTrue(control["requested_compact"])
+        self.assertFalse(control["observed_compact"])
+        for scope, identifier in [
+            ("/perceptors", "camera"),
+            ("/actuators", "panel-view"),
+        ]:
+            with self.subTest(scope=scope):
+                result, _ = self.observe(scope=scope)
+                self.assertEqual(result["members"][0]["id"], identifier)
+                self.assertEqual(result["model_calls"], 0)
+
+    def test_stale_hub_returns_partial_unknown_observations(self):
+        value = device_report()
+        value["integrator"].update(state="stale", observed_at=0)
+        value["perceptors"][0].update(
+            state="unknown", fresh=False, coverage_complete=False
+        )
+        value["actuators"][0].update(requested_compact=None, observed_compact=None)
+        result, calls = self.observe(report=value)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result["confirmed_resource_reads"], 1)
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["members"][0]["perceptors"][0]["state"], "unknown")
+
+    def test_native_rejection_prevents_resource_call(self):
+        result, calls = self.observe(native=response("foreign", "body", "unused"))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(result["partial"])
+        self.assertFalse(result["members"])
+        self.assertEqual(result["confirmed_resource_reads"], 0)
+
+    def test_stale_negative_and_unexpected_effects_never_become_device_evidence(self):
+        variants = []
+        value = device_report()
+        value["resource_ref"] = "another"
+        variants.append(value)
+        value = device_report()
+        value["evaluated_at"] = -100
+        variants.append(value)
+        value = device_report()
+        value["limits"]["controls_executed"] = True
+        variants.append(value)
+        value = device_report()
+        value["control"] = {"outcome": "uncertain"}
+        variants.append(value)
+        value = device_report()
+        value["perceptors"][0]["coverage_complete"] = False
+        variants.append(value)
+        value = device_report()
+        value["perceptors"][0]["fresh"] = False
+        variants.append(value)
+        value = device_report()
+        value["integrator"]["observed_at"] = -10
+        variants.append(value)
+        for value in variants:
+            with self.subTest(value=value):
+                result, calls = self.observe(report=value)
+                self.assertEqual(len(calls), 2)
+                self.assertTrue(result["partial"])
+                self.assertFalse(result["members"])
+                self.assertEqual(result["confirmed_resource_reads"], 0)
+
+    def test_missing_selection_and_expiry_do_not_call_any_owner(self):
+        def never(*args):
+            self.fail("unexpected call")
+
+        with self.assertRaisesRegex(ValueError, "resource_route_not_selected"):
+            near.resource_discovery(
+                settings(),
+                scope="/integrators",
+                resource_ref="host-device",
+                now_ms=1000,
+                call=never,
+            )
+        with self.assertRaisesRegex(ValueError, "scope_probe_expired"):
+            near.resource_discovery(
+                resource_settings(),
+                scope="/integrators",
+                resource_ref="host-device",
+                now_ms=100000,
+                call=never,
+            )
