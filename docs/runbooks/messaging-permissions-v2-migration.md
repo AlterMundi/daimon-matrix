@@ -1,4 +1,41 @@
-# Messaging permissions V2 migration — integration handoff
+# Revocable permissions and historical V2 migration
+
+## Current operating route
+
+Use the existing relationship owner APIs for explicit card publication, fresh
+link/grant offers, acceptance, ingest and authorization readback. Ordinary
+permission changes do not migrate a runtime bundle or recreate credentials.
+Use the current [SDK successor route](https://github.com/nicoechaniz/daimon-cluster/blob/main/docs/runbooks/tribu-sdk-successor.md)
+when an installed validator needs updating. A recorded human task authorizes its
+necessary implementation and scoped maintenance; an old claim, another agent or
+an additional review quorum does not confer that authorization again.
+
+The V2 library supports explicitly accepted revocable messaging and exact `read`
+permission. Keep the subject, resource, classification and delegation limits
+explicit. A standing declaration does not extend the current credential's expiry
+or revocation, authorize effectful operations, start attention or renew finite
+provider/review contracts. Preserve closed, revoked, withdrawn and relinquished
+predecessors. A newly authorized resource relationship uses a new explicit offer
+and acceptance; do not reopen its old terminal grant.
+
+Before activating newly supported signed semantics, select compatible validators
+through the existing receiving update command. Inspect actual receiving results;
+preparation or a publisher receipt is not adoption. Preserve current identities,
+keys, accounts, histories, local choices and unrelated pauses. The library-only
+change does not require identity succession for an otherwise active credential.
+
+The F3 transaction below applies only when an explicitly selected operation
+actually replaces a runtime authority bundle. Its quiescence requirements protect
+that specific bundle replacement; they are not a daily permission, messaging or
+software-update procedure. Each global Stop still needs fresh explicit human
+consent. Use scoped maintenance when that is the necessary operation.
+
+## Historical integration handoff — 16 September 2026
+
+The retained implementation status, claim restrictions, independent-review request
+and frozen test counts below describe that historical slice. They are not current
+operating gates or current deployment evidence. Preserve their original meaning;
+use the maintained operating route above and the live project checkpoint today.
 
 Status: library APIs plus the bounded F3 operator apply/resume transaction are
 implemented. **No live participant migration is authorized or claimed.** Do not
@@ -9,7 +46,7 @@ files.
 
 See [the protocol](../../specs/messaging-permissions-v2.md).
 
-## Available interfaces
+### Available interfaces
 
 * `identity.validate_validity`, `validity_contains`, `validity_attenuates`: closed
   finite/indefinite algebra. V1 inclusive credential endpoints are not reinterpreted.
@@ -50,7 +87,7 @@ See [the protocol](../../specs/messaging-permissions-v2.md).
 * `daimon-rebirth apply-messaging-permissions-migration` and
   `resume-messaging-permissions-migration`: executable wrappers for those APIs.
 
-## Parent integration obligations (not optional)
+### Parent integration obligations (not optional)
 
 1. Reconcile #132 writes and acquire successor exact-file ownership before editing
    messaging/config/store/service/operator code or DM-041 generated inventories.
@@ -96,7 +133,7 @@ See [the protocol](../../specs/messaging-permissions-v2.md).
     inventory checks and installed-wheel/cross-repository qualification. No partial
     closure of #136 from these library tests.
 
-## F3 apply and recovery procedure
+### F3 apply and recovery procedure
 
 The owner approval and journal key are separate inputs. The journal key file MUST
 be an owner-only, single-link regular file containing 32-64 bytes and MUST be the
@@ -107,7 +144,7 @@ open. Candidate and approval JSON MUST be canonical owner-only regular files. Th
 approval is created only after the old runtime, V8 candidate, current heads, and
 exact preserved state files have been frozen and reviewed.
 
-### Required OS quiescence and privilege separation
+#### Required OS quiescence and privilege separation
 
 The transaction lock serializes cooperating migration invocations; it is not a
 security boundary against another process with the same UID or a privileged
@@ -174,7 +211,7 @@ corrupt floor, a same-generation conflict, an unexpected hard link, or a
 generation below the durable floor is rejected. Never delete authoritative
 records to force a retry; repair the exact authenticated transaction forward.
 
-## Recovery and threats
+### Recovery and threats
 
 Indefinite stolen permission no longer ages out. Keep least-privilege capability
 keys owner-local, monitor unauthorized use, and publish authenticated revocation
@@ -191,7 +228,7 @@ rollback authorization. Whole-filesystem rollback protection needs an external
 monotonic anchor. A human instruction's deadline still stops execution, without
 revoking its independent standing messaging permission.
 
-## Frozen slice validation (2026-09-16)
+### Frozen slice validation (2026-09-16)
 
 Author verification only; independent review is still required. Base/HEAD remains
 `acb131f18c200bb028ee86fa3a8ef9a2f6c040a3`, branch
