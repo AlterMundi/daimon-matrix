@@ -31,8 +31,9 @@ an answer from a model or permission to send, disclose content or actuate device
 
 ## Existing receiving authority and configuration
 
-Keep one owner-only `dm.scope-probe-config/v1` configuration with exactly:
-`schema`, `observer_id`, `expires_at_ms` and `targets`. At most8targets reuse the
+Keep one owner-only `dm.scope-probe-config/v1` configuration with:
+`schema`, `observer_id`, `expires_at_ms` and `targets`, plus optional `resources`
+for the explicit selected-device workflow below. At most8targets reuse the
 actual receiving capability-map placements, original identities and existing
 observer clients. Each target has exactly `id`, `being_ref`, the four-field
 `server` identity and a fixed argv-array `command`. Do not copy credentials,
@@ -136,3 +137,56 @@ still apply. Keep one protected atomic256KiB latest report. Configuration expiry
 and task-owned process cancellation remain stop controls; no recurring job or
 extra participant catalog is installed. Returned application URLs are never
 fetched, and no message, publication, grant or model turn is requested.
+
+
+## Selected device resources through the existing owner route
+
+The same foreground operator accepts `/integrators`, `/perceptors` and
+`/actuators` with one explicit `--resource EXISTING_RESOURCE_ID`. It first reads
+its configured observer's authenticated native body, then queries the selected
+resource's existing Integrators projection once. This associates the actual
+current being/body with the resource it can inspect; it does not enroll the
+resource as a being, infer realm membership, or issue a control grant.
+
+```text
+SDK_PYTHON OPERATOR/scope_discovery.py --config PRIVATE/config.json \
+  --scope /integrators --resource host-cuevanico --report PRIVATE/latest.json
+```
+
+The optional `resources` list contains at most8 entries, each with exactly
+`resource_ref` (the existing Shared Resources ID) and `command` (a fixed argv
+array for its installed read-only `device_discovery.py --resource ID`, through
+its existing authorized owner route). This is a private operation selection,
+not another resource catalog. Select the route from that resource's maintained
+record and actual access binding; do not copy credentials or infer permission
+from a host label. Missing selection refuses before any I/O. Body admission
+failure prevents the device read. Existing `/near` and `/everyone` queries do
+not consume these optional routes.
+
+The device response must match `dm.integrator-discovery/v1` and the selected
+resource, with zero models, capture and control effects. The operator validates
+and filters its public observation fields; process names, paths, arbitrary extra
+fields and other native history are never forwarded. The existing Integrators
+helper determines device freshness/coverage. The coordinator additionally
+requires a response evaluation within10seconds of receipt (at most1second future
+clock tolerance), and refuses inconsistent fresh/negative observations. An
+unsynchronized or stale route is unavailable/partial, never a healthy negative.
+Requested and observed panel state stay separate. A stale integrator cannot
+establish complete resource coverage.
+
+`dm.scope.resources/v1` reports this operator-selected association and its
+limits. `/integrators` returns the filtered hub/device projection; `/perceptors`
+and `/actuators` return the corresponding selected facets. Listed panel commands
+are descriptions, never executed output. They retain
+`existing-owner-control-required`: a successful status read is not a native
+Matrix grant, proof of ownership, permission to acquire media or an instruction
+to actuate. Use the existing resource owner control adapter for an independently
+authorized action and retain its actual effect/uncertainty; this discovery adds
+no command executor or new controls.
+
+One run performs at most1 native read and1 resource read, at most30seconds per
+process and60seconds overall, narrowed by the existing configuration expiry.
+It uses the existing256KiB atomic latest report and foreground cancellation path;
+no cache history, recurring producer, media, model or service is started. Current
+receiving selection and useful work routing/physical-human acceptance remain
+separate evidence in the single Matrix437 map.

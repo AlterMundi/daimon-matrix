@@ -1,4 +1,4 @@
-"""Bounded foreground /near and known-route /everyone discovery."""
+"""Bounded foreground body, contact and selected device-resource discovery."""
 
 from __future__ import annotations
 
@@ -44,7 +44,11 @@ def text(value, maximum=1024):
 def configuration(value):
     if (
         not isinstance(value, dict)
-        or set(value) != {"schema", "observer_id", "expires_at_ms", "targets"}
+        or set(value)
+        not in (
+            {"schema", "observer_id", "expires_at_ms", "targets"},
+            {"schema", "observer_id", "expires_at_ms", "targets", "resources"},
+        )
         or value["schema"] != "dm.scope-probe-config/v1"
     ):
         raise ValueError("invalid_scope_probe_config")
@@ -84,6 +88,23 @@ def configuration(value):
         or value["observer_id"] not in identifiers
     ):
         raise ValueError("ambiguous_scope_probe_target")
+    resources = value.get("resources", [])
+    if not isinstance(resources, list) or len(resources) > 8:
+        raise ValueError("invalid_scope_probe_resources")
+    seen = set()
+    for row in resources:
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"resource_ref", "command"}
+            or not isinstance(row["resource_ref"], str)
+            or re.fullmatch(r"[a-z][a-z0-9-]{0,95}", row["resource_ref"]) is None
+            or row["resource_ref"] in seen
+            or not isinstance(row["command"], list)
+            or not 1 <= len(row["command"]) <= 64
+            or not all(text(part, 16384) for part in row["command"])
+        ):
+            raise ValueError("invalid_scope_probe_resources")
+        seen.add(row["resource_ref"])
     return value
 
 
@@ -513,6 +534,225 @@ def everyone(
     return report
 
 
+DEVICE_SCOPES = {"/integrators", "/perceptors", "/actuators"}
+
+
+def device_projection(value, resource_ref, now_ms):
+    """Read the existing Integrators contract; never forward private extras."""
+    if (
+        not isinstance(value, dict)
+        or len(encode(value)) > 65536
+        or value.get("schema") != "dm.integrator-discovery/v1"
+        or value.get("resource_ref") != resource_ref
+        or type(value.get("evaluated_at")) is not int
+        or not -1000 <= now_ms - value["evaluated_at"] * 1000 <= 10000
+    ):
+        raise ValueError("resource_projection_rejected")
+    limits = value.get("limits", {})
+    if (
+        not isinstance(limits, dict)
+        or type(limits.get("model_calls")) is not int
+        or limits.get("model_calls") != 0
+        or limits.get("device_capture_started") is not False
+        or limits.get("controls_executed") is not False
+        or "control" in value
+    ):
+        raise ValueError("resource_projection_not_read_only")
+    integrator = value.get("integrator", {})
+    if (
+        not isinstance(integrator, dict)
+        or not isinstance(integrator.get("state"), str)
+        or integrator.get("state") not in {"observed", "stale"}
+        or type(integrator.get("observed_at")) is not int
+        or integrator["observed_at"] < 0
+        or (
+            integrator["state"] == "observed"
+            and not -1 <= value["evaluated_at"] - integrator["observed_at"] <= 4
+        )
+    ):
+        raise ValueError("resource_projection_rejected")
+    sensors, controls = value.get("perceptors"), value.get("actuators")
+    if (
+        not isinstance(sensors, list)
+        or len(sensors) > 32
+        or not isinstance(controls, list)
+        or len(controls) > 32
+    ):
+        raise ValueError("resource_projection_rejected")
+    selected_sensors = []
+    for row in sensors:
+        if (
+            not isinstance(row, dict)
+            or not text(row.get("id"), 64)
+            or row.get("resource_ref") != resource_ref
+            or not isinstance(row.get("state"), str)
+            or row.get("state")
+            not in {"unknown", "in-use", "absent", "no-use-detected"}
+            or type(row.get("observed_at")) is not int
+            or type(row.get("fresh")) is not bool
+            or type(row.get("coverage_complete")) is not bool
+            or row.get("media_read") is not False
+        ):
+            raise ValueError("resource_projection_rejected")
+        if (
+            row["observed_at"] < 0
+            or (
+                row["fresh"]
+                and not -1 <= value["evaluated_at"] - row["observed_at"] <= 4
+            )
+            or (row["fresh"] and integrator["state"] != "observed")
+            or (row["state"] != "unknown" and not row["fresh"])
+            or (
+                row["state"] in {"absent", "no-use-detected"}
+                and not row["coverage_complete"]
+            )
+        ):
+            raise ValueError("resource_projection_rejected")
+        selected_sensors.append(
+            {
+                k: row[k]
+                for k in (
+                    "id",
+                    "resource_ref",
+                    "state",
+                    "observed_at",
+                    "fresh",
+                    "coverage_complete",
+                    "media_read",
+                )
+            }
+        )
+    selected_controls = []
+    for row in controls:
+        if (
+            not isinstance(row, dict)
+            or row.get("id") != "panel-view"
+            or row.get("commands") != [["view", "compact"], ["view", "expanded"]]
+            or row.get("permission") != "existing-owner-control-required"
+            or row.get("executed") is not False
+            or any(
+                row.get(k) is not None and type(row[k]) is not bool
+                for k in ("requested_compact", "observed_compact")
+            )
+        ):
+            raise ValueError("resource_projection_rejected")
+        selected_controls.append(
+            {
+                k: row.get(k)
+                for k in (
+                    "id",
+                    "commands",
+                    "permission",
+                    "executed",
+                    "requested_compact",
+                    "observed_compact",
+                )
+            }
+        )
+    return {
+        "resource_ref": resource_ref,
+        "evaluated_at": value["evaluated_at"],
+        "integrator": {k: integrator[k] for k in ("state", "observed_at")},
+        "perceptors": selected_sensors,
+        "actuators": selected_controls,
+    }
+
+
+def resource_discovery(
+    settings, *, scope, resource_ref, call=None, now_ms=None, clock=time.monotonic_ns
+):
+    """Associate one selected resource read with the current authenticated body."""
+    settings = configuration(settings)
+    if scope not in DEVICE_SCOPES:
+        raise ValueError("unsupported_resource_scope")
+    selected = [
+        row
+        for row in settings.get("resources", [])
+        if row["resource_ref"] == resource_ref
+    ]
+    if len(selected) != 1:
+        raise ValueError("resource_route_not_selected")
+    now = time.time_ns() // 1_000_000 if now_ms is None else now_ms
+    if settings["expires_at_ms"] <= now:
+        raise ValueError("scope_probe_expired")
+    deadline = clock() + min(60_000, settings["expires_at_ms"] - now) * 1_000_000
+    if call is None:
+
+        def call(command, request):
+            remaining = (deadline - clock()) / 1_000_000_000
+            if remaining <= 0:
+                raise TimeoutError("scope_probe_deadline")
+            return bounded_call(command, request, timeout=min(30, remaining))
+
+    observer = next(
+        row for row in settings["targets"] if row["id"] == settings["observer_id"]
+    )
+    request_id = str(uuid.uuid4())
+    report = dict(
+        schema="dm.scope.resources/v1",
+        scope=scope,
+        request_id=request_id,
+        resource_ref=resource_ref,
+        observed_at_ms=now,
+        members=[],
+        unavailable=[],
+        partial=True,
+        confirmed_native_calls=0,
+        confirmed_resource_reads=0,
+        native_call_ceiling=1,
+        resource_call_ceiling=1,
+        model_calls=0,
+        device_capture_started=False,
+        controls_executed=False,
+        media_read=False,
+        association="operator-selected-existing-resource-route",
+        control_authority="existing-owner-control-required-not-a-discovery-grant",
+        resource_ownership="not-established-by-discovery",
+    )
+    try:
+        body = binding(
+            call(observer["command"], {"view": "body", "request_id": request_id}),
+            observer,
+        )
+        if body.get("schema") != "dm.scope.me-surface/v1":
+            raise ValueError("scope_native_body_rejected")
+        validate_surface_snapshot(
+            body.get("surface"),
+            body_ref=observer["server"]["body_ref"],
+            embodiment_id=observer["server"]["embodiment_id"],
+            incarnation_id=observer["server"]["incarnation_id"],
+            evaluated_at_ms=body.get("evaluated_at_ms"),
+        )
+        report.update(
+            observer=observer["server"],
+            being_ref=observer["being_ref"],
+            confirmed_native_calls=1,
+        )
+    except (OSError, RuntimeError, ValueError, TimeoutError):
+        report["unavailable"] = [{"reason": "native-body-unavailable-or-rejected"}]
+        return report
+    try:
+        observed = call(selected[0]["command"], {})
+        received_at = time.time_ns() // 1_000_000 if now_ms is None else now_ms
+        device = device_projection(observed, resource_ref, received_at)
+        if scope == "/integrators":
+            report["members"] = [device]
+        else:
+            report["members"] = device[scope[1:]]
+        report.update(
+            confirmed_resource_reads=1,
+            partial=device["integrator"]["state"] != "observed",
+            resource_state=device["integrator"]["state"],
+        )
+    except (OSError, RuntimeError, ValueError, TimeoutError):
+        report["unavailable"] = [
+            {"reason": "resource-projection-unavailable-or-rejected"}
+        ]
+    if len(encode(report)) > MAX_BYTES:
+        raise ValueError("scope_report_capacity")
+    return report
+
+
 def probe(root, request):
     """Use existing owner client; never open the active runtime/ledger offline."""
     from daimon_matrix.client import ClientConfig, LocalClient, read_capability_key
@@ -603,14 +843,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe-runtime", type=Path)
     parser.add_argument("--config", type=Path)
-    parser.add_argument("--scope", choices=("/near", "/everyone"), default="/near")
+    parser.add_argument(
+        "--scope",
+        choices=("/near", "/everyone", "/integrators", "/perceptors", "/actuators"),
+        default="/near",
+    )
     parser.add_argument("--include-humans", action="store_true")
+    parser.add_argument("--resource")
     parser.add_argument("--domain")
     parser.add_argument("--within-ms", type=int)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     if args.include_humans and (args.probe_runtime or args.scope != "/everyone"):
         parser.error("include-humans requires the /everyone coordinator")
+    if args.resource is not None and (
+        args.probe_runtime or args.scope not in DEVICE_SCOPES
+    ):
+        parser.error("resource requires a device scope coordinator")
     if args.probe_runtime:
         raw = sys.stdin.buffer.read(4097)
         if len(raw) > 4096:
@@ -619,7 +868,17 @@ def main():
     else:
         if not args.config or not args.report:
             parser.error("config and report are required")
-        if args.scope == "/everyone":
+        if args.scope in DEVICE_SCOPES:
+            if (
+                not args.resource
+                or args.domain is not None
+                or args.within_ms is not None
+            ):
+                parser.error("device scopes require resource and no distance domain")
+            report = resource_discovery(
+                private_read(args.config), scope=args.scope, resource_ref=args.resource
+            )
+        elif args.scope == "/everyone":
             if args.domain is not None or args.within_ms is not None:
                 parser.error("/everyone does not take a distance domain or threshold")
             report = everyone(
@@ -646,6 +905,16 @@ def main():
                             "confirmed_home_reads": report["confirmed_home_reads"],
                         }
                         if args.include_humans
+                        else {}
+                    ),
+                    **(
+                        {
+                            "resource_ref": report["resource_ref"],
+                            "confirmed_resource_reads": report[
+                                "confirmed_resource_reads"
+                            ],
+                        }
+                        if args.scope in DEVICE_SCOPES
                         else {}
                     ),
                     "model_calls": 0,
