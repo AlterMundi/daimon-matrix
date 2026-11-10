@@ -723,10 +723,43 @@ class GroupRuntimeTests(unittest.TestCase):
                 "representation": "compact-text/v1",
             }
         sender.direct_reader_ready = lambda _: True
-        recovery_id = str(uuid.uuid4())
-        sender.recover(
-            client_id="test", original_send_id=args["send_id"], recovery_id=recovery_id
+        from daimon_matrix.local_api import create_capability, create_request
+        from daimon_matrix.service import HostedWeave, MessagingServiceContext
+
+        capability = create_capability(
+            b"c" * 32,
+            client_id="test",
+            methods=["messaging.send"],
+            not_before_ms=self.fixture.now,
+            not_after_ms=self.fixture.now + 1_000_000,
         )
+        hosted = HostedWeave(
+            ledger=sender.lane.ledger,
+            signer=sender.lane.signer,
+            capabilities={capability.capability_id: capability},
+            clock=sender.lane.clock,
+            runtime_id="dm:runtime:v1:" + "s" * 43,
+            runtime_label="portable-recovery",
+            messaging=MessagingServiceContext(
+                channels={"tribe": sender},
+                deliveries={"tribe": sender},
+                client_channels={"test": frozenset({"tribe"})},
+            ),
+        )
+        recovery_id = str(uuid.uuid4())
+        request = create_request(
+            capability,
+            request_id=recovery_id,
+            issued_at_ms=self.fixture.now,
+            method="messaging.send",
+            params=dict(
+                schema="dm.tribe.recovery-request/v1",
+                channel_id="tribe",
+                original_send_id=args["send_id"],
+                recovery_id=recovery_id,
+            ),
+        )
+        self.assertTrue(hosted.handle(request)["ok"])
         for server in [*self.servers, self.servers[0]]:
             server._threads.join()
         retained = sender.inspect(client_id="test", send_id=args["send_id"])
@@ -738,9 +771,9 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertEqual(
             [r["message"]["event_id"] for r in rows], [original["message_id"]]
         )
-        sender.recover(
-            client_id="test", original_send_id=args["send_id"], recovery_id=recovery_id
-        )
+        replay = hosted.handle(request)
+        self.assertTrue(replay["ok"])
+        self.assertEqual(replay["result"]["message_id"], original["message_id"])
         self.assertEqual(publishers[0].calls, before)
 
     def test_group_recovery_preserves_author_retention_and_whole_frozen_audience(self):

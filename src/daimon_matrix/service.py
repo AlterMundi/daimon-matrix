@@ -828,7 +828,12 @@ class HostedWeave:
                         self._messaging_delivery(
                             {
                                 "channel_id": request["params"]["channel_id"],
-                                "send_id": request["params"]["send_id"],
+                                "send_id": (
+                                    request["params"]["original_send_id"]
+                                    if request["params"].get("schema")
+                                    == "dm.tribe.recovery-request/v1"
+                                    else request["params"]["send_id"]
+                                ),
                             },
                             client_id=client_id,
                         )
