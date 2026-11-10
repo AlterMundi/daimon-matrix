@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
@@ -128,17 +129,28 @@ def _sync(path: Path) -> None:
         os.close(fd)
 
 
-def _write(path: Path, data: bytes) -> None:
+def _write_file(path: Path, data: bytes) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _write(path: Path, data: bytes) -> None:
+    _write_file(path, data)
     _sync(path.parent)
 
 
 def _copy(snapshot: dict[str, bytes], root: Path) -> None:
+    """Persist a private tree before returning, without per-file directory flushes.
+
+    No caller publishes an incomplete tree. Each file is durable before the
+    final bottom-up directory sync makes its name durable; partial trees remain
+    owned recovery state if writing or syncing fails.
+    """
     root.mkdir(mode=0o700)
+    directories = {root}
     for name, data in snapshot.items():
         path = root / name
         missing = []
@@ -148,14 +160,32 @@ def _copy(snapshot: dict[str, bytes], root: Path) -> None:
             parent = parent.parent
         for directory in reversed(missing):
             directory.mkdir(mode=0o700)
-            _sync(directory.parent)
+            directories.add(directory)
         if name.endswith("/"):
             path.mkdir(mode=0o700, exist_ok=True)
-            _sync(path.parent)
+            directories.add(path)
         else:
-            _write(path, data)
-    _sync(root)
+            _write_file(path, data)
+    for directory in sorted(
+        directories, key=lambda item: len(item.parts), reverse=True
+    ):
+        _sync(directory)
     _sync(root.parent)
+
+
+def _copy_capability_trees(snapshot: dict[str, bytes], transaction: Path) -> Path:
+    """Copy the same immutable snapshot with two finite, joined I/O workers."""
+    candidate = transaction / "successor"
+    with ThreadPoolExecutor(
+        max_workers=2, thread_name_prefix="dm-upgrade-copy"
+    ) as pool:
+        futures = [
+            pool.submit(_copy, snapshot, destination)
+            for destination in (transaction / "checkpoint", candidate)
+        ]
+        for future in futures:
+            future.result()
+    return candidate
 
 
 @contextmanager
@@ -974,9 +1004,7 @@ def stage_capabilities(
             raise UpgradeError("upgrade_method_missing_or_already_issued")
         transaction.mkdir(mode=0o700)
         _sync(transaction.parent)
-        _copy(snapshot, transaction / "checkpoint")
-        candidate = transaction / "successor"
-        _copy(snapshot, candidate)
+        candidate = _copy_capability_trees(snapshot, transaction)
         store = EncryptedKeystore(candidate / "custody.json")
         current = store.open(
             lambda: bytearray(password),

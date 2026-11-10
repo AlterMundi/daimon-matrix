@@ -71,6 +71,14 @@ The source and transaction must be sibling owner-only directories. Inspect the
 bundle's actual counter, control head, being and full origin. Compute the exact
 quiescent source inventory:
 
+Staging retains complete checkpoint and successor trees, including all history.
+It copies those trees from one immutable snapshot with at most two joined I/O
+workers. Each file is synced before the final bottom-up directory sync; the
+ready receipt follows both complete copies and the normal runtime validations.
+A failed worker is joined before the operation returns. Partial private trees
+stay with the existing recovery record and never establish publication. These
+copy optimizations change no grant, expiry, validation or recovery requirement.
+
 ```bash
 python -I -m daimon_matrix.operator_runtime_upgrade inventory \
   --source /owner/package/runtime
