@@ -2374,11 +2374,13 @@ def publish_group_visibility(
     *,
     expected_installation_sha256: str | None,
     initial_configuration: Mapping[str, Any] | None = None,
+    replacement_configuration: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Select fully accepted group visibility under the trusted offline writer.
 
-    Existing owners preserve their exact destination, keys, qualification and
-    history. A genuine first installation uses the owner's separately approved
+    Existing owners preserve their keys and history. An explicit replacement
+    selects an accepted portable destination without recreating the installation.
+    A genuine first installation uses the owner's separately approved
     destination/secrets/qualification; it does not overwrite a native baseline.
     No probe, message, membership, egress selection or model is started here.
     """
@@ -2402,6 +2404,11 @@ def publish_group_visibility(
                     "application": app_digest,
                     "disclosure": disclosure,
                     "predecessor": expected_installation_sha256,
+                    **(
+                        {"replacement_configuration": replacement_configuration}
+                        if replacement_configuration is not None
+                        else {}
+                    ),
                 }
             )
         )
@@ -2415,6 +2422,7 @@ def publish_group_visibility(
             if (
                 initial_configuration is None
                 or "destination" not in initial_configuration
+                or replacement_configuration is not None
             ):
                 raise MessagingConfigError("messaging_group_visibility_conflict")
             approved_destination = initial_configuration["destination"]
@@ -2484,6 +2492,31 @@ def publish_group_visibility(
             approved_destination = previous["disclosure"]["destination"]
             generation = previous["generation"] + 1
             base = copy.deepcopy(previous)
+            if replacement_configuration is not None:
+                if (
+                    set(replacement_configuration)
+                    != {"destination", "publication_backend"}
+                    or not isinstance(replacement_configuration["destination"], Mapping)
+                    or "publication" not in replacement_configuration["destination"]
+                ):
+                    raise MessagingConfigError("messaging_group_visibility_conflict")
+                approved_destination = replacement_configuration["destination"]
+                # Retain the original private proof key; retired Telegram material
+                # remains in the authenticated predecessor, never in the new policy.
+                base["schema"] = "dm.messaging.visibility-installation/v2"
+                base["secrets"] = {
+                    "proof_key_file": previous["secrets"]["proof_key_file"]
+                }
+                base.pop("telegram_qualification", None)
+                base["publication_backend"] = copy.deepcopy(
+                    replacement_configuration["publication_backend"]
+                )
+                base["policy"] = {
+                    "schema": "daimon-visibility-policy/v3",
+                    "origin": "owner-signed-installation",
+                    **approved_destination,
+                    "proof_key_id": previous["policy"]["proof_key_id"],
+                }
 
         _verify_group_visibility_disclosure(
             runtime,
@@ -2550,8 +2583,12 @@ def publish_group_visibility(
         }
         if prior is not None:
             previous = prior["document"]
-            if not set(previous["disclosure"]["participants"]) < set(
-                disclosure["participants"]
+            old_participants = set(previous["disclosure"]["participants"])
+            new_participants = set(disclosure["participants"])
+            if not (
+                old_participants <= new_participants
+                if replacement_configuration is not None
+                else old_participants < new_participants
             ):
                 raise MessagingConfigError("messaging_group_visibility_conflict")
             old_shape = copy.deepcopy(dict(disclosure))
@@ -2561,6 +2598,10 @@ def publish_group_visibility(
                 "participants"
             ]
             old_shape["scope_sha256"] = config_digest(old_shape["scope"])
+            if replacement_configuration is not None:
+                old_shape["destination"] = previous["disclosure"]["destination"]
+                old_shape["schema"] = previous["disclosure"]["schema"]
+                old_shape["risk"] = previous["disclosure"]["risk"]
             if (
                 old_shape != previous["disclosure"]
                 or disclosure["issued_at_ms"] < old_shape["issued_at_ms"]

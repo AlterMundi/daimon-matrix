@@ -87,7 +87,24 @@ The native worker's `confirm_publications` transport callback runs only from an
 authenticated confirmed journal record, after the response commit. It passes
 exact publication IDs and request hashes; repetition never republishes. The
 native installer/transport connects this acknowledgment and the original deadline
-to the App route; its live child selection remains pending.
+to the App route; it is selected on all four children.
+
+## Changing an existing publication destination
+
+The existing trusted `publish_group_visibility` writer accepts an explicit
+`replacement_configuration` containing only `destination` and
+`publication_backend`. This selects a portable Conversation destination for an
+existing installation, without reenrollment or a membership expansion. Use the
+current installation digest as the predecessor and the ordinary complete signed
+disclosure/bindings for the new destination. No additional human approval or
+separate installation is required for an already authorized change.
+
+The writer retains the original proof key, increments the generation and saves
+the authenticated predecessor under its existing bounded operation/recovery
+route. The exact replacement backend is part of operation identity; a changed
+backend cannot reuse a lost acknowledgment. Ordinary membership expansion keeps
+its existing destination-preserving behavior. Selection affects future messages:
+it does not retry old obligations or settle earlier ambiguous Telegram effects.
 
 The existing App/Gateway conversation writer and actor/resource grant supply
 this typed publication and retained-receipt operation. Reuse its canonical
