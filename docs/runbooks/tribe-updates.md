@@ -36,7 +36,11 @@ receipts; a signed record alone cannot execute an external effect.
 
 For routine SDK delivery use Cluster's existing
 [successor route](https://github.com/nicoechaniz/daimon-cluster/blob/main/docs/runbooks/tribu-sdk-successor.md),
-including current group-reader qualification after a reload. For skills use the
+including authenticated local-reader recovery on the updated body after a
+compatible reload. Reuse its valid positive intent; unrelated peer preflight and
+new whole-group reader controls are unnecessary for compatible code changes.
+Authority, wire, store or policy changes still use the existing receiver-compatible
+successor route. For skills use the
 [selective update route](shared-skill-updates.md). Neither route requires a chat
 message as its only distribution surface. Publish reusable source and operator
 instructions in the owning project so another authorized operator can maintain
@@ -54,17 +58,26 @@ Sources view reports retained evidence, not a tribe-wide fresh update catalog.
 A single general operator connecting selected cross-being software offers to
 all owning application installers, receiver decisions, resumable deployment and
 actual harness/model uptake is not established by these mechanisms. The
-same-being integration work still has behavior/materialization and actual
-receiving-use gaps; it is not a generic cross-being app updater. Full human
-membership/endpoint coverage and automatic future onboarding likewise remain
-partial. Track these gaps in the existing foundation roadmap (#302/#437) and
+bounded same-being integration accepted under #228/#376/#407 includes local
+preview/decisions, selected memory/skill/behavior materialization and actual
+two-body receiving use. Reuse those original receipts for that accepted scope;
+do not rerun its pilot to prove routine software maintenance. Later deltas need
+their own local decisions, and unobserved bodies remain unavailable. This is not
+a generic cross-being app updater. Broader reciprocal memory/behavior learning,
+full human endpoint coverage and automatic future onboarding remain partial.
+Track these gaps in the existing foundation roadmap (#302/#437) and
 owning component issues, without creating another catalog or approval framework.
 
 DaimonApp owns its voice/API and application receiving/fleet implementation.
 Matrix supplies the scope/identity/evidence contracts and existing shared routes;
-this clarification starts no duplicate application implementation. Heartbeat
-messaging activation and pause controls are separate unfinished work. No timer,
-autonomous reply, model wakeup or global Stop follows from this document.
+this clarification starts no duplicate application implementation. The original
+three and Pixin, Calipso, C-137 and Noodles have signed/native admission and
+retained automatic Messaging action/reply journeys. Selected lanes and independent
+pause controls retain their existing policy. Sustained full-goal acceptance is
+unfinished; resolve actual operation and remaining work from the
+[single coverage map](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440),
+not historical pilot labels. No timer, model wakeup, lane activation or global
+Stop follows from reading this document.
 
 Keep evidence precise: **published → available/received → assessed/selected →
 installed/loaded → actually used**, recording only observed steps and unavailable
