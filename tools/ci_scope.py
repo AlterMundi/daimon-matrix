@@ -262,6 +262,7 @@ CONTEXT_DOC_FILES = frozenset(
         "docs/dm081-source-runtime.md",
         "docs/portable-human-visibility.md",
         "docs/runbooks/same-being-delta.md",
+        "docs/runbooks/tribe-updates.md",
         "docs/runbooks/tribu-human-mentions.md",
         "docs/runbooks/receiver-compatible-authority-updates.md",
         "docs/mandatory-telegram-visibility.md",
@@ -484,6 +485,7 @@ def profile(paths: list[str]) -> str:
         "docs/dm081-source-runtime.md",
         "docs/portable-human-visibility.md",
         "docs/runbooks/same-being-delta.md",
+        "docs/runbooks/tribe-updates.md",
         "docs/runbooks/tribu-human-mentions.md",
     }
     if changed & prose_entrypoints and changed <= prose_entrypoints | {

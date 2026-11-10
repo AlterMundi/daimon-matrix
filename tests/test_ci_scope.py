@@ -594,6 +594,7 @@ class CIScopeTests(unittest.TestCase):
             "docs/dm081-source-runtime.md",
             "docs/portable-human-visibility.md",
             "docs/runbooks/same-being-delta.md",
+            "docs/runbooks/tribe-updates.md",
             "docs/runbooks/tribu-human-mentions.md",
         ):
             with self.subTest(entry=entry):
