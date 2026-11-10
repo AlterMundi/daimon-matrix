@@ -155,7 +155,8 @@
                 "items": {
                   "enum": [
                     "messaging.read",
-                    "messaging.send"
+                    "messaging.send",
+                    "read"
                   ]
                 }
               }

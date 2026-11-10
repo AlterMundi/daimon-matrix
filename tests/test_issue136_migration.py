@@ -1847,8 +1847,12 @@ class MigrationTests(RuntimeFixture):
             ]["encryption_key"],
         }
         runtime.verify_relationship_card_authority(card, history, at_ms=NOW + 10**12)
+        runtime.verify_relationship_card_authority(card, self.authority, at_ms=NOW)
+        old_credential = self.credentials[old_row["embodiment_credential_id"]]
         with self.assertRaises(ValueError):
-            runtime.verify_relationship_card_authority(card, self.authority, at_ms=NOW)
+            runtime.verify_relationship_card_authority(
+                card, self.authority, at_ms=old_credential["body"]["valid_until_ms"] + 1
+            )
         altered = copy.deepcopy(card)
         altered["control_position"]["manifest_hash"] = "a" * 64
         with self.assertRaises(ValueError):
