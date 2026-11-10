@@ -21,13 +21,16 @@ class FixtureComplete(Exception):
 class V2Journey(_Journey):
     """Reuse signed bilateral fixtures, stopping before any delivery/network."""
 
-    def __init__(self, root):
+    def __init__(self, root, *, operation="messaging.read", source_identifier=None):
         from dataclasses import replace
         from unittest.mock import patch
 
         from daimon_matrix.canonical import unb64url
         from daimon_matrix.synthetic_relationships import _identity, _seed
         from daimon_matrix.weave import BeingManifest, RootAuthority
+
+        self.operation = operation
+        self.source_identifier = source_identifier
 
         def v2_identity(label):
             old = _identity(label)
@@ -85,7 +88,10 @@ class V2Journey(_Journey):
             payload["status"] = "active"
             for entry in payload["resources"]:
                 old_ref = entry["resource_ref"]
-                entry["descriptor"]["operations"] = ["messaging.read"]
+                entry["descriptor"]["operations"] = [self.operation]
+                if self.source_identifier is not None:
+                    entry["descriptor"]["descriptor_ref"] = self.source_identifier
+                    entry["descriptor"]["classification"] = "public"
                 entry["resource_ref"] = relationships.resource_ref(entry["descriptor"])
                 self.resource_mapping = (old_ref, entry["resource_ref"])
         if kind in {"matrix/relationship-offer", "matrix/relationship-grant"}:
@@ -97,7 +103,9 @@ class V2Journey(_Journey):
                 }
                 row.pop("expires_at_ms")
                 for permission in row["permissions"]:
-                    permission["operations"] = ["messaging.read"]
+                    permission["operations"] = [self.operation]
+                    if self.source_identifier is not None:
+                        permission["classification"] = "public"
                     permission["resource_ref"] = self.resource_mapping[1]
         event = super().append(label, kind, payload, at_ms=at_ms)
         if kind == "matrix/relationship-grant-acceptance":
@@ -621,6 +629,114 @@ class CurrentAuthorityReviewTests(unittest.TestCase):
 
 
 class PermissionTests(unittest.TestCase):
+    def test_standing_source_read_is_exact_revocable_and_survives_clock_advance(self):
+        import json
+
+        from jsonschema import Draft202012Validator
+
+        from daimon_matrix.relationship_store import (
+            RelationshipServiceContext,
+            RelationshipSourceDisclosure,
+        )
+        from daimon_matrix.sources import source_id
+
+        selected = source_id(
+            {
+                "schema": "daimon-source-core/v0",
+                "kind": "project",
+                "namespace": "shared-skills",
+                "canonical_reference": "https://example.org/skills",
+            }
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            journey = V2Journey(
+                Path(temporary), operation="read", source_identifier=selected
+            )
+            journey.prepare()
+            events = journey.store.events()
+            grant = next(e for e in events if e["kind"] == "matrix/relationship-grant")
+            acceptance = next(
+                e for e in events if e["kind"] == "matrix/relationship-grant-acceptance"
+            )
+            controller = grant["being_ref"]
+            requester = grant["payload"]["subject_being_ref"]
+            clock = [NOW + 10**12]
+            disclosure = RelationshipSourceDisclosure(
+                RelationshipServiceContext(journey.store, journey.card_verifier),
+                controller,
+                lambda: clock[0],
+            )
+            with disclosure.scope():
+                self.assertTrue(disclosure(requester, selected, "public"))
+                self.assertFalse(disclosure(requester, selected, "tribe-shared"))
+                self.assertFalse(disclosure(controller, selected, "public"))
+                self.assertFalse(disclosure(requester, "dm:source:v0:other", "public"))
+            root = Path(__file__).resolve().parents[1]
+            contracts = Draft202012Validator(
+                json.loads(
+                    (
+                        root / "schemas/relationships/v2/contracts.schema.json"
+                    ).read_text()
+                )
+            )
+            for event in events:
+                contracts.validate(event["payload"])
+            view = journey.store.view(
+                at_ms=clock[0], card_verifier=journey.card_verifier
+            )
+            snapshot = view.snapshot(next(iter(view.tribes))).value
+            self.assertEqual(snapshot["grants"][0]["operations"], ["read"])
+            Draft202012Validator(
+                json.loads(
+                    (root / "schemas/relationships/v2/tribe.schema.json").read_text()
+                )
+            ).validate(snapshot)
+            _Journey.append(
+                journey,
+                "founder",
+                "matrix/relationship-grant-revocation",
+                {
+                    "schema": "dm.relationship.grant-revocation/v2",
+                    "grant_id": grant["payload"]["grant_id"],
+                    "grant_ref": _event_ref(grant),
+                    "acceptance_ref": _event_ref(acceptance),
+                    "actor_being_ref": controller,
+                    "action": "revoke",
+                    "reason": "manual",
+                    "revoked_at_ms": NOW + 100,
+                },
+                at_ms=NOW + 100,
+            )
+            clock[0] = NOW + 10
+            with disclosure.scope():
+                self.assertFalse(disclosure(requester, selected, "public"))
+
+    def test_standing_read_does_not_admit_effectful_operations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            journey = V2Journey(Path(temporary), operation="read")
+            journey.prepare()
+            event = next(
+                e
+                for e in journey.store.events()
+                if e["kind"] == "matrix/relationship-grant"
+            )
+            for operations in (["write"], ["execute"], ["publish"], ["read", "write"]):
+                payload = copy.deepcopy(event["payload"])
+                payload["permissions"][0]["operations"] = operations
+                with (
+                    self.subTest(operations=operations),
+                    self.assertRaisesRegex(
+                        relationships.RelationshipError,
+                        "indefinite_non_messaging_permission",
+                    ),
+                ):
+                    relationships.validate_relationship_event_payload(
+                        event["kind"],
+                        payload,
+                        author_being_ref=event["being_ref"],
+                        causal_parents=event["causal_parents"],
+                    )
+
     def test_v2_schema_and_public_vectors(self):
         import json
 
@@ -990,6 +1106,8 @@ class PermissionTests(unittest.TestCase):
                 [None],
                 [1],
                 "messaging.read",
+                ["write"],
+                ["read", "write"],
             ):
                 changed = copy.deepcopy(snapshot)
                 changed["grants"][0]["operations"] = malformed

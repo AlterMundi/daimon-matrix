@@ -435,11 +435,10 @@ def verify_relationship_card_authority(
             raise ValueError("inactive")
         credential = active.credentials[member["embodiment_credential_id"]]
         body = verify_embodiment_credential(credential, active.state, at_ms=at_ms)
-        if card["schema"] == "dm.relationship.card/v2" and (
-            credential["schema"] != "dm.identity.artifact/v2"
-            or body["validity"]["mode"] != "until-revoked"
-        ):
-            raise ValueError("finite messaging dependency")
+        # The card's standing validity does not extend its current credential.
+        # Verification above enforces the actual dependency expiry/revocation
+        # on every use; a finite credential need not be reissued merely to keep
+        # an otherwise revocable resource declaration.
         if (
             card["encryption_key"] != body["encryption_key"]
             or "messages" not in body["purposes"]

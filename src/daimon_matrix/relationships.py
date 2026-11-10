@@ -15,6 +15,7 @@ from .identity import VerificationError, validate_validity, validity_contains
 TRIBE_SNAPSHOT_SCHEMA: Final = "dm.tribe-snapshot/v1"
 TRIBE_SNAPSHOT_SCHEMA_V2: Final = "dm.tribe-snapshot/v2"
 MESSAGING_OPERATIONS: Final = frozenset({"messaging.read", "messaging.send"})
+REVOCABLE_PERMISSION_OPERATIONS: Final = MESSAGING_OPERATIONS | {"read"}
 TRIBE_REF_PREFIX: Final = "dm:tribe:v1:"
 TRIBE_DOMAIN: Final = b"daimon/tribe/declaration/v1\x00"
 MAX_MEMBERS: Final = 256
@@ -311,7 +312,7 @@ def _grant(value: Any, expected_ref: str, *, v2: bool = False) -> dict[str, Any]
         validity = _v2_validity(row["validity"], "invalid_tribe_grant")
         if (
             validity["mode"] == "until-revoked"
-            and not set(row["operations"]) <= MESSAGING_OPERATIONS
+            and not set(row["operations"]) <= REVOCABLE_PERMISSION_OPERATIONS
         ):
             raise RelationshipError("indefinite_non_messaging_permission")
     else:
@@ -622,7 +623,7 @@ def _v2_validity(value: Any, code: str, permissions: Any = None) -> dict[str, An
         and (
             not permissions
             or any(
-                not set(row["operations"]) <= MESSAGING_OPERATIONS
+                not set(row["operations"]) <= REVOCABLE_PERMISSION_OPERATIONS
                 for row in _permissions(permissions, code)
             )
         )

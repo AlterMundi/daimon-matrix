@@ -1,4 +1,4 @@
-# Messaging permission validity V2 — issue #136 library slice
+# Relationship permission validity V2 — issue #136 library slice
 
 Status: implementation contract for identity/relationships/hosted startup. This is
 NOT an authorization to migrate custody, a deployment claim, independent review,
@@ -18,16 +18,23 @@ V2 uses a closed tagged union:
 
 Instants MUST be integers (not booleans), from zero through the JCS safe-integer
 maximum. Finite intervals are half-open and MUST have U > T. Unknown modes,
-extra fields and null deadlines fail closed. A child MUST begin no earlier than
-its parent; an indefinite child MUST NOT descend from finite authority. Finite
+extra fields and null deadlines fail closed. A delegated grant MUST begin no
+earlier than its parent grant; an indefinite child grant MUST NOT descend from
+a finite offer or parent grant. Finite
 V2 proposed/actual grants retain the V1 maximum duration. Actual finite grants
 MUST be issued before their end.
 
 Indefinite relationship permissions are restricted to the exact operations
-`messaging.read` and `messaging.send`. Other operations, including legacy `read`,
-remain finite. An application adapter MUST explicitly adopt the new operation
-and exact resource; it MUST NOT interpret an indefinite messaging grant as
-ordinary memory, source, compute, publication or administrative permission.
+`messaging.read`, `messaging.send` and `read`. Standing read-only access MUST be
+explicitly offered, accepted and granted for its exact resource/classification;
+it is never inferred from membership, a messaging grant or a previously expired
+finite grant. Current cards, credential validity, signed revocation, withdrawal,
+parent attenuation and classification checks still apply to every read.
+Write, execution, compute, publication and administrative operations remain
+finite. A read grant MUST NOT authorize attention, a model invocation, automatic
+adoption or an extension of an existing finite review/resource contract.
+An application adapter MUST explicitly adopt the operation and exact resource;
+it MUST NOT interpret a messaging grant as ordinary memory or Source read access.
 
 ## 2. Signed relationship history
 
@@ -124,8 +131,11 @@ into V8's closed finite operator/host role inventory.
 
 `verify_relationship_card_authority(card, authority, at_ms=...)` checks historical
 manifest pins separately from the current same-body routing key and root revocation.
-V2 cards require a current indefinite V2 dependency credential. Finite peer
-credentials cannot silently become indefinite enrollment dependencies.
+V2 cards require a currently valid dependency credential. A standing card MUST
+NOT extend a finite credential: actual credential expiry and current root
+revocation MUST be checked at each use. An active finite credential therefore
+needs no identity succession merely to sign a revocable resource declaration.
+Historical card validation MUST NOT substitute for that current dependency check.
 
 ## 5. Current authorization versus history
 

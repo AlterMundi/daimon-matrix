@@ -157,6 +157,13 @@ Its only V0 target is `external-reference`. The projection preserves every
 original/derived node and author; it cannot create autobiographical or body
 experience. Exact authenticated RPC replay prevents duplicate promotion.
 
+Read-only Source access may use an explicitly accepted V2 `read` permission
+with `until-revoked` validity. Use the existing knowledge resource and current
+standing cards; do not renew an expired finite grant by editing its deadline.
+This access remains revocable at every export boundary and grants neither
+automatic intake/adoption nor model attention. A finite SourceReview contract
+keeps its original counters, deadline and pause/stop state independently.
+
 A tombstone stops offers and deactivates the projection while retaining event,
 decision, receipt, provenance and content bytes. Claim retraction/reassertion
 uses predecessor-linked successors and never rewrites history.

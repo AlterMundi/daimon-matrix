@@ -26,8 +26,10 @@ See [the protocol](../../specs/messaging-permissions-v2.md).
   signed binding, client bytes and secret-slot checks remain mandatory even when
   unavailable. `LocalCapability.active_at` determines availability, not readiness.
 * `runtime.verify_relationship_card_authority`: current root/credential and
-  routing-key check with historical card pin selection. Requires indefinite V2
-  credential for a V2 card. It assumes separately authenticated card event/lane.
+  routing-key check with historical card pin selection. A standing card cannot
+  extend its current credential's actual expiry or revocation. It assumes
+  separately authenticated card event/lane; an active finite credential does not
+  require identity succession merely for a standing resource declaration.
 * `local_api.create_messaging_capability`: V2 exact-method capability; the owner
   must attach it only together with durable revocation checks.
 * `RelationshipStore.authorization_view`: existing-state-only context manager,
