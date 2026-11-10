@@ -24,6 +24,16 @@ preparation or a publisher receipt is not adoption. Preserve current identities,
 keys, accounts, histories, local choices and unrelated pauses. The library-only
 change does not require identity succession for an otherwise active credential.
 
+When refreshing a card after a body change, use the current body's authenticated
+control position and its existing credential's public encryption key together.
+Do not copy a predecessor body's routing key merely because its resource list
+is still useful. Preserve resource identities and the old signed cards. A signed
+publication or accepted grant event alone is insufficient: read back current
+card/link/grant eligibility and the exact resource disclosure before claiming
+access. If the wrong key was already published, publish a correcting successor;
+retain the failed effects and issue a fresh grant only where its original
+issuance remains invalid. Do not rekey or reenroll the being to repair metadata.
+
 The F3 transaction below applies only when an explicitly selected operation
 actually replaces a runtime authority bundle. Its quiescence requirements protect
 that specific bundle replacement; they are not a daily permission, messaging or
