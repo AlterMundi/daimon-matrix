@@ -89,6 +89,23 @@ exact publication IDs and request hashes; repetition never republishes. The
 native installer/transport connects this acknowledgment and the original deadline
 to the App route; it is selected on all four children.
 
+## Readable publication and expired-before-attempt recovery
+
+The existing `compact-text/v1` presentation is also accepted by V3 policies.
+It publishes attributed ordinary speech and useful delivery status as text;
+authorization-control records render zero human-facing parts. Their exact native
+projection and signed authorization remain retained in the existing journals.
+A suppressed technical record is not a signed human-publication receipt.
+
+Use the existing accepted presentation/visibility successor writer after all
+required readers support that exact profile. The publication descriptor, audience,
+proof key, native identity and original message bindings remain unchanged.
+Legacy plain-JSON records retain their original rendering and proofs. The existing
+explicit recovery request can then carry an expired, proven-unattempted original
+without a second speech publication, using its one retained recovery ID. It does
+not renew uncertain carriers, resource accounts or an expired recovery authorization.
+No alternate transport, retry scheduler or new publication format is introduced.
+
 ## Changing an existing publication destination
 
 The existing trusted `publish_group_visibility` writer accepts an explicit

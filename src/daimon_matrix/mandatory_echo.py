@@ -253,7 +253,8 @@ def validate_policy(policy: dict[str, Any]) -> None:
             if (
                 type(policy["generation"]) is not int
                 or not 0 < policy["generation"] < 2**52
-                or policy["representation"] != "plain-json/v2"
+                or policy["representation"]
+                not in ("plain-json/v2", READABLE_REPRESENTATION)
             ):
                 raise ValueError
             _text(policy["origin"], 128)

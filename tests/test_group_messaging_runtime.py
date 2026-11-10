@@ -673,6 +673,109 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertEqual(len(receiver.page(after=0, limit=100)), 1)
         self.assertEqual(len(sender.egress._transport.requests), before_echo)
 
+    def test_portable_readable_successor_recovers_plain_original_without_new_speech(
+        self,
+    ):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        from tests.test_portable_visibility import JournalPublisher, encoded
+
+        sender, receiver = self.groups
+        publishers = []
+        for index, group in enumerate(self.groups):
+            key = Ed25519PrivateKey.from_private_bytes(bytes([index + 1]) * 32)
+            publisher = JournalPublisher(
+                Path(self.fixture.journey.root) / f"portable-{index}.sqlite", key
+            )
+            group.egress._transport = publisher
+            group.egress._policy = dict(
+                schema="daimon-visibility-policy/v3",
+                generation=1,
+                origin="fixture",
+                representation="plain-json/v2",
+                acceptance_digest="a" * 64,
+                proof_key_id="fixture",
+                publication=dict(
+                    kind="conversation-journal/v1",
+                    surface_ref=f"fixture:{index}",
+                    audience=["human:fixture"],
+                    receipt_key=encoded(key.public_key().public_bytes_raw()),
+                ),
+            )
+            publishers.append(publisher)
+        sender.direct_reader_ready = lambda _: False
+        args = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="keep this exact original",
+            destination={"kind": "being", "being_ref": receiver.lane.being_ref},
+        )
+        original = sender.send(**args)
+        self.assertEqual(original["visibility"]["echo_state"], "confirmed")
+        before = publishers[0].calls
+        native = sender.records.get("native", args["send_id"])
+        self.fixture.now += sender.policy.max_ttl_ms + 1
+        for group in self.groups:
+            group.egress._policy = {
+                **group.egress._policy,
+                "generation": 2,
+                "representation": "compact-text/v1",
+            }
+        sender.direct_reader_ready = lambda _: True
+        from daimon_matrix.local_api import create_capability, create_request
+        from daimon_matrix.service import HostedWeave, MessagingServiceContext
+
+        capability = create_capability(
+            b"c" * 32,
+            client_id="test",
+            methods=["messaging.send"],
+            not_before_ms=self.fixture.now,
+            not_after_ms=self.fixture.now + 1_000_000,
+        )
+        hosted = HostedWeave(
+            ledger=sender.lane.ledger,
+            signer=sender.lane.signer,
+            capabilities={capability.capability_id: capability},
+            clock=sender.lane.clock,
+            runtime_id="dm:runtime:v1:" + "s" * 43,
+            runtime_label="portable-recovery",
+            messaging=MessagingServiceContext(
+                channels={"tribe": sender},
+                deliveries={"tribe": sender},
+                client_channels={"test": frozenset({"tribe"})},
+            ),
+        )
+        recovery_id = str(uuid.uuid4())
+        request = create_request(
+            capability,
+            request_id=recovery_id,
+            issued_at_ms=self.fixture.now,
+            method="messaging.send",
+            params=dict(
+                schema="dm.tribe.recovery-request/v1",
+                channel_id="tribe",
+                original_send_id=args["send_id"],
+                recovery_id=recovery_id,
+            ),
+        )
+        self.assertTrue(hosted.handle(request)["ok"])
+        for server in [*self.servers, self.servers[0]]:
+            server._threads.join()
+        retained = sender.inspect(client_id="test", send_id=args["send_id"])
+        self.assertTrue(retained["semantic"]["terminal"])
+        self.assertEqual(retained["message_id"], original["message_id"])
+        self.assertEqual(sender.records.get("native", args["send_id"]), native)
+        self.assertEqual(publishers[0].calls, before)
+        rows = receiver.page(after=0, limit=10, thread_id=args["thread_id"])
+        self.assertEqual(
+            [r["message"]["event_id"] for r in rows], [original["message_id"]]
+        )
+        replay = hosted.handle(request)
+        self.assertTrue(replay["ok"])
+        self.assertEqual(replay["result"]["message_id"], original["message_id"])
+        self.assertEqual(publishers[0].calls, before)
+
     def test_group_recovery_preserves_author_retention_and_whole_frozen_audience(self):
         sender, receiver = self.groups
         args, original = self._expired_unattempted(group=True)
