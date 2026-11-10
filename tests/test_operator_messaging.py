@@ -3316,6 +3316,107 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
             foreign(selected["document"]["acceptance_set"]["bindings"]),
         )
 
+    def test_existing_visibility_can_select_portable_destination_without_reenrollment(
+        self,
+    ):
+        from daimon_matrix.operator_messaging import publish_group_visibility
+
+        self.accept()
+        self.publish()
+        installation, _, initial = self.initial_visibility()
+        previous = json.loads(installation.read_bytes())
+        proof = installation.parent / "proof.key"
+        original_key = (proof.stat().st_ino, proof.read_bytes())
+        configuration = {
+            "destination": {
+                "publication": {
+                    "kind": "conversation-journal/v1",
+                    "surface_ref": "fixture:general",
+                    "audience": ["human:fixture"],
+                    "receipt_key": b64url(
+                        Ed25519PrivateKey.from_private_bytes(b"p" * 32)
+                        .public_key()
+                        .public_bytes_raw()
+                    ),
+                },
+                "representation": "plain-json/v2",
+            },
+            "publication_backend": {
+                "kind": "owner-unix/v1",
+                "socket_path": str(installation.parent / "app.sock"),
+            },
+        }
+        disclosure, bindings = self.accepted_disclosure(configuration["destination"])
+        # Ordinary membership expansion cannot silently replace visibility.
+        with self.assertRaises(ValueError):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+            )
+        self.assertEqual(json.loads(installation.read_bytes()), previous)
+        with self.assertRaisesRegex(ValueError, "acceptance_missing"):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings[:1],
+                expected_installation_sha256=initial["installation_sha256"],
+                replacement_configuration=configuration,
+            )
+        result = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+            replacement_configuration=configuration,
+        )
+        selected = json.loads(installation.read_bytes())
+        document = selected["document"]
+        self.assertEqual(document["generation"], 2)
+        self.assertEqual(document["policy"]["schema"], "daimon-visibility-policy/v3")
+        self.assertEqual(
+            document["disclosure"]["participants"],
+            previous["document"]["disclosure"]["participants"],
+        )
+        self.assertEqual(document["secrets"], {"proof_key_file": "proof.key"})
+        self.assertNotIn("telegram_qualification", document)
+        self.assertEqual((proof.stat().st_ino, proof.read_bytes()), original_key)
+        predecessors = list(
+            installation.parent.glob(".group-visibility-*/predecessor.json")
+        )
+        self.assertEqual(len(predecessors), 1)
+        self.assertEqual(json.loads(predecessors[0].read_bytes()), previous)
+        retry = publish_group_visibility(
+            self.runtime,
+            self.app,
+            installation,
+            disclosure,
+            bindings,
+            expected_installation_sha256=initial["installation_sha256"],
+            replacement_configuration=configuration,
+        )
+        self.assertEqual(retry, {**result, "status": "current"})
+        altered = copy.deepcopy(configuration)
+        altered["publication_backend"]["socket_path"] += ".other"
+        with self.assertRaises(ValueError):
+            publish_group_visibility(
+                self.runtime,
+                self.app,
+                installation,
+                disclosure,
+                bindings,
+                expected_installation_sha256=initial["installation_sha256"],
+                replacement_configuration=altered,
+            )
+        self.assertEqual(json.loads(installation.read_bytes()), selected)
+
     def test_initial_and_expanded_visibility_preserve_keys_qualification_and_retry(
         self,
     ):
