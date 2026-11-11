@@ -4,9 +4,11 @@ Real SQLite and signed synthetic human/accounting authority; no network/models.
 """
 
 import hashlib
+import multiprocessing
 import sqlite3
 import tempfile
 import unittest
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -20,6 +22,15 @@ from daimon_matrix.review_runner import ReviewController
 from tests.test_execution_instruction import proof, request, verifier
 from tests.test_execution_store import Clock
 from tests.test_passive_messaging_execution import BoundedFakeRunner, Broker
+
+
+def crash_native_attempt(path, trust, cycle, exposure, identity):
+    import os
+
+    store = ExecutionStore(path, trust, clock=lambda: 100)
+    store.dispatch_provider_attempt(
+        cycle, identity, lambda: None, lambda: os._exit(17), exposure=exposure
+    )
 
 
 class FundingTests(unittest.TestCase):
@@ -71,7 +82,9 @@ class FundingTests(unittest.TestCase):
         self.store.grant_budget(data, self.signed(data))
         return data
 
-    def instruction(self, identity="review-1", accounts=None, maximum=30, **changes):
+    def instruction(
+        self, identity="review-1", accounts=None, maximum=30, attempts=None, **changes
+    ):
         data = (
             request(
                 store_id=self.store.store_id,
@@ -92,6 +105,9 @@ class FundingTests(unittest.TestCase):
             route="isolated-fake",
             max_charge=maximum,
         )
+        if attempts is not None:
+            funding["schema"] = "execution/instruction-funding/v2"
+            funding["max_provider_attempts"] = attempts
         self.store.fund_instruction(instruction, funding, self.signed(funding))
         return instruction
 
@@ -144,6 +160,248 @@ class FundingTests(unittest.TestCase):
             paused=paused,
         )
         self.store.control_funding(payload, self.signed(payload))
+
+    def attempt(self, instruction, cycle, identity=None, submit=None):
+        identity = identity or str(uuid.uuid4())
+        self.store.dispatch_provider_attempt(
+            cycle,
+            identity,
+            lambda: None,
+            submit or (lambda: self.calls.append(identity)),
+            exposure=self.exposure(instruction),
+        )
+        return identity
+
+    def settle_attempt(self, cycle, identity, amount):
+        payload = dict(
+            schema="execution/usage/v1",
+            store_id=self.store.store_id,
+            principal="human:test",
+            cycle_id=cycle.cycle_id,
+            operation_id=identity,
+            actual=amount,
+        )
+        receipt = self.signed(payload, self.accountant)
+        self.store.settle_charge(cycle, payload, receipt)
+        return payload, receipt
+
+    def test_provider_attempt_migration_preserves_legacy_signed_history(self):
+        instruction = self.instruction()
+        cycle = self.cycle(instruction)
+        self.send(instruction, cycle)
+        self.usage(cycle, 8)
+        self.pause()
+        tables = [
+            "metadata",
+            "instructions",
+            "cycles",
+            "operations",
+            "events",
+            "funding_accounts",
+            "instruction_funding",
+            "funding_members",
+            "call_charges",
+        ]
+        with closing(sqlite3.connect(self.path)) as db:
+            before = {t: db.execute(f"SELECT * FROM {t}").fetchall() for t in tables}
+        self.store.enable_provider_attempts()
+        self.store.enable_provider_attempts()  # idempotent, never another allocation
+        with closing(sqlite3.connect(self.path)) as db:
+            after = {t: db.execute(f"SELECT * FROM {t}").fetchall() for t in tables}
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 5)
+        self.assertEqual(before, after)
+        self.assertTrue(self.store.funding_status("episode")["paused"])
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)
+        self.pause(2, False)
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)  # migration alone never widens v1
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.store.funding_status("tribe")["active"], 1)
+        self.store.finish(cycle, "completed")
+        self.assertEqual(self.store.funding_status("tribe")["active"], 0)
+
+    def test_native_attempts_share_work_and_settle_only_exact_charge(self):
+        self.store.enable_provider_attempts()
+        self.account("one-active", "tribe", max_active=1)
+        instruction = self.instruction(
+            accounts=["one-active", "being", "episode"], attempts=3
+        )
+        cycle = self.cycle(instruction)
+        with self.assertRaises(ExecutionDenied):
+            self.send(instruction, cycle)  # no unlabelled send under v2
+        first = self.attempt(instruction, cycle)
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)  # unsettled exposure holds concurrency
+        payload, receipt = self.settle_attempt(cycle, first, 8)
+        self.store.settle_charge(cycle, payload, receipt)
+        for _ in range(2):
+            current = self.attempt(instruction, cycle)
+            self.settle_attempt(cycle, current, 8)
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)  # per-work fuel, despite spare money
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle, first)  # never replays a known return
+        self.assertEqual(len(self.calls), 3)
+        for account in ["one-active", "being", "episode"]:
+            status = self.store.funding_status(account)
+            self.assertEqual(
+                (
+                    status["calls"],
+                    status["spent"],
+                    status["reserved"],
+                    status["active"],
+                ),
+                (3, 24, 0, 0),
+            )
+        self.assertEqual(self.store.cycle_status(cycle.cycle_id)["state"], "intent")
+        with self.assertRaises(ExecutionDenied):
+            self.settle_attempt(cycle, first, 7)  # conflicting usage still refused
+
+    def test_native_attempt_global_fuel_is_atomic_within_one_work(self):
+        self.store.enable_provider_attempts()
+        self.account("two-calls", "tribe", max_calls=2)
+        instruction = self.instruction(
+            accounts=["two-calls", "being", "episode"], attempts=4
+        )
+        cycle = self.cycle(instruction)
+        barrier = Barrier(4)
+
+        def compete(_):
+            barrier.wait(timeout=5)
+            try:
+                self.attempt(instruction, cycle)
+                return True
+            except ExecutionDenied:
+                return False
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(compete, range(4)))
+        self.assertGreaterEqual(sum(results), 1)
+        self.assertLessEqual(sum(results), 2)
+        # A competitor can observe the other attempt's prepared intent. That
+        # refusal sent nothing; finish filling the remaining finite test fuel.
+        while len(self.calls) < 2:
+            self.attempt(instruction, cycle)
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)
+        status = self.store.funding_status("two-calls")
+        self.assertEqual(
+            (len(self.calls), status["calls"], status["charged"]), (2, 2, 60)
+        )
+        self.assertEqual(len(self.store.cycle_status(cycle.cycle_id)["operations"]), 2)
+
+    def test_native_attempt_unknown_result_reopen_pause_and_expiry_do_not_refund(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=3)
+        cycle = self.cycle(instruction)
+        first = self.attempt(instruction, cycle)
+        self.settle_attempt(cycle, first, 8)
+        self.pause()
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)
+        self.pause(2, False)
+        lost_id = str(uuid.uuid4())
+
+        def lost():
+            self.calls.append(lost_id)
+            raise TimeoutError("unknown physical attempt")
+
+        with self.assertRaises(TimeoutError):
+            self.attempt(instruction, cycle, lost_id, lost)
+        self.store = ExecutionStore(
+            self.path,
+            verifier(self.human),
+            clock=self.clock,
+            usage_verifier=verifier(self.accountant),
+        )
+        for identity in [lost_id, str(uuid.uuid4())]:
+            with self.assertRaises(ExecutionDenied):
+                self.attempt(instruction, cycle, identity)
+        status = self.store.funding_status("tribe")
+        self.assertEqual(
+            (status["calls"], status["spent"], status["reserved"]), (2, 8, 30)
+        )
+        self.assertEqual(len(self.calls), 2)
+        self.store.finish(cycle, "stopped")
+        self.clock.now = 200
+        self.assertEqual(self.store.funding_status("tribe")["charged"], 38)
+
+    def test_missing_operation_metadata_cannot_hide_a_retained_charge(self):
+        instruction = self.instruction()
+        cycle = self.cycle(instruction)
+        self.send(instruction, cycle)
+        self.usage(cycle, 8)
+        self.store.enable_provider_attempts()
+        # Incomplete/corrupt retained metadata must not erase the charge when
+        # the successor balance query joins its operation admission state.
+        with closing(sqlite3.connect(self.path)) as db:
+            db.execute("DELETE FROM operations WHERE cycle_id=?", (cycle.cycle_id,))
+            db.commit()
+        status = self.store.funding_status("tribe")
+        self.assertEqual(
+            (status["spent"], status["uncertain"], status["calls"]), (8, 1, 1)
+        )
+
+    def test_native_attempt_process_death_fences_same_and_shared_work(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=3)
+        cycle = self.cycle(instruction)
+        identity = str(uuid.uuid4())
+        process = multiprocessing.get_context("fork").Process(
+            target=crash_native_attempt,
+            args=(
+                self.path,
+                verifier(self.human),
+                cycle,
+                self.exposure(instruction),
+                identity,
+            ),
+        )
+        process.start()
+        process.join(timeout=5)
+        self.assertFalse(process.is_alive())
+        self.assertEqual(process.exitcode, 17)
+        self.store = ExecutionStore(self.path, verifier(self.human), clock=self.clock)
+        self.assertEqual(self.store.cycle_status(cycle.cycle_id)["state"], "intent")
+        for original in [identity, str(uuid.uuid4())]:
+            with self.assertRaises(ExecutionDenied):
+                self.attempt(instruction, cycle, original)
+        other = self.instruction("other-work", attempts=3)
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(other, self.cycle(other))
+        status = self.store.funding_status("tribe")
+        self.assertEqual(
+            (status["calls"], status["charged"], status["uncertain"]), (1, 30, 1)
+        )
+        self.assertEqual(self.calls, [])
+
+    def test_native_attempts_reopen_keeps_fuel_and_migration_requires_signed_v2(self):
+        with self.assertRaises(ExecutionDenied):
+            self.instruction("unmigrated", attempts=2)
+        self.store.enable_provider_attempts()
+        for value in [0, True, -1]:
+            with self.assertRaises(ExecutionDenied):
+                self.instruction("bad-" + str(value), attempts=value)
+        instruction = self.instruction(attempts=2)
+        cycle = self.cycle(instruction)
+        first = self.attempt(instruction, cycle)
+        self.settle_attempt(cycle, first, 1)
+        self.store = ExecutionStore(
+            self.path,
+            verifier(self.human),
+            clock=self.clock,
+            usage_verifier=verifier(self.accountant),
+        )
+        second = self.attempt(instruction, cycle)
+        self.settle_attempt(cycle, second, 2)
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)
+        self.assertEqual(self.store.funding_status("episode")["calls"], 2)
+        self.clock.now = cycle.deadline
+        with self.assertRaises(ExecutionDenied):
+            self.attempt(instruction, cycle)
+        self.assertEqual(len(self.calls), 2)
 
     def test_atomic_three_ceilings_and_authenticated_idempotent_usage(self):
         instruction = self.instruction()

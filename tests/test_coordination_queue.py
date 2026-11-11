@@ -220,6 +220,19 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.f.calls, [])
         self.assertEqual(runner.starts, [])
 
+    def test_provider_attempt_migration_keeps_queue_reports_and_pause(self):
+        self.enqueue()
+        self.f.pause()
+        before = self.store.episode_report("episode")["snapshot"]
+        self.store.enable_provider_attempts()
+        reopened = ExecutionStore(self.f.path, self.store.verifier, clock=self.f.clock)
+        report = reopened.episode_report("episode")
+        self.assertEqual(report["snapshot"], before)
+        self.assertTrue(report["reporting_enabled"])
+        self.assertIsNone(report["notice"])
+        self.assertTrue(reopened.funding_status("episode")["paused"])
+        self.assertEqual(self.f.calls, [])
+
     def test_combined_report_is_available_without_reporting_migration(self):
         report = self.store.episode_report("episode")
         self.assertEqual(report["snapshot"]["account_id"], "episode")

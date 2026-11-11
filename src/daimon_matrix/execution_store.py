@@ -58,7 +58,7 @@ class ExecutionStore:
                 "execution store missing; explicit provisioning required"
             )
         with closing(self._connect()) as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] not in {1, 2, 3, 4}:
+            if db.execute("PRAGMA user_version").fetchone()[0] not in {1, 2, 3, 4, 5}:
                 raise ExecutionDenied("unsupported execution store")
             self.store_id = db.execute("SELECT store_id FROM metadata").fetchone()[0]
 
@@ -557,19 +557,96 @@ class ExecutionStore:
         """
         if kind not in {"inference", "provider", "native"}:
             raise ExecutionDenied("unsupported dispatch")
-        operation_id = str(uuid.uuid4())
+        return self._dispatch(cycle, kind, scope, checkpoint, submit, exposure=exposure)
+
+    def dispatch_provider_attempt(
+        self,
+        cycle: Cycle,
+        operation_id: str,
+        checkpoint: Callable[[], None],
+        submit: Callable[[], T],
+        *,
+        exposure: Mapping[str, Any],
+    ) -> T:
+        """One physical send in an explicitly funded multi-attempt native cycle.
+
+        The trusted adapter retains this attempt UUID before crossing the provider
+        boundary. Reusing it NEVER calls submit again, even after a known return.
+        Like dispatch, submit only enqueues bounded transport bytes: it must not
+        run a model/tool loop or reenter the journal. This installs no native hook.
+        """
+        if not isinstance(operation_id, str):
+            raise ExecutionDenied("canonical provider attempt UUID required")
+        try:
+            if str(uuid.UUID(operation_id)) != operation_id:
+                raise ValueError("noncanonical attempt")
+        except ValueError as exc:
+            raise ExecutionDenied("canonical provider attempt UUID required") from exc
+        return self._dispatch(
+            cycle,
+            "provider_attempt",
+            None,
+            checkpoint,
+            submit,
+            exposure=exposure,
+            operation_id=operation_id,
+        )
+
+    def _dispatch(
+        self,
+        cycle: Cycle,
+        kind: str,
+        scope: Scope | None,
+        checkpoint: Callable[[], None],
+        submit: Callable[[], T],
+        *,
+        exposure: Mapping[str, Any] | None,
+        operation_id: str | None = None,
+    ) -> T:
+        if kind not in {"inference", "provider", "provider_attempt", "native"}:
+            raise ExecutionDenied("unsupported dispatch")
+        operation_id = operation_id or str(uuid.uuid4())
         with self._transaction() as db:
             instruction = self._guard(db, cycle)
             checkpoint()
             if kind == "native" and scope not in instruction.scope:
                 raise ExecutionDenied("outside approved scope")
-            if kind in {"inference", "provider"} and scope is not None:
+            if (
+                kind in {"inference", "provider", "provider_attempt"}
+                and scope is not None
+            ):
                 raise ExecutionDenied("invalid inference scope")
+            funding = self._funding(db, instruction)
+            multi = (
+                funding is not None
+                and funding["schema"] == "execution/instruction-funding/v2"
+            )
+            if kind == "provider_attempt" and not multi:
+                raise ExecutionDenied("explicit multi-attempt funding required")
+            if kind == "provider" and multi:
+                raise ExecutionDenied(
+                    "multi-attempt funding requires exact attempt admission"
+                )
+            if (
+                db.execute(
+                    "SELECT 1 FROM operations WHERE operation_id=?", (operation_id,)
+                ).fetchone()
+                is not None
+            ):
+                raise ExecutionDenied(
+                    "provider attempt already recorded; inspect original"
+                )
             count = db.execute(
                 "SELECT count(*) FROM operations WHERE cycle_id=? AND kind=?",
                 (cycle.cycle_id, kind),
             ).fetchone()[0]
-            limit = 1 if kind in {"inference", "provider"} else instruction.max_effects
+            limit = (
+                funding["max_provider_attempts"]
+                if kind == "provider_attempt" and funding is not None
+                else 1
+                if kind in {"inference", "provider"}
+                else instruction.max_effects
+            )
             if count >= limit:
                 raise ExecutionDenied("cycle resource budget exhausted")
             db.execute(
@@ -581,15 +658,19 @@ class ExecutionStore:
                     canonical(scope.__dict__).decode() if scope else None,
                 ),
             )
-            if kind == "provider":
+            if kind in {"provider", "provider_attempt"}:
                 self._reserve_charge(db, cycle, instruction, operation_id, exposure)
         try:
             with self._transaction() as db:
                 instruction = self._guard(db, cycle)
-                if kind == "provider":
+                if kind in {"provider", "provider_attempt"}:
                     funding = self._funding(db, instruction)
+                    # This exact prepared attempt is the one uncertainty this
+                    # owned submission may cross. Other retained intents fence
+                    # new work, including after a process dies before this point.
                     if funding is not None and any(
                         self._balance(db, aid)["uncertain"]
+                        > (1 if kind == "provider_attempt" else 0)
                         for aid in funding["accounts"]
                     ):
                         raise ExecutionDenied("shared funding became uncertain")
@@ -626,7 +707,7 @@ class ExecutionStore:
         )
         with self._transaction() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version in {2, 3, 4}:
+            if version in {2, 3, 4, 5}:
                 return
             if version != 1:
                 raise ExecutionDenied("unsupported funding migration")
@@ -636,7 +717,7 @@ class ExecutionStore:
 
     @staticmethod
     def _funding_schema(db: sqlite3.Connection) -> bool:
-        return bool(db.execute("PRAGMA user_version").fetchone()[0] in {2, 3, 4})
+        return bool(db.execute("PRAGMA user_version").fetchone()[0] in {2, 3, 4, 5})
 
     @staticmethod
     def _positive(value: object, *, zero: bool = False) -> bool:
@@ -726,7 +807,8 @@ class ExecutionStore:
         A renewed session/instruction does not renew these balances. Additional
         descendants require explicit signed bindings and consume shared accounts.
         """
-        if set(payload) != {
+        multi = payload.get("schema") == "execution/instruction-funding/v2"
+        expected = {
             "schema",
             "store_id",
             "principal",
@@ -734,8 +816,14 @@ class ExecutionStore:
             "accounts",
             "route",
             "max_charge",
-        } or (
-            payload["schema"] != "execution/instruction-funding/v1"
+        } | ({"max_provider_attempts"} if multi else set())
+        if set(payload) != expected or (
+            payload["schema"]
+            not in {
+                "execution/instruction-funding/v1",
+                "execution/instruction-funding/v2",
+            }
+            or (multi and not self._positive(payload["max_provider_attempts"]))
             or payload["store_id"] != self.store_id
             or payload["principal"] != instruction.principal
             or payload["instruction_sha256"] != instruction.sha256
@@ -751,6 +839,8 @@ class ExecutionStore:
         with self._transaction() as db:
             if not self._funding_schema(db):
                 raise ExecutionDenied("explicit funding migration required")
+            if multi and db.execute("PRAGMA user_version").fetchone()[0] != 5:
+                raise ExecutionDenied("explicit provider-attempt migration required")
             now = self._now(db)
             row = self._row(db, instruction.instruction_id, instruction.revision)
             if row["state"] != "active" or self._instruction(row) != instruction:
@@ -896,12 +986,17 @@ class ExecutionStore:
             "coalesce(sum(coalesce(c.actual,0)),0) AS spent, "
             "coalesce(sum(CASE WHEN c.actual IS NULL THEN c.maximum ELSE 0 END),0) "
             "AS reserved, "
-            "coalesce(sum(c.actual IS NULL OR y.state IN ('intent','ambiguous')),0) "
+            "coalesce(sum(CASE WHEN o.kind='provider_attempt' "
+            "THEN c.actual IS NULL OR o.state='intent' "
+            "ELSE c.actual IS NULL OR y.state IN ('intent','ambiguous') END),0) "
             "AS active, "
-            "coalesce(sum(y.state='ambiguous' OR "
+            "coalesce(sum(o.operation_id IS NULL OR y.state='ambiguous' OR "
+            "(o.kind='provider_attempt' AND o.state='intent') OR "
             "(c.actual IS NULL AND y.state!='intent')),0) AS uncertain "
             "FROM call_charges c JOIN funding_members m USING(instruction_sha256) "
-            "JOIN cycles y USING(cycle_id) WHERE m.account_id=?",
+            "JOIN cycles y USING(cycle_id) "
+            "LEFT JOIN operations o ON o.operation_id=c.operation_id "
+            "WHERE m.account_id=?",
             (account_id,),
         ).fetchone()
         result = {key: int(value) for key, value in dict(row).items()}
@@ -989,7 +1084,8 @@ class ExecutionStore:
             if not self._funding_schema(db):
                 raise ExecutionDenied("funding unavailable")
             row = db.execute(
-                "SELECT * FROM call_charges WHERE cycle_id=?", (cycle.cycle_id,)
+                "SELECT * FROM call_charges WHERE cycle_id=? AND operation_id=?",
+                (cycle.cycle_id, payload["operation_id"]),
             ).fetchone()
             if (
                 row is None
@@ -1005,15 +1101,16 @@ class ExecutionStore:
                     raise ExecutionDenied("conflicting usage receipt")
                 return
             db.execute(
-                "UPDATE call_charges SET actual=?,receipt=? WHERE cycle_id=?",
-                (payload["actual"], receipt, cycle.cycle_id),
+                "UPDATE call_charges SET actual=?,receipt=? "
+                "WHERE cycle_id=? AND operation_id=?",
+                (payload["actual"], receipt, cycle.cycle_id, payload["operation_id"]),
             )
 
     def enable_coordination_queue(self) -> None:
         """Explicit additive schema2 -> 3 migration; no dispatcher is started."""
         self.enable_funding()
         with self._transaction() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] in {3, 4}:
+            if db.execute("PRAGMA user_version").fetchone()[0] in {3, 4, 5}:
                 return
             db.execute(
                 "CREATE TABLE episode_policies(account_id TEXT PRIMARY KEY, "
@@ -1069,7 +1166,7 @@ class ExecutionStore:
         if len(canonical(dict(payload))) > 65536:
             raise ExecutionDenied("episode policy too large")
         with self._transaction() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4}:
+            if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4, 5}:
                 raise ExecutionDenied("explicit queue migration required")
             account, state = self._account(db, payload["account_id"])
             if (
@@ -1108,7 +1205,7 @@ class ExecutionStore:
                 raise ExecutionDenied("immutable episode policy exists") from exc
 
     def _episode(self, db: sqlite3.Connection, account_id: str) -> dict[str, Any]:
-        if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4}:
+        if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4, 5}:
             raise ExecutionDenied("coordination queue unavailable")
         row = db.execute(
             "SELECT * FROM episode_policies WHERE account_id=?", (account_id,)
@@ -1207,7 +1304,7 @@ class ExecutionStore:
         return work_id
 
     def _work(self, db: sqlite3.Connection, work_id: str) -> dict[str, Any]:
-        if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4}:
+        if db.execute("PRAGMA user_version").fetchone()[0] not in {3, 4, 5}:
             raise ExecutionDenied("coordination queue unavailable")
         row = db.execute(
             "SELECT * FROM coordination_work WHERE work_id=?", (work_id,)
@@ -1331,16 +1428,42 @@ class ExecutionStore:
         """Explicit additive schema3 -> 4; one retained notice slot per root."""
         self.enable_coordination_queue()
         with self._transaction() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] == 4:
+            if db.execute("PRAGMA user_version").fetchone()[0] in {4, 5}:
                 return
             db.execute("ALTER TABLE episode_policies ADD COLUMN notice TEXT")
             db.execute("PRAGMA user_version=4")
+
+    def enable_provider_attempts(self) -> None:
+        """Explicit schema4 -> 5; preserve all original charges and signed records.
+
+        This changes charge identity, not accounts, approvals, balances or active
+        native work. v1 funding/dispatch keeps its original single-call contract.
+        Only a signed v2 funding binding admits multiple physical attempts.
+        """
+        self.enable_episode_reporting()
+        with self._transaction() as db:
+            if db.execute("PRAGMA user_version").fetchone()[0] == 5:
+                return
+            db.execute(
+                "CREATE TABLE call_charges_multi(cycle_id TEXT NOT NULL, "
+                "operation_id TEXT PRIMARY KEY, instruction_sha256 TEXT NOT NULL, "
+                "maximum INTEGER NOT NULL, actual INTEGER, receipt TEXT)"
+            )
+            db.execute("INSERT INTO call_charges_multi SELECT * FROM call_charges")
+            db.execute("DROP TABLE call_charges")
+            db.execute("ALTER TABLE call_charges_multi RENAME TO call_charges")
+            db.execute(
+                "CREATE INDEX call_charges_instruction "
+                "ON call_charges(instruction_sha256)"
+            )
+            db.execute("CREATE INDEX call_charges_cycle ON call_charges(cycle_id)")
+            db.execute("PRAGMA user_version=5")
 
     def episode_report(self, account_id: str) -> dict[str, Any]:
         """One consistent operator card/notice observation; no external effects."""
         with self._transaction() as db:
             snapshot = self._episode_status_snapshot(db, account_id)
-            enabled = db.execute("PRAGMA user_version").fetchone()[0] == 4
+            enabled = db.execute("PRAGMA user_version").fetchone()[0] in {4, 5}
             return {
                 "schema": "execution/episode-report/v1",
                 "snapshot": snapshot,
@@ -1353,7 +1476,7 @@ class ExecutionStore:
     def episode_notice(self, account_id: str) -> dict[str, Any] | None:
         """Return one retained passive notice; not a sender or execution grant."""
         with self._transaction() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] != 4:
+            if db.execute("PRAGMA user_version").fetchone()[0] not in {4, 5}:
                 raise ExecutionDenied("explicit reporting migration required")
             return self._episode_notice_snapshot(
                 db, account_id, self._episode_status_snapshot(db, account_id)
