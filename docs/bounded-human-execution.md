@@ -632,6 +632,15 @@ The submission callback only enqueues the bounded authorization response; this
 does not prove provider transmission or usage. A real owner-connected native
 adapter and authenticated per-attempt usage correlation remain necessary.
 
+`CycleContext.prepare` is the shared preparation entry for the existing review
+controller and a continuing native host. It verifies the selected purpose,
+principal/binding, funding, exact queued source and clocks, then reserves the
+existing cycle without invoking a runner inside the journal transaction. The
+host can construct its native owner afterward without reentering that writer.
+A provider-only context may omit the communication broker; `native()` then
+refuses effects, while accounting still uses the existing signed work. This
+creates no signing authority, serialized capability or executable activation.
+
 `NativeProviderOwner` consumes Core17 reservation parameters using that same
 work capability. The embedding owner selects the actually owned native thread,
 the already-reserved parent allowance and the verified adapter/cost registration;

@@ -221,12 +221,14 @@ class CycleContext:
         store: ExecutionStore,
         cycle: Cycle,
         instruction: Instruction,
-        broker: NativeBroker,
+        broker: NativeBroker | None,
         monotonic: Callable[[], float],
         monotonic_deadline: float,
         on_terminal: Callable[[CycleContext], None] | None = None,
         source_check: Callable[[], Mapping[str, Any]] | None = None,
+        work: Mapping[str, Any] | None = None,
     ):
+        self.work = work
         self.cycle = cycle
         self.instruction = instruction
         self._store = store
@@ -239,6 +241,85 @@ class CycleContext:
         self._clock_fault = False
         self._last_wall = float("-inf")
         self._fenced = False
+
+    @classmethod
+    def prepare(
+        cls,
+        store: ExecutionStore,
+        broker: NativeBroker | None,
+        identity: str,
+        revision: int,
+        task: str,
+        *,
+        principal: str,
+        binding: tuple[str, str, str, str],
+        work_id: str | None = None,
+        require_funding: bool = True,
+        require_queued_source: bool = True,
+        read_message: Callable[[str], Mapping[str, Any]] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        on_terminal: Callable[[CycleContext], None] | None = None,
+    ) -> CycleContext | None:
+        """Reserve the existing signed work without starting a runner.
+
+        The trusted host supplies its fixed principal/binding and current reader.
+        This retains the capability in this process, never serializes its token,
+        creates no authority or account, and cannot recover a dispatched cycle.
+        Owner construction must happen hereafter, outside a dispatch transaction.
+        """
+        # Scheduling metadata and arrival text never create an instruction.
+        if require_queued_source and work_id is None:
+            raise ExecutionDenied("peer execution requires a selected original")
+        source_check = None
+        work = None
+        if work_id is not None:
+            reader = read_message
+            if reader is None:
+                raise ExecutionDenied("no current authenticated source reader")
+
+            def source_check() -> Mapping[str, Any]:
+                return store.check_work_source(work_id, reader)
+
+            source_check()
+            work = store.coordination_work(work_id)
+        try:
+            status = store.status(identity, revision)
+        except ExecutionDenied:
+            return None
+        if status["state"] != "active":
+            return None
+        instruction = store.get_instruction(identity, revision)
+        if require_funding:
+            # Explicit operator profile, never selected by peer/model text. The
+            # actual provider boundary independently requires exact exposure.
+            store.check_funding(instruction)
+        if instruction.principal != principal:
+            raise ExecutionDenied(
+                "instruction principal is not the registered principal"
+            )
+        if hashlib.sha256(task.encode("utf-8")).hexdigest() != instruction.task_sha256:
+            raise ExecutionDenied("task digest mismatch")
+        start_mono = monotonic()
+        if not math.isfinite(start_mono):
+            raise ExecutionDenied("untrusted monotonic clock")
+        cycle = (
+            store.reserve(identity, revision, binding)
+            if work_id is None
+            else store.reserve(identity, revision, binding, work_id=work_id)
+        )
+        if cycle is None:
+            return None
+        return cls(
+            store,
+            cycle,
+            instruction,
+            broker,
+            monotonic,
+            start_mono + instruction.max_cycle_seconds,
+            on_terminal,
+            source_check,
+            work,
+        )
 
     def remaining(self) -> float:
         if self._fenced:
@@ -323,13 +404,18 @@ class CycleContext:
 
     def native(self, scope: Scope, payload: Mapping[str, Any]) -> object:
         self.check()
-        if scope not in self.instruction.scope or not self._broker.authorize(scope):
+        broker = self._broker
+        if (
+            broker is None
+            or scope not in self.instruction.scope
+            or not broker.authorize(scope)
+        ):
             raise ExecutionDenied("scope or communication authorization denied")
 
         def submit() -> object:
-            if not self._broker.authorize(scope):
+            if not broker.authorize(scope):
                 raise ExecutionDenied("communication authorization revoked")
-            return self._broker.submit(scope, payload, min(1.0, self.remaining()))
+            return broker.submit(scope, payload, min(1.0, self.remaining()))
 
         return self._store.dispatch(
             self.cycle, "native", scope, self._checkpoint, submit
@@ -598,63 +684,29 @@ class ReviewController:
     def run_due_once(
         self, identity: str, revision: int, task: str, *, work_id: str | None = None
     ) -> CycleContext | None:
-        # Scheduling metadata and arrival text never create an instruction.
-        if self.require_queued_source and work_id is None:
-            raise ExecutionDenied("peer execution requires a selected original")
-        source_check = None
-        work = None
-        if work_id is not None:
-            reader = self.read_message
-            if reader is None:
-                raise ExecutionDenied("no current authenticated source reader")
-
-            def source_check() -> Mapping[str, Any]:
-                return self.store.check_work_source(work_id, reader)
-
-            source_check()
-            work = self.store.coordination_work(work_id)
-        try:
-            status = self.store.status(identity, revision)
-        except ExecutionDenied:
-            return None
-        if status["state"] != "active":
-            return None
-        instruction = self.store.get_instruction(identity, revision)
-        if self.require_funding:
-            # Explicit operator profile, never selected by peer/model text. The
-            # actual provider boundary independently requires exact exposure.
-            self.store.check_funding(instruction)
-        if instruction.principal != self.runner.expected_principal:
-            raise ExecutionDenied(
-                "instruction principal is not the registered principal"
-            )
-        if hashlib.sha256(task.encode("utf-8")).hexdigest() != instruction.task_sha256:
-            raise ExecutionDenied("task digest mismatch")
-        start_mono = self.monotonic()
-        if not math.isfinite(start_mono):
-            raise ExecutionDenied("untrusted monotonic clock")
-        cycle = (
-            self.store.reserve(identity, revision, self.runner.binding)
-            if work_id is None
-            else self.store.reserve(
-                identity, revision, self.runner.binding, work_id=work_id
-            )
-        )
-        if cycle is None:
-            return None
-        context = CycleContext(
+        context = CycleContext.prepare(
             self.store,
-            cycle,
-            instruction,
             self.broker,
-            self.monotonic,
-            start_mono + instruction.max_cycle_seconds,
-            self._forget,
-            source_check,
+            identity,
+            revision,
+            task,
+            principal=self.runner.expected_principal,
+            binding=self.runner.binding,
+            work_id=work_id,
+            require_funding=self.require_funding,
+            require_queued_source=self.require_queued_source,
+            read_message=self.read_message,
+            monotonic=self.monotonic,
+            on_terminal=self._forget,
         )
+        if context is None:
+            return None
+        cycle, instruction = context.cycle, context.instruction
         with self._contexts_lock:
             self._contexts[(identity, revision, cycle.cycle_id)] = context
-        request = ReviewRequest(instruction, task, cycle.cycle_id, cycle.deadline, work)
+        request = ReviewRequest(
+            instruction, task, cycle.cycle_id, cycle.deadline, context.work
+        )
         self.store.dispatch(
             cycle,
             "inference",

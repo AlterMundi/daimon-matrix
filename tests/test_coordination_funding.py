@@ -301,6 +301,64 @@ class FundingTests(unittest.TestCase):
         )
         return context, bound, registration
 
+    def test_native_preparation_retains_capability_without_review_or_effect_broker(
+        self,
+    ):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction("prepared-native", attempts=2)
+        context = CycleContext.prepare(
+            self.store,
+            None,
+            instruction.instruction_id,
+            instruction.revision,
+            "task",
+            principal=instruction.principal,
+            binding=instruction.binding,
+            require_queued_source=False,
+            monotonic=self.clock,
+        )
+        self.assertIsNotNone(context)
+        self.assertEqual(
+            self.store.cycle_status(context.cycle.cycle_id)["operations"], []
+        )
+        with self.assertRaises(ExecutionDenied):
+            context.native(instruction.scope[0], {"text": "no host effect broker"})
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+
+    def test_native_preparation_denies_wrong_purpose_principal_and_missing_source(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction("prepared-denial", attempts=2)
+        options = dict(
+            principal=instruction.principal,
+            binding=instruction.binding,
+            require_queued_source=False,
+            monotonic=self.clock,
+        )
+        for task, changes in (
+            ("different task", {}),
+            ("task", {"principal": "foreign"}),
+            ("task", {"require_queued_source": True}),
+        ):
+            with self.assertRaises(ExecutionDenied):
+                CycleContext.prepare(
+                    self.store,
+                    None,
+                    instruction.instruction_id,
+                    instruction.revision,
+                    task,
+                    **(options | changes),
+                )
+        self.assertIsNotNone(
+            CycleContext.prepare(
+                self.store,
+                None,
+                instruction.instruction_id,
+                instruction.revision,
+                "task",
+                **options,
+            )
+        )
+
     def native_owner(self, identity="native-owner", parent=None, attempts=2):
         self.store.enable_provider_attempts()
         instruction = self.instruction(identity, attempts=attempts)
