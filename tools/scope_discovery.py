@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
 import os
 import re
+import subprocess
 import sys
 import time
 import uuid
@@ -839,13 +841,260 @@ def probe(root, request):
     return result
 
 
+def local_surface():
+    """Match Cluster's purpose-separated OS identity without exposing its inputs."""
+    machine = Path("/etc/machine-id").read_bytes()
+    boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    if (
+        re.fullmatch(rb"[0-9a-f]{32}\n?", machine) is None
+        or str(uuid.UUID(boot)) != boot
+    ):
+        raise ValueError("realm_local_surface_unavailable")
+    return (
+        "dm:surface:v1:"
+        + hashlib.sha256(
+            b"daimon/native-linux-surface/v1\x00"
+            + machine.strip()
+            + b"\x00"
+            + boot.encode()
+        ).hexdigest()
+    )
+
+
+def user_manager(arguments):
+    """Use only the actual caller's user manager, with no shell or root fallback."""
+    if os.geteuid() == 0:
+        raise ValueError("realm_own_unprivileged_user_required")
+    environment = {
+        **os.environ,
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{os.geteuid()}/bus",
+    }
+    value = subprocess.run(
+        ["/usr/bin/systemctl", "--user", "--no-pager", *arguments],
+        env=environment,
+        capture_output=True,
+        timeout=8,
+    )
+    if value.returncode or len(value.stdout) > 8192:
+        raise ValueError("realm_user_manager_unavailable_or_refused")
+    return value.stdout.decode()
+
+
+REALM_PROPERTIES = (
+    "Id",
+    "InvocationID",
+    "ActiveState",
+    "Transient",
+    "Restart",
+    "NoNewPrivileges",
+    "KillMode",
+    "ControlGroup",
+    "MemoryMax",
+    "TasksMax",
+    "RuntimeMaxUSec",
+    "CPUQuotaPerSecUSec",
+)
+
+
+def work_properties(unit, manager):
+    raw = manager(["show", unit, "--property=" + ",".join(REALM_PROPERTIES)])
+    values = dict(row.split("=", 1) for row in raw.splitlines() if "=" in row)
+    if (
+        set(values) != set(REALM_PROPERTIES)
+        or values["Id"] != unit
+        or values["ActiveState"] != "active"
+        or values["Transient"] != "yes"
+        or values["Restart"] != "no"
+        or values["NoNewPrivileges"] != "yes"
+        or values["KillMode"] != "control-group"
+        or re.fullmatch("[0-9a-f]{32}", values["InvocationID"]) is None
+        or not values["ControlGroup"].startswith("/user.slice/")
+    ):
+        raise ValueError("realm_selected_bounded_work_required")
+    lifetime = re.fullmatch(r"(\d+)(us|ms|s|min)", values["RuntimeMaxUSec"])
+    if (
+        lifetime is None
+        or not 0
+        < int(lifetime[1])
+        * {"us": 1, "ms": 1000, "s": 1000000, "min": 60000000}[lifetime[2]]
+        <= 600000000
+        or not values["MemoryMax"].isdigit()
+        or not 0 < int(values["MemoryMax"]) <= 1024**3
+        or not values["TasksMax"].isdigit()
+        or not 0 < int(values["TasksMax"]) <= 128
+    ):
+        raise ValueError("realm_selected_bounded_work_required")
+    return values
+
+
+def kernel_work_limits(control_group):
+    if not control_group.startswith("/user.slice/") or any(
+        part in {".", "..", ""} for part in control_group.split("/")[1:]
+    ):
+        raise ValueError("realm_work_cgroup_rejected")
+    root = Path("/sys/fs/cgroup") / control_group.lstrip("/")
+    if not root.exists():
+        return None
+    result = {}
+    for name in ("cpu.max", "memory.max", "pids.max"):
+        with (root / name).open("rb") as stream:
+            value = stream.read(129)
+        if len(value) > 128:
+            raise ValueError("realm_work_cgroup_rejected")
+        result[name] = value.decode().strip()
+    return result
+
+
+def realm_control(
+    root,
+    *,
+    unit,
+    action="inspect",
+    invocation=None,
+    cpu_percent=None,
+    report=None,
+    manager=user_manager,
+    native_probe=probe,
+    surface=local_surface,
+    kernel=kernel_work_limits,
+):
+    """Inspect/adjust/stop one explicitly selected own finite OS task.
+
+    This does not launch commands, discover unrelated services, confer authority,
+    or replay a mutation. The existing user manager owns the actual resource.
+    """
+    if (
+        not isinstance(unit, str)
+        or re.fullmatch(r"matrix-work-[0-9a-f]{32}\.service", unit) is None
+        or action not in {"inspect", "cpu", "stop"}
+    ):
+        raise ValueError("realm_selected_work_required")
+    if action == "cpu":
+        if type(cpu_percent) is not int or not 1 <= cpu_percent <= 100:
+            raise ValueError("realm_cpu_selection_required")
+    elif cpu_percent is not None:
+        raise ValueError("realm_unexpected_cpu_selection")
+    if action != "inspect" and (
+        not isinstance(invocation, str)
+        or re.fullmatch("[0-9a-f]{32}", invocation) is None
+        or report is None
+    ):
+        raise ValueError("realm_exact_invocation_and_receipt_required")
+    if (
+        action == "inspect"
+        and report is not None
+        and report.exists()
+        and private_read(report).get("action") != "inspect"
+    ):
+        raise ValueError("realm_effect_receipt_must_be_preserved")
+    observed = native_probe(root, {"view": "body", "request_id": str(uuid.uuid4())})
+    body = observed["value"]
+    validate_surface_snapshot(
+        body["surface"],
+        body_ref=observed["server"]["body_ref"],
+        embodiment_id=observed["server"]["embodiment_id"],
+        incarnation_id=observed["server"]["incarnation_id"],
+        evaluated_at_ms=body["evaluated_at_ms"],
+    )
+    if (
+        body.get("origin") != observed["server"]
+        or body["surface"]["surface_ref"] != surface()
+    ):
+        raise ValueError("realm_local_native_body_required")
+    before = work_properties(unit, manager)
+    if invocation is not None and before["InvocationID"] != invocation:
+        raise ValueError("realm_invocation_changed")
+    result = dict(
+        schema="dm.scope.realm-controls/v1",
+        scope="/realm.controls",
+        domain="native-linux-os",
+        observer=observed["server"],
+        being_ref=body["being_ref"],
+        unit=unit,
+        invocation=before["InvocationID"],
+        properties=before,
+        action=action,
+        phase="observed",
+        authority="existing-own-user-manager-and-explicit-task-selection",
+        native_calls=1,
+        model_calls=0,
+        starts_commands=False,
+        actions=["inspect", "cpu", "stop"],
+        kernel_limits=kernel(before["ControlGroup"]),
+    )
+    limits = result["kernel_limits"]
+    try:
+        quota, period = map(int, limits["cpu.max"].split())
+        if (
+            not 0 < quota <= period
+            or limits["memory.max"] != before["MemoryMax"]
+            or limits["pids.max"] != before["TasksMax"]
+        ):
+            raise ValueError
+    except (TypeError, KeyError, ValueError):
+        raise ValueError("realm_enforced_work_limits_required") from None
+    if action == "inspect":
+        return result
+    # Reserve the existing task's exact receipt path before manager I/O. A lost
+    # response is inspected through `inspect`, never silently submitted again.
+    report.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(
+        report, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+    )
+    result["phase"] = "mutation_intent"
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(encode(result))
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        if action == "cpu":
+            manager(["set-property", "--runtime", unit, f"CPUQuota={cpu_percent}%"])
+            after = work_properties(unit, manager)
+            if after["InvocationID"] != before["InvocationID"]:
+                raise ValueError("realm_invocation_changed_after_submission")
+            limits = kernel(after["ControlGroup"])
+            quota, period = map(int, limits["cpu.max"].split())
+            if quota * 100 != cpu_percent * period:
+                raise ValueError("realm_cpu_effect_unconfirmed")
+            result.update(
+                phase="cpu_applied_verified", properties=after, kernel_limits=limits
+            )
+        else:
+            manager(["stop", unit])
+            # Keep the original cgroup reference as the cleanup coordinate. The
+            # manager may garbage-collect the inactive unit immediately.
+            if kernel(before["ControlGroup"]) is not None:
+                raise ValueError("realm_stop_cleanup_unconfirmed")
+            result.update(phase="stopped_cgroup_removed", kernel_limits=None)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        result["phase"] = "inspect_retained_outcome_no_replay"
+        write(report, result)
+        raise
+    write(report, result)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--probe-runtime", type=Path)
+    parser.add_argument("--runtime", type=Path)
+    parser.add_argument("--unit")
+    parser.add_argument(
+        "--action", choices=("inspect", "cpu", "stop"), default="inspect"
+    )
+    parser.add_argument("--invocation")
+    parser.add_argument("--cpu-percent", type=int)
     parser.add_argument("--config", type=Path)
     parser.add_argument(
         "--scope",
-        choices=("/near", "/everyone", "/integrators", "/perceptors", "/actuators"),
+        choices=(
+            "/near",
+            "/everyone",
+            "/integrators",
+            "/perceptors",
+            "/actuators",
+            "/realm.controls",
+        ),
         default="/near",
     )
     parser.add_argument("--include-humans", action="store_true")
@@ -854,6 +1103,38 @@ def main():
     parser.add_argument("--within-ms", type=int)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
+    if args.scope == "/realm.controls":
+        if (
+            not args.runtime
+            or not args.unit
+            or args.config
+            or args.probe_runtime
+            or args.include_humans
+            or args.resource
+            or args.domain
+            or args.within_ms is not None
+        ):
+            parser.error("realm controls require only own runtime and selected work")
+        value = realm_control(
+            args.runtime,
+            unit=args.unit,
+            action=args.action,
+            invocation=args.invocation,
+            cpu_percent=args.cpu_percent,
+            report=args.report,
+        )
+        if args.action == "inspect" and args.report:
+            write(args.report, value)
+        print(json.dumps(value))
+        return
+    if (
+        args.runtime
+        or args.unit
+        or args.action != "inspect"
+        or args.invocation
+        or args.cpu_percent is not None
+    ):
+        parser.error("work selection requires /realm.controls")
     if args.include_humans and (args.probe_runtime or args.scope != "/everyone"):
         parser.error("include-humans requires the /everyone coordinator")
     if args.resource is not None and (
