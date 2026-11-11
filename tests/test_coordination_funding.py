@@ -4,6 +4,7 @@ Real SQLite and signed synthetic human/accounting authority; no network/models.
 """
 
 import hashlib
+import json
 import multiprocessing
 import sqlite3
 import tempfile
@@ -455,6 +456,118 @@ class FundingTests(unittest.TestCase):
             maxRequestBytes=descriptor["allowance"]["maxRequestBytes"],
             deadlineUnixMs=descriptor["allowance"]["deadlineUnixMs"],
         )
+
+    def owner_usage(self, packet):
+        return {
+            key: packet[key] for key in ("threadId", "cycleId", "attemptId", "ordinal")
+        } | {
+            "responseId": "response-exact",
+            "model": None,
+            "tokenUsage": None,
+            "usageMetadata": None,
+        }
+
+    def test_native_usage_is_immutable_evidence_not_unsigned_settlement(self):
+        owner, context, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        observation = self.owner_usage(packet)
+        before = self.store.funding_status("episode")
+        self.pause()
+        ack = owner.record_usage(observation)
+        self.assertEqual(
+            ack,
+            {
+                "cycleId": packet["cycleId"],
+                "attemptId": packet["attemptId"],
+                "recorded": True,
+            },
+        )
+        self.assertEqual(owner.record_usage(observation), ack)
+        reopened = ExecutionStore(
+            self.path,
+            verifier(self.human),
+            clock=self.clock,
+            usage_verifier=verifier(self.accountant),
+        )
+        operations = reopened.cycle_status(context.cycle.cycle_id)["operations"]
+        observed = [op for op in operations if op["kind"] == "provider_attempt"]
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(
+            json.loads(observed[0]["scope"])["usage_observation"],
+            {
+                "schema": "execution/provider-usage-observation/v1",
+                **observation,
+            },
+        )
+        for change in (
+            {"responseId": "changed"},
+            {"model": "changed"},
+            {
+                "tokenUsage": dict(
+                    totalTokens=3,
+                    inputTokens=2,
+                    cachedInputTokens=0,
+                    cacheWriteInputTokens=0,
+                    outputTokens=1,
+                    reasoningOutputTokens=0,
+                ),
+            },
+        ):
+            with self.assertRaises(ExecutionDenied):
+                owner.record_usage(observation | change)
+        after = reopened.funding_status("episode")
+        for field in ("calls", "reserved", "spent"):
+            self.assertEqual(before[field], after[field])
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT actual,receipt FROM call_charges WHERE operation_id=?",
+                    (packet["attemptId"],),
+                ).fetchone(),
+                (None, None),
+            )
+        # The already selected accountant can settle admitted exposure after pause.
+        self.settle_attempt(context.cycle, packet["attemptId"], 8)
+        self.assertEqual(self.store.funding_status("episode")["spent"], 8)
+        self.assertTrue(self.store.funding_status("episode")["paused"])
+
+    def test_native_usage_requires_reserved_identity_and_bounded_closed_payload(self):
+        owner, context, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        observation = self.owner_usage(packet)
+        with self.assertRaises(ExecutionDenied):
+            owner.record_usage(observation)
+        owner.reserve(packet, lambda _: None)
+        for change in (
+            {"attemptId": str(uuid.uuid4())},
+            {"attemptId": []},
+            {"ordinal": True},
+            {"threadId": "foreign"},
+            {"cycleId": "foreign"},
+            {"extra": True},
+            {"responseId": ""},
+            {"model": "x" * 201},
+            {"tokenUsage": {"totalTokens": 1}},
+            {"usageMetadata": {"amount": 3, "metadata": None}},
+            {"usageMetadata": {"amount": None, "metadata": "x" * 32768}},
+        ):
+            with self.subTest(change=list(change)), self.assertRaises(ExecutionDenied):
+                owner.record_usage(observation | change)
+        tokens = dict(
+            totalTokens=3,
+            inputTokens=2,
+            cachedInputTokens=0,
+            cacheWriteInputTokens=0,
+            outputTokens=1,
+            reasoningOutputTokens=0,
+        )
+        self.assertTrue(
+            owner.record_usage(observation | {"tokenUsage": tokens})["recorded"]
+        )
+        with self.assertRaises(ExecutionDenied):
+            context._finish("stopped", require_unstarted=True)
+        self.assertEqual(self.store.funding_status("episode")["reserved"], 30)
 
     def test_unstarted_reconciliation_needs_no_operation_and_preserves_counters(self):
         for dispatched in (False, True):

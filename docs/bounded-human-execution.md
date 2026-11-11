@@ -921,3 +921,13 @@ general Conversation is retained; an ephemeral review runner is not its substitu
 Actual per-account ceilings/periods and a qualified cost contract remain necessary
 before claiming real economic enforcement. There is no new default, background
 attention, account/provider change or automatic deployment.
+
+The native owner can record a closed, at-most32KiB
+`execution/provider-usage-observation/v1` payload only for an attempt UUID and
+ordinal it already reserved. It retains exact optional model/token/metadata
+fields in that operation's existing `scope`, without another row or charge.
+Identical duplicates are idempotent; conflicting reports refuse. Accounting for
+admitted exposure remains available after funding pause or expiry. This evidence
+is not `execution/usage/v1`: only the configured accounting authority's verified
+receipt can settle actual spending or release reserved maximum exposure. Missing
+or uncertain observation never refunds a reservation or resets counters.

@@ -1072,6 +1072,41 @@ class ExecutionStore:
                 (payload["paused"], payload["revision"], payload["account_id"]),
             )
 
+    def record_provider_usage(
+        self, cycle: Cycle, operation_id: str, observation: Mapping[str, Any]
+    ) -> None:
+        """Retain owner-observed evidence on its existing operation, not money.
+
+        Admission may be paused; accounting for admitted exposure remains valid.
+        Only an authenticated usage receipt can change call_charges.actual.
+        """
+        encoded = canonical(dict(observation)).decode()
+        if (
+            len(encoded.encode()) > 32 * 1024
+            or observation.get("schema") != "execution/provider-usage-observation/v1"
+            or observation.get("cycleId") != cycle.cycle_id
+            or observation.get("attemptId") != operation_id
+        ):
+            raise ExecutionDenied("bounded exact provider observation required")
+        with self._transaction() as db:
+            self._cycle(db, cycle)
+            row = db.execute(
+                "SELECT scope FROM operations WHERE cycle_id=? AND operation_id=? "
+                "AND kind='provider_attempt'",
+                (cycle.cycle_id, operation_id),
+            ).fetchone()
+            if row is None:
+                raise ExecutionDenied("provider observation has no reserved attempt")
+            retained = canonical({"usage_observation": dict(observation)}).decode()
+            if row["scope"] is not None:
+                if row["scope"] != retained:
+                    raise ExecutionDenied("conflicting provider observation")
+                return
+            db.execute(
+                "UPDATE operations SET scope=? WHERE cycle_id=? AND operation_id=?",
+                (retained, cycle.cycle_id, operation_id),
+            )
+
     def settle_charge(
         self, cycle: Cycle, payload: Mapping[str, Any], proof: Mapping[str, Any]
     ) -> None:

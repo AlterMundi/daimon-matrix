@@ -596,6 +596,7 @@ class NativeProviderOwner:
         self._cost_bound = cost_bound
         self._registration = registration
         self._ordinals: set[int] = set()
+        self._attempts: dict[str, int] = {}
         self._lock = threading.Lock()
         self._closed = False
 
@@ -688,15 +689,94 @@ class NativeProviderOwner:
                         raise ExecutionDenied("native owner deadline reached")
                     return publish(response)
 
-                return self._context.provider_attempt(
+                result = self._context.provider_attempt(
                     request["attemptId"],
                     submit,
                     cost_bound=self._cost_bound,
                     registration=self._registration,
                 )
+                self._attempts[request["attemptId"]] = request["ordinal"]
+                return result
             except BaseException:
                 self._closed = True
                 raise
+
+    def record_usage(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """Current host's exact attempt evidence, never a signed settlement.
+
+        Do not use admission/source guards: an already admitted response may
+        arrive after a pause. No new call, effect, refund or balance is created.
+        """
+        with self._lock:
+            if (
+                set(request)
+                != {
+                    "threadId",
+                    "cycleId",
+                    "attemptId",
+                    "ordinal",
+                    "responseId",
+                    "model",
+                    "tokenUsage",
+                    "usageMetadata",
+                }
+                or request["threadId"] != self._thread_id
+                or request["cycleId"] != self._context.cycle.cycle_id
+                or not isinstance(request["attemptId"], str)
+                or self._attempts.get(request["attemptId"]) != request["ordinal"]
+                or not ExecutionStore._positive(request["ordinal"])
+                or not isinstance(request["responseId"], str)
+                or not 0 < len(request["responseId"].encode()) <= 200
+                or (
+                    request["model"] is not None
+                    and (
+                        not isinstance(request["model"], str)
+                        or not 0 < len(request["model"].encode()) <= 200
+                    )
+                )
+            ):
+                raise ExecutionDenied(
+                    "provider observation differs from reserved owner"
+                )
+            tokens = request["tokenUsage"]
+            if tokens is not None and (
+                not isinstance(tokens, Mapping)
+                or set(tokens)
+                != {
+                    "totalTokens",
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "cacheWriteInputTokens",
+                    "outputTokens",
+                    "reasoningOutputTokens",
+                }
+                or not all(
+                    ExecutionStore._positive(v, zero=True) for v in tokens.values()
+                )
+            ):
+                raise ExecutionDenied("invalid observed token usage")
+            metadata = request["usageMetadata"]
+            if metadata is not None and (
+                not isinstance(metadata, Mapping)
+                or set(metadata) != {"amount", "metadata"}
+                or (
+                    metadata["amount"] is not None
+                    and not isinstance(metadata["amount"], str)
+                )
+            ):
+                raise ExecutionDenied("invalid observed usage metadata")
+            observation = {
+                "schema": "execution/provider-usage-observation/v1",
+                **dict(request),
+            }
+            self._context._store.record_provider_usage(
+                self._context.cycle, request["attemptId"], observation
+            )
+            return {
+                "cycleId": request["cycleId"],
+                "attemptId": request["attemptId"],
+                "recorded": True,
+            }
 
 
 class ReviewController:
