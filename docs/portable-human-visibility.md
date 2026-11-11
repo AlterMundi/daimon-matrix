@@ -97,6 +97,13 @@ authorization-control records render zero human-facing parts. Their exact native
 projection and signed authorization remain retained in the existing journals.
 A suppressed technical record is not a signed human-publication receipt.
 
+Multipart V3 publication uses the same signed Conversation receipts for every
+part. It never derives a Telegram reply message ID from an earlier part. A
+verified first receipt must remain commit-able while later parts are queued;
+each part keeps its deterministic publication identity and one normal attempt.
+If a previous result was lost, inspect that exact App publication before any
+recovery. A committed first part does not prove later publication or delivery.
+
 Use the existing accepted presentation/visibility successor writer after all
 required readers support that exact profile. The publication descriptor, audience,
 proof key, native identity and original message bindings remain unchanged.

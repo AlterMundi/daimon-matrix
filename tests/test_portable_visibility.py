@@ -197,6 +197,13 @@ class PortablePublicationTests(unittest.TestCase):
         self.worker.require_confirmed("portable-operation", digest)
         self.assertGreater(self.publisher.calls, 1)
 
+    def test_compact_multipart_publication_has_no_telegram_reply_reference(self):
+        self.policy["representation"] = "compact-text/v1"
+        self.test_complete_multipart_publication_required()
+        record = self.worker.require_confirmed("portable-operation", self.admit())
+        self.assertEqual(self.publisher.calls, len(record["parts"]))
+        self.assertTrue(all(len(part["attempts"]) == 1 for part in record["parts"]))
+
     def test_wrong_surface_audience_content_or_durability_never_unlocks(self):
         digest = self.admit()
         for field, wrong in [
