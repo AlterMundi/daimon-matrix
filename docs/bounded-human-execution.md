@@ -537,6 +537,21 @@ queue/deduplication metadata; rejected traffic adds no row or log. Only the exac
 source reference/hash/author/body/thread and execution correlation are retained;
 message text stays in the native inbox, not another private-history archive.
 
+A native host that already owns its durable inbox work may instead select the
+account-only `CycleContext.prepare(host_source=..., read_message=...)` path.
+It requires conserved funding, no effect broker and no second `work_id`. The
+current authenticated original must match the App-retained event ID/native
+content hash; a separate complete-document digest fences later changes. The
+existing native-owner operation retains those references and the App execution
+ID, never another copy of the message or a second work queue. The App's signed
+cost registration explicitly selects `source_mode=app_owned_inbox`, source channel,
+exact instruction hash and native binding. Legacy coordination remains separate;
+neither a peer field nor a failed legacy selection can choose the new mode.
+The selected signed task must express the authorized Messaging purpose; this
+accounting source proof does not widen its social effect scope or authorize
+native tools. App's existing current execution ownership checks remain necessary
+before and after every reservation, independently of the SDK original check.
+
 `ExecutionStore.enqueue_coordination(message_id, read_message)` is an explicit
 owner invocation using the actual current authenticated native lookup. Only a
 signed communication carrying `execution/coordination-request/v1` with kind

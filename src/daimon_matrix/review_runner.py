@@ -257,6 +257,7 @@ class CycleContext:
         require_funding: bool = True,
         require_queued_source: bool = True,
         read_message: Callable[[str], Mapping[str, Any]] | None = None,
+        host_source: Mapping[str, Any] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         on_terminal: Callable[[CycleContext], None] | None = None,
     ) -> CycleContext | None:
@@ -268,7 +269,7 @@ class CycleContext:
         Owner construction must happen hereafter, outside a dispatch transaction.
         """
         # Scheduling metadata and arrival text never create an instruction.
-        if require_queued_source and work_id is None:
+        if require_queued_source and work_id is None and host_source is None:
             raise ExecutionDenied("peer execution requires a selected original")
         source_check = None
         work = None
@@ -282,6 +283,45 @@ class CycleContext:
 
             source_check()
             work = store.coordination_work(work_id)
+        if host_source is not None:
+            # Host API only: the App owns its original queue. No peer metadata
+            # or second coordination row is required for this accounting mode.
+            if (
+                work_id is not None
+                or not require_funding
+                or broker is not None
+                or read_message is None
+                or set(host_source)
+                != {"channel_id", "message_id", "message_hash", "local_execution_id"}
+                or not isinstance(host_source["channel_id"], str)
+                or not isinstance(host_source["message_id"], str)
+                or not isinstance(host_source["message_hash"], str)
+                or len(host_source["message_hash"]) != 64
+                or any(c not in "0123456789abcdef" for c in host_source["message_hash"])
+                or not ExecutionStore._positive(host_source["local_execution_id"])
+            ):
+                raise ExecutionDenied("exclusive funded host source required")
+            expected = dict(host_source)
+            host_reader = read_message
+            first = host_reader(expected["message_id"])
+            original_digest = digest(dict(first))
+
+            def source_check() -> Mapping[str, Any]:
+                original = host_reader(expected["message_id"])
+                if (
+                    original.get("event_id") != expected["message_id"]
+                    or original.get("content_hash") != expected["message_hash"]
+                    or digest(dict(original)) != original_digest
+                ):
+                    raise ExecutionDenied("host original changed")
+                return original
+
+            source_check()
+            work = {
+                "source_mode": "app_owned_inbox",
+                **expected,
+                "document_sha256": original_digest,
+            }
         try:
             status = store.status(identity, revision)
         except ExecutionDenied:
@@ -289,6 +329,10 @@ class CycleContext:
         if status["state"] != "active":
             return None
         instruction = store.get_instruction(identity, revision)
+        if host_source is not None and not any(
+            scope.channel == host_source["channel_id"] for scope in instruction.scope
+        ):
+            raise ExecutionDenied("host source channel outside signed scope")
         if require_funding:
             # Explicit operator profile, never selected by peer/model text. The
             # actual provider boundary independently requires exact exposure.
@@ -531,7 +575,15 @@ class NativeProviderOwner:
                     str(uuid.uuid4()),
                     context.cycle.cycle_id,
                     "native_owner",
-                    canonical(self._allowance).decode(),
+                    canonical(
+                        self._allowance
+                        | (
+                            {"source": context.work}
+                            if context.work is not None
+                            and context.work.get("source_mode") == "app_owned_inbox"
+                            else {}
+                        )
+                    ).decode(),
                 ),
             )
         self._context = context

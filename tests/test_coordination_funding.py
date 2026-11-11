@@ -359,6 +359,71 @@ class FundingTests(unittest.TestCase):
             )
         )
 
+    def test_host_owned_original_needs_no_peer_financial_metadata(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction("host-source", attempts=2)
+        original = {
+            "event_id": str(uuid.uuid4()),
+            "content_hash": "a" * 64,
+            "body": {"text": "Please inspect the resource"},
+        }
+        source = dict(
+            channel_id=instruction.scope[0].channel,
+            message_id=original["event_id"],
+            message_hash=original["content_hash"],
+            local_execution_id=17,
+        )
+        options = dict(
+            principal=instruction.principal,
+            binding=instruction.binding,
+            host_source=source,
+            read_message=lambda _: original,
+            monotonic=self.clock,
+        )
+        for changed in (
+            {"require_funding": False},
+            {"broker": Broker()},
+            {"work_id": "second-queue"},
+            {"host_source": source | {"local_execution_id": 0}},
+            {"host_source": source | {"message_hash": "b" * 64}},
+            {"host_source": source | {"channel_id": "foreign"}},
+        ):
+            broker = changed.get("broker")
+            with self.assertRaises(ExecutionDenied):
+                CycleContext.prepare(
+                    self.store,
+                    broker,
+                    instruction.instruction_id,
+                    1,
+                    "task",
+                    **(options | {k: v for k, v in changed.items() if k != "broker"}),
+                )
+        context = CycleContext.prepare(
+            self.store, None, instruction.instruction_id, 1, "task", **options
+        )
+        self.assertEqual(context.selected_original(), original)
+        _, bound, registration = self.native_context(
+            instruction, context.cycle, registration_extra={"max_request_bytes": 512}
+        )
+        NativeProviderOwner(
+            context,
+            thread_id="native",
+            parent_allowance={
+                "maxProviderAttempts": 2,
+                "maxRequestBytes": 512,
+                "deadlineUnixMs": 108000,
+            },
+            cost_bound=bound,
+            registration=registration,
+        )
+        marker = self.store.cycle_status(context.cycle.cycle_id)["operations"][0]
+        self.assertIn("source", marker["scope"])
+        # Same native content hash with changed signed bytes still refuses.
+        original["body"]["text"] = "changed"
+        with self.assertRaises(ExecutionDenied):
+            context.selected_original()
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+
     def native_owner(self, identity="native-owner", parent=None, attempts=2):
         self.store.enable_provider_attempts()
         instruction = self.instruction(identity, attempts=attempts)
