@@ -62,10 +62,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--collective-memory", type=Path, required=True)
     parser.add_argument("--hmk", type=Path)
     parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument("--shard-index", type=int, default=0)
+    parser.add_argument("--shard-count", type=int, default=1)
     parser.add_argument(
         "tests", nargs="*", help="Dotted unittest names; default: full discovery"
     )
     args = parser.parse_args(argv)
+    if not 1 <= args.shard_count <= 32 or not 0 <= args.shard_index < args.shard_count:
+        parser.error("shard index must be within a count of 1..32")
+    if args.shard_count != 1 and args.tests:
+        parser.error("sharding uses full discovery, not explicit test selectors")
     contracts = {"COLLECTIVE_MEMORY_CONTRACT_ROOT": args.collective_memory}
     if args.hmk is not None:
         contracts["HMK_CONTRACT_ROOT"] = args.hmk
@@ -119,6 +125,17 @@ def main(argv: list[str] | None = None) -> int:
         command += (
             [*args.tests, "-v"] if args.tests else ["discover", "-s", "tests", "-v"]
         )
+        if args.shard_count != 1:
+            command = [
+                sys.executable,
+                "-B",
+                "-W",
+                "error::ResourceWarning",
+                "-m",
+                "tools.unittest_shard",
+                str(args.shard_index),
+                str(args.shard_count),
+            ]
         old_umask = os.umask(0o022)
         try:
             return subprocess.run(
