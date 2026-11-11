@@ -436,7 +436,8 @@ Before any provider transport, one transaction reserves one durable call and its
 full maximum charge against all three accounts, plus an active slot. The final
 serialized boundary rechecks current instruction, expiry, pause and shared
 uncertainty. Competing roots cannot spend from stale balances. A zero-priced call
-still consumes fuel. A second provider call in one cycle remains rejected.
+still consumes fuel. Under this v1 binding, a second provider call in one cycle
+remains rejected; the explicit native-attempt successor below is separate.
 
 These declarations do not turn an unfenced adapter into a billing fence. The
 current Codex/Hermes review adapters supply no qualified monetary exposure and
@@ -785,3 +786,56 @@ coverage; instruction/verifier, provider/runner, runtime, identity, transport,
 dependency and unknown changes still select the full profile. This removes
 unrelated transport requalification for a host-only control change. The exact
 classifier/job diff is reversible; artifact retention remains seven days.
+
+### Physical provider attempts in one native work context — schema5 successor
+
+The one-call review adapter remains unchanged. A continuing native tool/model loop
+needs a distinct retained operation and charge for each physical provider attempt,
+including retry and remote compaction, while keeping the same causal work cycle.
+`ExecutionStore.enable_provider_attempts()` explicitly migrates the existing
+journal to schema5. It preserves every original instruction, event, account,
+charge, receipt, queue item and pause. Only the charge table identity changes from
+one row per cycle to one row per operation. Opening a store never migrates it;
+older readers reject schema5, so select compatible readers before live migration.
+No production journal is migrated or provider route selected by these changes.
+
+Use the existing signed instruction-funding writer with
+`execution/instruction-funding/v2`: its closed payload adds the positive finite
+`max_provider_attempts` limit per cycle. `max_charge` retains its per-physical-call
+meaning. The same three account ceilings, exact instruction/provider/model/route,
+input/output maxima, deadline and signed controls remain authoritative. This is
+one funding binding, not a second policy/approval service or another balance store.
+Unchanged v1 bindings and `dispatch(..., "provider", ...)` keep one call per cycle.
+A v2 binding refuses that unlabelled provider path.
+
+The trusted native adapter retains a canonical UUID before each physical send,
+then calls `dispatch_provider_attempt(cycle, operation_id, checkpoint, submit,
+exposure=...)`. `submit` must only enqueue bounded transport bytes, never wait for
+the model or run tools under the database lock. Each admission reserves one
+nonrefundable call and its full exposure atomically against all three accounts;
+per-work fuel and shared call/charge/concurrency ceilings all apply. Reusing an
+operation ID refuses before submission even after a known return. Inspect the
+original retained operation instead of changing its identity to retry it.
+
+Prepared intents are conservative shared uncertainty. The final serialized
+submission may cross only its own exact intent; any other unconfirmed intent
+fences affected funding. Process death before acknowledgment leaves that original
+reservation intact and blocks replacement work after reopen. No timeout, restart,
+pause/resume or migration refunds fuel or renews an account. Authenticated
+`execution/usage/v1` settlement selects the exact cycle **and operation**, never
+another charge in the same work. A settled returned physical attempt releases its
+active-call slot while the continuing native cycle remains active. Unsettled or
+ambiguous attempts keep exposure, and normal signed pause/expiry checks apply
+before every subsequent attempt. Work completion remains the existing trusted
+native reconciliation, not a consequence of settlement.
+
+Qualification uses real SQLite, independent synthetic human/accounting signatures,
+concurrent admission, exact settlement, restart, process death and retained
+queue/report/pause state. No inference or production account is exercised. The
+remaining native integration must bind this API at Core's existing
+InferenceAllowance/EndpointSession send boundary, supply trustworthy full-request
+exposure and usage, and qualify credential/tool-route exclusivity. The continuing
+general Conversation is retained; an ephemeral review runner is not its substitute.
+Actual per-account ceilings/periods and a qualified cost contract remain necessary
+before claiming real economic enforcement. There is no new default, background
+attention, account/provider change or automatic deployment.
