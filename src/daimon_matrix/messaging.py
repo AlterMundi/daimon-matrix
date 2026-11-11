@@ -2808,6 +2808,11 @@ class GroupMessaging:
         }
         # Check original uncertainty before creating any technical authorization.
         publication = self.egress.inspect_retained(parent)
+        if publication["echo_state"] == "ambiguous":
+            # Read an existing signed App proof, never renew or publish again.
+            # A missing multipart remainder still blocks a new native carrier.
+            self.egress.reconcile_publication(parent)
+            publication = self.egress.inspect_retained(parent)
         if (
             publication["echo_state"] != "confirmed"
             or publication["completed_releases"]

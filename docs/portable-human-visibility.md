@@ -104,6 +104,17 @@ each part keeps its deterministic publication identity and one normal attempt.
 If a previous result was lost, inspect that exact App publication before any
 recovery. A committed first part does not prove later publication or delivery.
 
+An explicit existing carrier-recovery request first reconciles the exact retained
+App proof through the current authenticated owner connection. This read has its
+own five-second I/O bound and consumes the original attempt's single durable
+inspection reservation; it does not republish content or extend either deadline.
+The signature, audience, content and current native authority are still checked.
+A late proof remains valid historical visibility and durably prevents reopening
+the old native release after clock rollback. Missing multipart parts remain
+incomplete: reconciling the first receipt is not permission to send the remainder
+past its original publication deadline or to mint a carrier without complete
+visibility. Publication completion needs its own supported bounded recovery.
+
 Use the existing accepted presentation/visibility successor writer after all
 required readers support that exact profile. The publication descriptor, audience,
 proof key, native identity and original message bindings remain unchanged.
@@ -164,12 +175,14 @@ byte-for-byte. Telegram installations keep their existing format and behavior.
 The transport connects only to the existing owner-only App Unix socket. It
 checks socket ownership/mode and Linux peer credentials, uses fixed typed
 publication/confirmation commands, and bounds request/response bytes and each
-exchange by the earlier native deadline or five seconds. The complete metadata
+publication exchange by the earlier native deadline or five seconds. Proof reads
+use their own five-second bound. The complete metadata
 acknowledgment batch shares five seconds. It starts no server, executable, model
 or alternate router. After a lost result, it reserves at most one exact retained
 proof inspection durably before reading. That read can also resume after native
 restart; an already consumed inspection budget is not reset. An expired original
-starts no inspection. A valid proof records `response_source: retained-publication`
+starts no ordinary inspection; explicit retained-proof reconciliation above can
+read an already committed receipt without reopening that lifetime. A valid proof records `response_source: retained-publication`
 and its inspection time in the authenticated journal, without another publication
 call. Failed/invalid reads keep uncertainty. Confirmation acknowledges only an
 already committed native proof and can safely repeat that exact metadata

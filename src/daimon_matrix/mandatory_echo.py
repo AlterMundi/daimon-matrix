@@ -186,12 +186,11 @@ class ConversationJournalTransport:
         identifier = request["publication_id"]
         if str(uuid.UUID(identifier)) != identifier:
             raise EchoError("echo_publication_request_invalid")
-        remaining_ms = request["not_after_ms"] - time.time_ns() // 1_000_000
-        if remaining_ms <= 0:
-            raise EchoError("echo_publication_expired")
+        # Reading an existing signed proof cannot publish content or renew its
+        # original lifetime. Keep this owner read bounded independently of it.
         result = self._exchange(
             "matrix publication inspect " + identifier,
-            time.monotonic_ns() + min(remaining_ms, 5000) * 1_000_000,
+            time.monotonic_ns() + 5_000_000_000,
         )
         return _json(result).encode()
 
@@ -1365,6 +1364,27 @@ class MandatoryEcho:
             )
         return state
 
+    def reconcile_publication(
+        self, operation_id: str, expected_binding_digest: str
+    ) -> dict[str, Any]:
+        """Trusted explicit recovery: read a retained proof, never publish.
+
+        Current content/authority still applies; the original publication and
+        native deadlines stay unchanged. The one durable inspection reservation
+        on the original attempt bounds this read across retries and restarts.
+        """
+        with self._storage_guard(), self._journal._transaction():
+            record = self._journal._load(operation_id, expected_binding_digest)
+            self._current(record)
+            if _status(record)["state"] != "ambiguous":
+                return _status(record)
+        state = self._inspect_retained_publication(record, allow_expired=True)
+        if state["state"] == "confirmed":
+            with self._storage_guard():
+                record = self._journal._load(operation_id, expected_binding_digest)
+            self._publish_reference(record)
+        return state
+
     def observed_at_or_after(
         self, operation_id: str, expected_binding_digest: str, deadline_ms: int
     ) -> bool:
@@ -1638,7 +1658,9 @@ class MandatoryEcho:
         with self._storage_guard():
             return self.inspect(operation_id, expected_binding_digest)
 
-    def _inspect_retained_publication(self, record: dict[str, Any]) -> dict[str, Any]:
+    def _inspect_retained_publication(
+        self, record: dict[str, Any], *, allow_expired: bool = False
+    ) -> dict[str, Any]:
         """One durable, bounded read attempt; never a second publication call."""
         inspector = getattr(self._transport, "inspect_publication", None)
         if (
@@ -1665,9 +1687,9 @@ class MandatoryEcho:
             now = self._clock()
             _millis(now)
             if (
-                now >= record["binding"]["publication_not_after_ms"]
-                or now < attempt["at_ms"]
-            ):
+                not allow_expired
+                and now >= record["binding"]["publication_not_after_ms"]
+            ) or now < attempt["at_ms"]:
                 return _status(record)
             attempt["inspection_at_ms"] = now
             record["revision"] += 1
