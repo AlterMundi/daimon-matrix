@@ -190,3 +190,64 @@ It uses the existing256KiB atomic latest report and foreground cancellation path
 no cache history, recurring producer, media, model or service is started. Current
 receiving selection and useful work routing/physical-human acceptance remain
 separate evidence in the single Matrix437 map.
+
+
+## Own foreground realm work controls
+
+The same installed `scope_discovery.py` supplies the initial `/realm.controls`
+operator workflow. It authenticates the actual current native body through its
+existing `scope.me` surface read, matches that opaque OS surface to the local
+kernel, then uses the caller's existing systemd **user** manager. No root fallback,
+new daemon, job scheduler, credential, grant store or command launcher is added.
+A body observation does not grant control; the operation requires the human's
+selected own task and existing OS-user authority. A foreign OS or unavailable
+user manager refuses. This is a foreground operator, not a new native daemon RPC.
+
+Use the [existing own-work launch route](../dm054-scope-resolution.md#foreground-native-os-work-controls)
+with a fresh, never-reused name `matrix-work-UUIDHEX` (`UUIDHEX` is32lowercase hex
+characters). It must be a transient active service with no automatic restart,
+NoNewPrivileges, control-group cleanup, a finite lifetime of at most10minutes,
+at most1GiB memory/128tasks and an enforced CPU quota of at most one CPU. These
+are maximum supported operator bounds, not a grant to allocate them. Use the
+actual task's smaller approved bounds. Permanent native/Conversation/goal units
+are not accepted targets. Do not reuse a unit name after completion or while a
+control acknowledgment is uncertain.
+
+```text
+SDK_PYTHON OPERATOR/scope_discovery.py --scope /realm.controls \
+  --runtime OWN_RUNTIME --unit matrix-work-UUIDHEX.service \
+  --action inspect --report PRIVATE/work-latest.json
+```
+
+The response contains the actual body, exact systemd invocation, selected unit,
+manager properties, kernel `cpu.max`/`memory.max`/`pids.max` and supported actions.
+It contains no command arguments, logs, media or model activity claim. Effective
+kernel limits must agree with the selected manager's memory/process bounds.
+
+For a human-authorized quota change, reuse that exact invocation:
+
+```text
+SDK_PYTHON OPERATOR/scope_discovery.py --scope /realm.controls \
+  --runtime OWN_RUNTIME --unit matrix-work-UUIDHEX.service \
+  --action cpu --cpu-percent 50 --invocation EXACT_INVOCATION \
+  --report PRIVATE/work-cpu-effect.json
+```
+
+The `stop` action takes the same exact selection and a separate effect-receipt
+path; it stops only that job and verifies removal of its original cgroup. A quota
+change verifies the resulting kernel quota. Neither action changes native goals,
+heartbeat controls, accounts, providers or any other service. Each mutation
+reserves its exclusive private receipt before manager submission. A lost reply
+retains `mutation_intent` or `inspect_retained_outcome_no_replay`; inspect the
+same task without another mutation. Never overwrite an effect receipt with an
+inspection or treat a changed invocation as permission to repeat the effect.
+
+Each call performs one authenticated native read and at most three8second
+manager calls, with a30second native deadline; no loop or recurring activation.
+Keep one replaceable inspection plus the selected task's quota/stop receipts
+(maximum256KiB each) in the existing bounded task record. Retire disposable task
+outputs after their owning completion/retention rule; never delete uncertain
+originals to free space. This initial route does not grant filesystem/network or
+provider spending authority, implement physical actuators, or prove another
+body's receiving availability. Native `scope.me(view="realm")` remains a status
+RPC; it does not infer these controls from available OS memory.

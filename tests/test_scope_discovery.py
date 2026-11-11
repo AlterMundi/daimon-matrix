@@ -638,3 +638,135 @@ class ResourceDiscoveryTests(unittest.TestCase):
                 now_ms=100000,
                 call=never,
             )
+
+
+class RealmControlTests(unittest.TestCase):
+    unit = "matrix-work-" + "a" * 32 + ".service"
+    invocation = "b" * 32
+
+    def properties(self):
+        return dict(
+            Id=self.unit,
+            InvocationID=self.invocation,
+            ActiveState="active",
+            Transient="yes",
+            Restart="no",
+            NoNewPrivileges="yes",
+            KillMode="control-group",
+            ControlGroup="/user.slice/task.service",
+            MemoryMax="134217728",
+            TasksMax="16",
+            RuntimeMaxUSec="1min",
+            CPUQuotaPerSecUSec="250ms",
+        )
+
+    def run_control(
+        self,
+        action="inspect",
+        report=None,
+        fail=False,
+        change=None,
+        foreign=False,
+        invocation=None,
+    ):
+        calls = []
+        properties = self.properties()
+        if change:
+            properties.update(change)
+        state = {"cpu": "25000 100000", "stopped": False}
+
+        def manager(args):
+            calls.append(args)
+            if args[0] == "show":
+                return "\n".join(k + "=" + v for k, v in properties.items())
+            if fail:
+                raise TimeoutError("actual outcome unknown")
+            if args[0] == "set-property":
+                state["cpu"] = "50000 100000"
+            if args[0] == "stop":
+                state["stopped"] = True
+            return ""
+
+        def kernel(group):
+            return (
+                None
+                if state["stopped"]
+                else {
+                    "cpu.max": state["cpu"],
+                    "memory.max": "134217728",
+                    "pids.max": "16",
+                }
+            )
+
+        result = near.realm_control(
+            Path("unused"),
+            unit=self.unit,
+            action=action,
+            invocation=invocation or (self.invocation if action != "inspect" else None),
+            cpu_percent=50 if action == "cpu" else None,
+            report=report,
+            manager=manager,
+            native_probe=lambda *a: response("root", "body", "unused"),
+            surface=lambda: "dm:surface:v1:" + ("f" if foreign else "a") * 64,
+            kernel=kernel,
+        )
+        return result, calls
+
+    def test_discovery_and_cpu_change_keep_native_identity_and_kernel_evidence(self):
+        value, calls = self.run_control()
+        self.assertEqual(value["scope"], "/realm.controls")
+        self.assertEqual(value["observer"], server("root"))
+        self.assertEqual(len(calls), 1)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "effect.json"
+            value, calls = self.run_control("cpu", report=path)
+            self.assertEqual(value["phase"], "cpu_applied_verified")
+            self.assertEqual(value["kernel_limits"]["cpu.max"], "50000 100000")
+            self.assertEqual(json.loads(path.read_text()), value)
+            self.assertEqual(
+                calls[1], ["set-property", "--runtime", self.unit, "CPUQuota=50%"]
+            )
+            with self.assertRaises(FileExistsError):
+                self.run_control("cpu", report=path)
+            with self.assertRaisesRegex(ValueError, "receipt_must_be_preserved"):
+                self.run_control("inspect", report=path)
+
+    def test_owner_stop_checks_actual_cgroup_cleanup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            value, calls = self.run_control("stop", report=Path(folder) / "stop.json")
+            self.assertEqual(value["phase"], "stopped_cgroup_removed")
+            self.assertIsNone(value["kernel_limits"])
+            self.assertEqual(calls[-1], ["stop", self.unit])
+
+    def test_lost_response_retains_intent_without_replaying_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "unknown.json"
+            with self.assertRaises(TimeoutError):
+                self.run_control("cpu", report=path, fail=True)
+            self.assertEqual(
+                json.loads(path.read_text())["phase"],
+                "inspect_retained_outcome_no_replay",
+            )
+            with self.assertRaises(FileExistsError):
+                self.run_control("cpu", report=path)
+
+    def test_foreign_surface_changed_invocation_and_nonwork_service_refuse(self):
+        with self.assertRaisesRegex(ValueError, "local_native_body"):
+            self.run_control(foreign=True)
+        with self.assertRaisesRegex(ValueError, "invocation_changed"):
+            self.run_control(invocation="c" * 32)
+        for change in (
+            {"Transient": "no"},
+            {"Restart": "always"},
+            {"RuntimeMaxUSec": "infinity"},
+            {"MemoryMax": "infinity"},
+            {"NoNewPrivileges": "no"},
+            {"KillMode": "process"},
+        ):
+            with (
+                self.subTest(change=change),
+                self.assertRaisesRegex(ValueError, "bounded_work"),
+            ):
+                self.run_control(change=change)
+        with self.assertRaisesRegex(ValueError, "selected_work"):
+            near.realm_control(Path("unused"), unit="compaii-telegram.service")
