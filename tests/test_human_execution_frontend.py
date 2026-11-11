@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import MethodType, SimpleNamespace
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -402,6 +404,29 @@ class HumanFrontendTests(unittest.TestCase):
                 )
                 self.assertEqual(self.counters[kind], 0)
 
+    def test_selected_codex_review_does_not_require_a_hermes_binding(self):
+        with patch.dict(sys.modules, {"daimon_matrix.hermes_review": None}):
+            operator = HumanExecutionOperator(
+                challenge_path=self.root / "codex-only-challenges.sqlite",
+                bindings={"codex": self.operator.bindings["codex"]},
+                authenticate=lambda turn: (
+                    turn.authentication == f"session:{turn.turn_id}"
+                ),
+                signer=lambda principal, data: self.key.sign(data),
+                clock=self.clock,
+                challenge_id=lambda: "codex-only-challenge",
+            )
+        instruction, task = self.instruction("codex")
+        display = operator.prepare_review_now(
+            self.turn("codex-only"), "codex", instruction, task
+        )
+        self.assertIsNotNone(
+            operator.confirm(
+                self.turn("codex-confirm"), display["challenge_id"], display
+            )
+        )
+        self.assertEqual(self.counters, {"codex": 1, "hermes": 0})
+
     def test_review_now_uses_immutable_single_use_challenge_for_both_runners(
         self,
     ) -> None:
@@ -684,6 +709,108 @@ class HumanFrontendTests(unittest.TestCase):
         )
         assert other_cycle is not None
         self.assertEqual(store.cycle_status(other_cycle.cycle_id)["state"], "intent")
+
+
+class NativeAccountControlTests(unittest.TestCase):
+    def setUp(self):
+        from tests.test_coordination_funding import FundingTests
+
+        self.fixture = FundingTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.signed = []
+        self.turn = HumanFrontendTests.turn()
+        self.path = self.fixture.path.parent / "native-human-control.sqlite"
+
+    def operator(self, store=None):
+        def signer(principal, data):
+            self.signed.append(principal)
+            return self.fixture.human.sign(data)
+
+        # No reviewer import, constructor, registration or second harness is
+        # available to this native account-control composition.
+        with patch.dict(
+            sys.modules,
+            {
+                "daimon_matrix.codex_review": None,
+                "daimon_matrix.hermes_review": None,
+            },
+        ):
+            return HumanExecutionOperator(
+                challenge_path=self.path,
+                bindings={"codex": (store or self.fixture.store, None)},
+                authenticate=lambda candidate: candidate is self.turn,
+                signer=signer,
+                clock=self.fixture.clock,
+                challenge_id=lambda: f"native-control-{len(self.signed)}",
+            )
+
+    def test_native_store_only_controls_pause_and_resume_without_a_review_runner(self):
+        operator = self.operator()
+        self.assertEqual(set(operator.bindings), {"codex"})
+        display = operator.prepare_funding_control(
+            self.turn, "codex", "episode", 0, paused=True
+        )
+        result = operator.confirm(self.turn, display["challenge_id"], display)
+        self.assertTrue(result["account"]["paused"])
+        self.assertFalse(result["execution_started"])
+        self.assertEqual(result["account"]["control_revision"], 1)
+        reopened = ExecutionStore(
+            self.fixture.path, self.fixture.store.verifier, clock=self.fixture.clock
+        )
+        operator = self.operator(reopened)
+        self.assertTrue(reopened.funding_status("episode")["paused"])
+        with self.assertRaises(ExecutionDenied):
+            operator.confirm(self.turn, display["challenge_id"], display)
+        with self.assertRaises(ExecutionDenied):
+            operator.prepare_funding_control(
+                self.turn, "codex", "episode", 0, paused=False
+            )
+        self.turn = HumanFrontendTests.turn("native-resume")
+        display = operator.prepare_funding_control(
+            self.turn, "codex", "episode", 1, paused=False
+        )
+        result = operator.confirm(self.turn, display["challenge_id"], display)
+        self.assertFalse(result["account"]["paused"])
+        self.assertEqual(result["account"]["control_revision"], 2)
+        self.assertEqual(result["account"]["calls"], 0)
+        self.assertEqual(self.fixture.calls, [])
+
+    def test_control_only_binding_does_not_grant_review_or_cancellation(self):
+        operator = self.operator()
+        task = "native work"
+        instruction = Instruction.from_dict(
+            request(
+                store_id=self.fixture.store.store_id,
+                mode="manual",
+                interval=None,
+                max_cycles=1,
+                task_sha256=hashlib.sha256(task.encode()).hexdigest(),
+            )
+        )
+        with self.assertRaisesRegex(ExecutionDenied, "review runner"):
+            operator.prepare_review_now(self.turn, "codex", instruction, task)
+        with self.assertRaisesRegex(ExecutionDenied, "cancellation adapter"):
+            operator.prepare_cancel(self.turn, "codex", instruction.instruction_id, 1)
+        with self.assertRaisesRegex(ExecutionDenied, "unsupported runner"):
+            operator.status(self.turn, "hermes")
+        with self.assertRaisesRegex(ExecutionDenied, "unsupported runner"):
+            operator.prepare_funding_control(
+                self.turn, "hermes", "episode", 0, paused=True
+            )
+        self.assertEqual(self.signed, [])
+        self.assertEqual(operator.status(self.turn, "codex"), [])
+        self.assertFalse(self.fixture.store.funding_status("episode")["paused"])
+
+    def test_store_only_control_still_requires_the_actual_authenticated_human(self):
+        operator = self.operator()
+        copied_metadata = HumanFrontendTests.turn()
+        with self.assertRaises(ExecutionDenied):
+            operator.prepare_funding_control(
+                copied_metadata, "codex", "episode", 0, paused=True
+            )
+        self.assertEqual(self.signed, [])
+        self.assertFalse(self.fixture.store.funding_status("episode")["paused"])
 
 
 if __name__ == "__main__":

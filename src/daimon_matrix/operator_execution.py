@@ -77,8 +77,10 @@ def funding_control_payload(
 
 
 class HumanExecutionOperator:
-    """Authenticated frontend integration for the actual Codex/Hermes boundaries.
+    """Human controls for selected stores and optional Codex/Hermes reviewers.
 
+    Store-only bindings provide account controls without preparing an inference
+    runner. Reviews and runtime cancellation still require their selected adapter.
     The host frontend retains only externally supplied authenticator/signer
     callbacks; it never accepts private-key bytes, passes neither callback into
     the execution store/controller/runner, and stores no trust root in its journal.
@@ -88,22 +90,32 @@ class HumanExecutionOperator:
         self,
         *,
         challenge_path: Path,
-        bindings: Mapping[str, tuple[ExecutionStore, ReviewController]],
+        bindings: Mapping[str, tuple[ExecutionStore, ReviewController | None]],
         authenticate: Callable[[HumanTurn], bool],
         signer: Callable[[str, bytes], bytes],
         clock: Callable[[], float] = time.time,
         challenge_id: Callable[[], str],
     ) -> None:
-        if set(bindings) != {"codex", "hermes"}:
-            raise ExecutionDenied("exact Codex and Hermes operator bindings required")
-        from .codex_review import CodexReviewRunner
-        from .hermes_review import HermesReviewRunner
-
-        expected = {"codex": CodexReviewRunner, "hermes": HermesReviewRunner}
+        if not bindings or not set(bindings) <= {"codex", "hermes"}:
+            raise ExecutionDenied("selected Codex/Hermes operator bindings required")
         self.bindings = dict(bindings)
         for kind, (store, controller) in self.bindings.items():
+            if not isinstance(store, ExecutionStore):
+                raise ExecutionDenied("existing execution store required")
+            # Account controls do not start/recover an inference runner. A native
+            # owner need not construct a pinned one-call reviewer just to pause.
+            if controller is None:
+                continue
+            if kind == "codex":
+                from .codex_review import CodexReviewRunner
+
+                expected: type = CodexReviewRunner
+            else:
+                from .hermes_review import HermesReviewRunner
+
+                expected = HermesReviewRunner
             if controller.store is not store or not isinstance(
-                controller.runner, expected[kind]
+                controller.runner, expected
             ):
                 raise ExecutionDenied("wrong operator runner/controller boundary")
         self.frontend = HumanExecutionFrontend(
@@ -114,15 +126,22 @@ class HumanExecutionOperator:
             challenge_id=challenge_id,
         )
 
+    def _selected_binding(
+        self, runner_type: Literal["codex", "hermes"]
+    ) -> tuple[ExecutionStore, ReviewController | None]:
+        if runner_type not in self.bindings:
+            raise ExecutionDenied("unsupported runner type")
+        return self.bindings[runner_type]
+
     def _binding(
         self,
         runner_type: Literal["codex", "hermes"],
         instruction: Instruction,
         task: str,
     ) -> tuple[ExecutionStore, ReviewController]:
-        if runner_type not in self.bindings:
-            raise ExecutionDenied("unsupported runner type")
-        store, controller = self.bindings[runner_type]
+        store, controller = self._selected_binding(runner_type)
+        if controller is None:
+            raise ExecutionDenied("review runner is not selected")
         if (
             instruction.store_id != store.store_id
             or instruction.binding != controller.runner.binding
@@ -180,7 +199,7 @@ class HumanExecutionOperator:
         self, turn: HumanTurn, runner_type: Literal["codex", "hermes"]
     ) -> list[dict[str, Any]]:
         self.frontend.authenticate(turn)
-        return self.bindings[runner_type][0].statuses()
+        return self._selected_binding(runner_type)[0].statuses()
 
     def prepare_funding_control(
         self,
@@ -193,9 +212,7 @@ class HumanExecutionOperator:
     ) -> dict[str, Any]:
         """Use the existing human frontend; never sign from a model tool."""
         self.frontend.authenticate(turn)
-        if runner_type not in self.bindings:
-            raise ExecutionDenied("unsupported runner type")
-        store, _ = self.bindings[runner_type]
+        store, _ = self._selected_binding(runner_type)
         payload = funding_control_payload(
             store, account_id, turn.principal, expected_revision, paused
         )
@@ -215,7 +232,9 @@ class HumanExecutionOperator:
         revision: int,
     ) -> dict[str, Any]:
         self.frontend.authenticate(turn)
-        store, _ = self.bindings[runner_type]
+        store, controller = self._selected_binding(runner_type)
+        if controller is None:
+            raise ExecutionDenied("cancellation adapter is not selected")
         return self.frontend.issue(
             turn,
             operation="cancel",
@@ -230,7 +249,9 @@ class HumanExecutionOperator:
         challenge = self.frontend.consume(turn, challenge_id, displayed)
         if challenge.operation != "cancel":
             raise ExecutionDenied("cancellation confirmation required")
-        store, controller = self.bindings[challenge.runner_type]
+        store, controller = self._selected_binding(challenge.runner_type)
+        if controller is None:
+            raise ExecutionDenied("cancellation adapter is not selected")
         payload = challenge.payload
         identity = str(payload["instruction_id"])
         revision = int(payload["revision"])
@@ -252,7 +273,7 @@ class HumanExecutionOperator:
     ) -> CycleContext | dict[str, Any]:
         challenge = self.frontend.consume(turn, challenge_id, displayed)
         if challenge.operation == "funding-control":
-            store, _ = self.bindings[challenge.runner_type]
+            store, _ = self._selected_binding(challenge.runner_type)
             store.control_funding(challenge.payload, challenge.proof)
             return {
                 "control": challenge.payload,

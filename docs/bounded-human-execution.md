@@ -463,6 +463,19 @@ Pausing fences new provider/native effects without inventing a stopped receipt.
 The existing controller's exact cycle interruption remains separate. Clock faults
 fence admission; signed pause and authenticated reconciliation remain possible.
 
+Native account controls may bind only the selected store, for example
+`bindings={"codex": (existing_store, None)}`. They do not need the pinned one-call
+reviewer, a second harness, model registration or another account journal.
+Nonempty subsets of the existing Codex/Hermes profiles are accepted. Unselected
+profiles remain unsupported; there is no inferred fallback. A store-only binding
+supports authenticated status and funding pause/resume, while reviews and runtime
+cancellation require their actual selected controller and refuse before mutation
+when none is available. Existing paired review bindings keep their behavior.
+The same human authenticator, external signer, immutable challenge, exact account
+revision and replay protection apply; this selection itself grants no authority
+and starts no execution. The existing App HumanControl uses this composition
+without changing its HTTP/auth/CSRF or operation-grant contract.
+
 The existing `HumanExecutionOperator.prepare_funding_control` prepares this exact
 control through the same direct-human authenticator and external signing callback
 as ordinary execution approval. The caller pins the displayed current control
