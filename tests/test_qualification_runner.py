@@ -4,6 +4,7 @@ import os
 import subprocess
 import unittest
 from collections import Counter
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -26,15 +27,15 @@ class QualificationRunnerTests(unittest.TestCase):
             [unittest.TestSuite(cases[:3]), unittest.TestSuite(cases[3:])]
         )
 
-        def flatten(value):
+        def flatten(value: unittest.TestSuite) -> Iterator[unittest.TestCase]:
             for test in value:
                 if isinstance(test, unittest.TestSuite):
                     yield from flatten(test)
-                else:
+                elif test is not None:
                     yield test
 
-        owners = {}
-        combined = []
+        owners: dict[str, int] = {}
+        combined: list[unittest.TestCase] = []
         for index in range(4):
             selected = list(flatten(unittest_shard.select(suite, index, 4)))
             combined.extend(selected)
