@@ -290,9 +290,12 @@ attempts, missing confirmed publication, changed authors and unsupported readers
 For portable V3 visibility, explicit carrier recovery can reconcile an exact
 already-committed publication proof after expiry without another post or a
 duplicate-post decision. Current authority and the original inspection bound
-still apply. This does not complete missing multipart publication or renew the
-original native deadline. Legacy owner-only publication retries that may post
-again still require the exact duplicate-post risk decision. Late confirmation or zero completed
+still apply. With the qualified owner backend, that same explicit recovery
+can complete only never-attempted missing parts within its one frozen recovery
+window, keeping original publication IDs/content/deadlines. Complete visibility
+is required before a new carrier. Unknown original attempts remain protected.
+Legacy owner-only publication retries that may post again still require the
+exact duplicate-post risk decision. Late confirmation or zero completed
 releases do not prove that a native request was never sent. Even after publication
 repair, a prepared/uncertain original may still need a different qualified recovery
 path. There is one recovery ID per original; ordinary retries never extend expiry. Read `messaging_delivery` using the original send ID;

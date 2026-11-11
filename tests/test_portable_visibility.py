@@ -435,6 +435,42 @@ class PortablePublicationTests(unittest.TestCase):
                 5_000_001_000,
             )
 
+    def test_explicit_completion_only_sends_never_attempted_remaining_parts(self):
+        self.policy["representation"] = "compact-text/v1"
+        self.source = projection("Exact original " + "a" * 4500 + "😀" * 16)
+        digest = self.admit()
+        self.worker.advance("portable-operation", digest)
+        before = self.journal._load("portable-operation", digest)
+        self.assertGreater(len(before["parts"]), 1)
+        first = echo._copy(before["parts"][0])
+        self.worker._clock = lambda: 4102444800000
+        control = dict(
+            schema="dm.visibility.publication-completion/v1",
+            recovery_id="00000000-0000-4000-8000-000000000001",
+            issued_at_ms=4102444800000,
+            expires_at_ms=4102444860000,
+        )
+        with patch.object(
+            self.publisher,
+            "complete_publication",
+            side_effect=lambda request, _: self.publisher.send(request),
+            create=True,
+        ):
+            self.assertEqual(
+                self.worker.complete_publication("portable-operation", digest, control)[
+                    "state"
+                ],
+                "confirmed",
+            )
+            count = self.publisher.calls
+            self.worker.complete_publication("portable-operation", digest, control)
+        after = self.journal._load("portable-operation", digest)
+        self.assertEqual(after["binding"], before["binding"])
+        self.assertEqual(after["parts"][0], first)
+        self.assertEqual(count, len(after["parts"]))
+        self.assertEqual(self.publisher.calls, count)
+        self.assertTrue(all(len(p["attempts"]) == 1 for p in after["parts"]))
+
     def test_late_reconciliation_requires_current_authority(self):
         digest = self.admit()
         self.publisher.lose_ack = True

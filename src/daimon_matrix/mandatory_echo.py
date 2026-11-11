@@ -182,6 +182,31 @@ class ConversationJournalTransport:
             ):
                 raise EchoError("echo_publication_confirmation_invalid")
 
+    def prepare_publication_completion(self) -> None:
+        value = self._exchange(
+            "matrix publication completion-status", time.monotonic_ns() + 5_000_000_000
+        )
+        if value != {
+            "schema": "dm.visibility.publication-completion-capability/v1",
+            "max_window_ms": 60000,
+            "requires": "pinned-unacknowledged-multipart",
+        }:
+            raise EchoError("echo_publication_completion_unavailable")
+
+    def complete_publication(
+        self, request: dict[str, Any], control: dict[str, Any]
+    ) -> bytes:
+        raw = _json({**control, "request": request})
+        remaining_ms = control["expires_at_ms"] - time.time_ns() // 1_000_000
+        if len(raw.encode()) > 65536 or remaining_ms <= 0:
+            raise EchoError("echo_publication_completion_expired")
+        return _json(
+            self._exchange(
+                "matrix publication complete " + raw,
+                time.monotonic_ns() + min(remaining_ms, 5000) * 1_000_000,
+            )
+        ).encode()
+
     def inspect_publication(self, request: dict[str, Any]) -> bytes:
         identifier = request["publication_id"]
         if str(uuid.UUID(identifier)) != identifier:
@@ -1382,6 +1407,108 @@ class MandatoryEcho:
         if state["state"] == "confirmed":
             with self._storage_guard():
                 record = self._journal._load(operation_id, expected_binding_digest)
+            self._publish_reference(record)
+        return state
+
+    def complete_publication(
+        self, operation_id: str, expected_binding_digest: str, control: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Explicit finite completion: only unattempted parts after an exact proof.
+
+        The composing carrier recovery owns and freezes this control. No original
+        request/deadline/attempt is rewritten and no native permit is issued here.
+        """
+        completer = getattr(self._transport, "complete_publication", None)
+        try:
+            _fields(control, {"schema", "recovery_id", "issued_at_ms", "expires_at_ms"})
+            if control["schema"] != "dm.visibility.publication-completion/v1":
+                raise ValueError
+            if str(uuid.UUID(control["recovery_id"])) != control["recovery_id"]:
+                raise ValueError
+            _millis(control["issued_at_ms"])
+            _millis(control["expires_at_ms"])
+            if not 0 < control["expires_at_ms"] - control["issued_at_ms"] <= 60000:
+                raise ValueError
+        except Exception:
+            raise EchoError("echo_publication_completion_invalid") from None
+        if completer is None:
+            raise EchoError("echo_publication_completion_unavailable")
+        journal = self._journal
+        # Existing presentation has at most32 parts; one fresh intent per missing
+        # part. An ambiguous attempt never enters this loop as a retry.
+        for _ in range(32):
+            with self._storage_guard(), journal._transaction():
+                record = journal._load(operation_id, expected_binding_digest)
+                self._current(record)
+                state = _status(record)
+                if state["state"] == "confirmed":
+                    break
+                if (
+                    record["binding"]["policy"]["schema"]
+                    != "daimon-visibility-policy/v3"
+                    or state["state"] != "queued"
+                    or not state["confirmed_parts"]
+                ):
+                    raise EchoError("echo_publication_completion_incomplete")
+                now = self._clock()
+                _millis(now)
+                if (
+                    control["issued_at_ms"]
+                    < record["binding"]["publication_not_after_ms"]
+                    or now < control["issued_at_ms"]
+                ):
+                    raise EchoError("echo_publication_completion_invalid")
+                if now >= control["expires_at_ms"]:
+                    return state
+                index = next(
+                    i
+                    for i in range(len(record["parts"]))
+                    if _record_part_result(record, i)[0] != "confirmed"
+                )
+                if record["parts"][index]["attempts"]:
+                    raise EchoError("echo_publication_completion_attempt_uncertain")
+                request = _record_request(record, index)
+                attempt = {
+                    "attempt_id": str(uuid.uuid4()),
+                    "request_digest": _hash(request),
+                    "response": None,
+                    "at_ms": now,
+                    "response_at_ms": None,
+                    "retry_authorization": None,
+                }
+                record["parts"][index]["attempts"].append(attempt)
+                record["revision"] += 1
+                journal._write(record)
+            with self._storage_guard():
+                self._current(record)
+            try:
+                raw = completer(_copy(request), _copy(control))
+                _classify_response(raw, request, record["binding"]["policy"])
+            except Exception:
+                state = self._inspect_retained_publication(record, allow_expired=True)
+                if state["state"] == "confirmed":
+                    with self._storage_guard():
+                        latest = journal._load(operation_id, expected_binding_digest)
+                    self._publish_reference(latest)
+                return state
+            with self._storage_guard(), journal._transaction():
+                latest = journal._load(operation_id, expected_binding_digest)
+                if latest != record:
+                    raise EchoError("echo_state_conflict")
+                observed = self._clock()
+                _millis(observed)
+                if observed < now:
+                    raise EchoError("echo_clock_invalid")
+                latest["parts"][index]["attempts"][-1].update(
+                    response=raw.decode("utf-8"), response_at_ms=observed
+                )
+                latest["revision"] += 1
+                journal._write(latest)
+                state = _status(latest)
+            if state["state"] == "confirmed":
+                record = latest
+                break
+        if state["state"] == "confirmed":
             self._publish_reference(record)
         return state
 

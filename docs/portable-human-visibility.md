@@ -110,10 +110,23 @@ own five-second I/O bound and consumes the original attempt's single durable
 inspection reservation; it does not republish content or extend either deadline.
 The signature, audience, content and current native authority are still checked.
 A late proof remains valid historical visibility and durably prevents reopening
-the old native release after clock rollback. Missing multipart parts remain
-incomplete: reconciling the first receipt is not permission to send the remainder
-past its original publication deadline or to mint a carrier without complete
-visibility. Publication completion needs its own supported bounded recovery.
+the old native release after clock rollback. If parts remain unattempted, the
+same explicit recovery first checks the owner App's completion capability, then
+freezes its existing recovery intent for at most60seconds. This single window
+covers missing publication and the new carrier; retries never refresh it.
+Only the never-attempted remainder is submitted through the owner's typed
+`publication complete` command, retaining the exact original request IDs,
+content, audience, digest and deadline. All parts must have signed receipts
+before the new technical carrier can proceed. A prepared/uncertain original
+transport, unknown publication attempt, unavailable backend or expired recovery
+window never permits another publication or native release. No new speech,
+account, model attention or alternate delivery route is introduced.
+
+The App requires a retained same-resource multipart anchor and pins group-level
+acknowledgment on surviving rows, preventing a partially acknowledged/retired
+prefix from being recreated. Its upgrade preserves the predecessor retirement
+floor where old group evidence might already be gone. These checks do not erase
+unknown records; actual legacy uncertainty remains inspectable.
 
 Use the existing accepted presentation/visibility successor writer after all
 required readers support that exact profile. The publication descriptor, audience,

@@ -3082,6 +3082,39 @@ class MandatoryEgressController:
             except EchoError as exception:
                 raise NativeEgressError(str(exception)) from None
 
+    def prepare_publication_completion(self, binding: OperationBinding) -> None:
+        """Check current owner backend before freezing the one recovery window."""
+        catalog = self._catalogs.get(binding.catalog_id)
+        if catalog is None or not self._authorize_retained(binding, catalog):
+            raise NativeEgressError("egress_authority_blocked")
+        prepare = getattr(self._transport, "prepare_publication_completion", None)
+        if prepare is None:
+            raise NativeEgressError("echo_publication_completion_unavailable")
+        try:
+            prepare()
+        except EchoError as exception:
+            raise NativeEgressError(str(exception)) from None
+
+    def complete_publication(
+        self, binding: OperationBinding, control: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Finish only missing parts under the frozen explicit recovery window."""
+        catalog = self._catalogs.get(binding.catalog_id)
+        if catalog is None:
+            raise NativeEgressError("egress_catalog_invalid")
+        with (
+            self._retry_execution_guard(),
+            self._publication_database(catalog) as database,
+        ):
+            try:
+                with self.local_storage():
+                    echo = self._mandatory(binding, database, retained_publication=True)
+                return echo.complete_publication(
+                    binding.echo_operation_id, binding.echo_binding_digest, control
+                )
+            except EchoError as exception:
+                raise NativeEgressError(str(exception)) from None
+
     def retry_ambiguous(
         self, binding: OperationBinding, authorization: bytes
     ) -> dict[str, Any]:
