@@ -512,7 +512,10 @@ def _part_result(
 
 def _record_reply(record: dict[str, Any], index: int) -> int | None:
     binding = record["binding"]
-    if binding["policy"]["representation"] != READABLE_REPRESENTATION:
+    if (
+        binding["policy"]["schema"] == "daimon-visibility-policy/v3"
+        or binding["policy"]["representation"] != READABLE_REPRESENTATION
+    ):
         return None
     parent = binding.get("telegram_reference", {}).get("message_id")
     if index == 0:
