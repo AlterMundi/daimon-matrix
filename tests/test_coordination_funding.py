@@ -456,6 +456,32 @@ class FundingTests(unittest.TestCase):
             deadlineUnixMs=descriptor["allowance"]["deadlineUnixMs"],
         )
 
+    def test_unstarted_reconciliation_needs_no_operation_and_preserves_counters(self):
+        for dispatched in (False, True):
+            with self.subTest(dispatched=dispatched):
+                owner, context, _, _ = self.native_owner(
+                    identity=f"not-started-{dispatched}"
+                )
+                if dispatched:
+                    owner.reserve(self.owner_request(owner), lambda _: None)
+                before = self.store.funding_status("episode")
+                if dispatched:
+                    with self.assertRaises(ExecutionDenied):
+                        context._finish("stopped", require_unstarted=True)
+                    self.assertEqual(
+                        self.store.cycle_status(context.cycle.cycle_id)["state"],
+                        "intent",
+                    )
+                else:
+                    context._finish("stopped", require_unstarted=True)
+                    self.assertEqual(
+                        self.store.cycle_status(context.cycle.cycle_id)["state"],
+                        "stopped",
+                    )
+                after = self.store.funding_status("episode")
+                for field in ("calls", "reserved"):
+                    self.assertEqual(before[field], after[field])
+
     def test_native_owner_conserves_parent_limits_and_charges_before_publication(self):
         owner, context, _, _ = self.native_owner()
         descriptor = owner.descriptor()

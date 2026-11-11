@@ -417,8 +417,13 @@ class CycleContext:
             self._fenced = True
             raise
 
-    def _finish(self, outcome: Literal["completed", "stopped"]) -> None:
-        self._store.finish(self.cycle, outcome)
+    def _finish(
+        self,
+        outcome: Literal["completed", "stopped"],
+        *,
+        require_unstarted: bool = False,
+    ) -> None:
+        self._store.finish(self.cycle, outcome, require_unstarted=require_unstarted)
         self._fenced = True
         if self._on_terminal is not None:
             self._on_terminal(self)

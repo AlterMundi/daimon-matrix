@@ -1617,7 +1617,9 @@ class ExecutionStore:
                     (cycle.cycle_id,),
                 )
 
-    def finish(self, cycle: Cycle, outcome: str) -> None:
+    def finish(
+        self, cycle: Cycle, outcome: str, *, require_unstarted: bool = False
+    ) -> None:
         """Trusted adapter reconciliation, NOT a model tool or a timeout reclaimer.
 
         Caller must prove the exact runtime turn stopped/completed, including
@@ -1629,6 +1631,22 @@ class ExecutionStore:
             row = self._cycle(db, cycle)
             if row["state"] not in {"intent", "ambiguous"}:
                 raise ExecutionDenied("cycle already terminal")
+            if require_unstarted and (
+                outcome != "stopped"
+                or db.execute(
+                    "SELECT count(*) FROM operations WHERE cycle_id=? "
+                    "AND kind='native_owner' AND state='returned'",
+                    (cycle.cycle_id,),
+                ).fetchone()[0]
+                != 1
+                or db.execute(
+                    "SELECT 1 FROM operations WHERE cycle_id=? "
+                    "AND kind!='native_owner'",
+                    (cycle.cycle_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise ExecutionDenied("unstarted native cycle has admitted operations")
             db.execute(
                 "UPDATE cycles SET state=?,outcome=? WHERE cycle_id=?",
                 (outcome, outcome, cycle.cycle_id),

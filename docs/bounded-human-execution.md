@@ -138,6 +138,11 @@ A returned technical response is not proof of human reading or task success.
 `finish(cycle, "completed"|"stopped")` is a trusted adapter reconciliation API,
 not a model tool. It requires the exact host-held cycle capability and external
 evidence that the exact runtime turn and all admitted effects are settled.
+The native owner may require `finish(cycle, "stopped", require_unstarted=True)`
+only after trusted exact non-submission evidence. In that same transaction the
+journal requires one returned native-owner marker and no other operation; a
+pre-ACK provider attempt or any native effect refuses. This preserves finite
+cycle counts and all financial reservations. It is not an expiry reclaimer.
 Timeout alone, an interrupted local thread, or an unknown remote send outcome
 cannot justify `finish`. With a lost capability this first core deliberately
 leaves the session blocked; an independently reviewed recovery interface is
