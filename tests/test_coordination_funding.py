@@ -4,6 +4,7 @@ Real SQLite and signed synthetic human/accounting authority; no network/models.
 """
 
 import hashlib
+import json
 import multiprocessing
 import sqlite3
 import tempfile
@@ -301,6 +302,129 @@ class FundingTests(unittest.TestCase):
         )
         return context, bound, registration
 
+    def test_native_preparation_retains_capability_without_review_or_effect_broker(
+        self,
+    ):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction("prepared-native", attempts=2)
+        context = CycleContext.prepare(
+            self.store,
+            None,
+            instruction.instruction_id,
+            instruction.revision,
+            "task",
+            principal=instruction.principal,
+            binding=instruction.binding,
+            require_queued_source=False,
+            monotonic=self.clock,
+        )
+        self.assertIsNotNone(context)
+        self.assertEqual(
+            self.store.cycle_status(context.cycle.cycle_id)["operations"], []
+        )
+        with self.assertRaises(ExecutionDenied):
+            context.native(instruction.scope[0], {"text": "no host effect broker"})
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+
+    def test_native_preparation_denies_wrong_purpose_principal_and_missing_source(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction("prepared-denial", attempts=2)
+        options = dict(
+            principal=instruction.principal,
+            binding=instruction.binding,
+            require_queued_source=False,
+            monotonic=self.clock,
+        )
+        for task, changes in (
+            ("different task", {}),
+            ("task", {"principal": "foreign"}),
+            ("task", {"require_queued_source": True}),
+        ):
+            with self.assertRaises(ExecutionDenied):
+                CycleContext.prepare(
+                    self.store,
+                    None,
+                    instruction.instruction_id,
+                    instruction.revision,
+                    task,
+                    **(options | changes),
+                )
+        self.assertIsNotNone(
+            CycleContext.prepare(
+                self.store,
+                None,
+                instruction.instruction_id,
+                instruction.revision,
+                "task",
+                **options,
+            )
+        )
+
+    def test_host_owned_original_needs_no_peer_financial_metadata(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction("host-source", attempts=2)
+        original = {
+            "event_id": str(uuid.uuid4()),
+            "content_hash": "a" * 64,
+            "body": {"text": "Please inspect the resource"},
+        }
+        source = dict(
+            channel_id=instruction.scope[0].channel,
+            message_id=original["event_id"],
+            message_hash=original["content_hash"],
+            local_execution_id=17,
+        )
+        options = dict(
+            principal=instruction.principal,
+            binding=instruction.binding,
+            host_source=source,
+            read_message=lambda _: original,
+            monotonic=self.clock,
+        )
+        for changed in (
+            {"require_funding": False},
+            {"broker": Broker()},
+            {"work_id": "second-queue"},
+            {"host_source": source | {"local_execution_id": 0}},
+            {"host_source": source | {"message_hash": "b" * 64}},
+            {"host_source": source | {"channel_id": "foreign"}},
+        ):
+            broker = changed.get("broker")
+            with self.assertRaises(ExecutionDenied):
+                CycleContext.prepare(
+                    self.store,
+                    broker,
+                    instruction.instruction_id,
+                    1,
+                    "task",
+                    **(options | {k: v for k, v in changed.items() if k != "broker"}),
+                )
+        context = CycleContext.prepare(
+            self.store, None, instruction.instruction_id, 1, "task", **options
+        )
+        self.assertEqual(context.selected_original(), original)
+        _, bound, registration = self.native_context(
+            instruction, context.cycle, registration_extra={"max_request_bytes": 512}
+        )
+        NativeProviderOwner(
+            context,
+            thread_id="native",
+            parent_allowance={
+                "maxProviderAttempts": 2,
+                "maxRequestBytes": 512,
+                "deadlineUnixMs": 108000,
+            },
+            cost_bound=bound,
+            registration=registration,
+        )
+        marker = self.store.cycle_status(context.cycle.cycle_id)["operations"][0]
+        self.assertIn("source", marker["scope"])
+        # Same native content hash with changed signed bytes still refuses.
+        original["body"]["text"] = "changed"
+        with self.assertRaises(ExecutionDenied):
+            context.selected_original()
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+
     def native_owner(self, identity="native-owner", parent=None, attempts=2):
         self.store.enable_provider_attempts()
         instruction = self.instruction(identity, attempts=attempts)
@@ -333,9 +457,266 @@ class FundingTests(unittest.TestCase):
             deadlineUnixMs=descriptor["allowance"]["deadlineUnixMs"],
         )
 
+    def owner_usage(self, packet):
+        return {
+            key: packet[key] for key in ("threadId", "cycleId", "attemptId", "ordinal")
+        } | {
+            "responseId": "response-exact",
+            "model": None,
+            "tokenUsage": None,
+            "usageMetadata": None,
+        }
+
+    def test_native_usage_is_immutable_evidence_not_unsigned_settlement(self):
+        owner, context, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        observation = self.owner_usage(packet)
+        before = self.store.funding_status("episode")
+        self.pause()
+        ack = owner.record_usage(observation)
+        self.assertEqual(
+            ack,
+            {
+                "cycleId": packet["cycleId"],
+                "attemptId": packet["attemptId"],
+                "recorded": True,
+            },
+        )
+        self.assertEqual(owner.record_usage(observation), ack)
+        reopened = ExecutionStore(
+            self.path,
+            verifier(self.human),
+            clock=self.clock,
+            usage_verifier=verifier(self.accountant),
+        )
+        operations = reopened.cycle_status(context.cycle.cycle_id)["operations"]
+        observed = [op for op in operations if op["kind"] == "provider_attempt"]
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(
+            json.loads(observed[0]["scope"])["usage_observation"],
+            {
+                "schema": "execution/provider-usage-observation/v1",
+                **observation,
+            },
+        )
+        for change in (
+            {"responseId": "changed"},
+            {"model": "changed"},
+            {
+                "tokenUsage": dict(
+                    totalTokens=3,
+                    inputTokens=2,
+                    cachedInputTokens=0,
+                    cacheWriteInputTokens=0,
+                    outputTokens=1,
+                    reasoningOutputTokens=0,
+                ),
+            },
+        ):
+            with self.assertRaises(ExecutionDenied):
+                owner.record_usage(observation | change)
+        after = reopened.funding_status("episode")
+        for field in ("calls", "reserved", "spent"):
+            self.assertEqual(before[field], after[field])
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT actual,receipt FROM call_charges WHERE operation_id=?",
+                    (packet["attemptId"],),
+                ).fetchone(),
+                (None, None),
+            )
+        # The already selected accountant can settle admitted exposure after pause.
+        self.settle_attempt(context.cycle, packet["attemptId"], 8)
+        self.assertEqual(self.store.funding_status("episode")["spent"], 8)
+        self.assertTrue(self.store.funding_status("episode")["paused"])
+
+    def receipt_for(self, request, *, key=None, operation=None):
+        payload = dict(
+            schema="execution/usage/v1",
+            store_id=request["store_id"],
+            principal=request["principal"],
+            cycle_id=request["cycle_id"],
+            operation_id=operation or request["operation_id"],
+            actual=8,
+        )
+        return {"usage": payload, "proof": self.signed(payload, key or self.accountant)}
+
+    def test_native_receipt_provider_commits_observation_before_once_only_settlement(
+        self,
+    ):
+        owner, context, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        observation = self.owner_usage(packet)
+        self.pause()
+        requests = []
+
+        def accountant(request):
+            requests.append(request)
+            self.assertNotIn(context.cycle.token, json.dumps(request))
+            self.assertEqual(
+                request["registration_sha256"], owner._cost_bound.registration_sha256
+            )
+            with closing(sqlite3.connect(self.path)) as db:
+                retained = json.loads(
+                    db.execute(
+                        "SELECT scope FROM operations WHERE operation_id=?",
+                        (packet["attemptId"],),
+                    ).fetchone()[0]
+                )
+            self.assertEqual(
+                retained["usage_observation"]["responseId"], observation["responseId"]
+            )
+            request["observation"]["model"] = "must-not-mutate-original"
+            return self.receipt_for(request)
+
+        self.assertTrue(
+            owner.record_usage(observation, receipt_provider=accountant)["recorded"]
+        )
+        self.assertTrue(
+            owner.record_usage(observation, receipt_provider=accountant)["recorded"]
+        )
+        self.assertEqual(len(requests), 1)
+        self.assertIsNone(observation["model"])
+        account = self.store.funding_status("episode")
+        self.assertEqual(
+            (account["calls"], account["spent"], account["reserved"]), (1, 8, 0)
+        )
+        self.assertTrue(account["paused"])
+
+    def test_native_receipt_provider_failure_preserves_maximum_and_never_repeats(self):
+        for index, mode in enumerate(("lost", "wrong-key", "other-attempt"), 1):
+            owner, context, _, _ = self.native_owner(mode)
+            packet = self.owner_request(owner)
+            owner.reserve(packet, lambda _: None)
+            observation = self.owner_usage(packet)
+            requests = []
+
+            def accountant(request, mode=mode, requests=requests):
+                requests.append(request)
+                if mode == "lost":
+                    raise TimeoutError("synthetic accounting receipt lost")
+                return self.receipt_for(
+                    request,
+                    key=self.human if mode == "wrong-key" else None,
+                    operation=str(uuid.uuid4()) if mode == "other-attempt" else None,
+                )
+
+            with self.assertRaises((TimeoutError, ExecutionDenied)):
+                owner.record_usage(observation, receipt_provider=accountant)
+            self.assertTrue(
+                owner.record_usage(observation, receipt_provider=accountant)["recorded"]
+            )
+            self.assertEqual(len(requests), 1)
+            account = self.store.funding_status("episode")
+            self.assertEqual(
+                (account["calls"], account["spent"], account["reserved"]),
+                (index, 0, index * 30),
+            )
+            reopened = ExecutionStore(
+                self.path,
+                verifier(self.human),
+                clock=self.clock,
+                usage_verifier=verifier(self.accountant),
+            )
+            self.assertFalse(
+                reopened.record_provider_usage(
+                    context.cycle,
+                    packet["attemptId"],
+                    {
+                        "schema": "execution/provider-usage-observation/v1",
+                        **observation,
+                    },
+                )
+            )
+
+    def test_native_receipt_decline_is_not_zero_spending_or_permission_to_retry(self):
+        owner, _, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        observation = self.owner_usage(packet)
+        requests = []
+
+        def callback(request):
+            requests.append(request)
+
+        owner.record_usage(observation, receipt_provider=callback)
+        owner.record_usage(observation, receipt_provider=callback)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(self.store.funding_status("episode")["reserved"], 30)
+        self.assertEqual(self.store.funding_status("episode")["spent"], 0)
+
+    def test_native_usage_requires_reserved_identity_and_bounded_closed_payload(self):
+        owner, context, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        observation = self.owner_usage(packet)
+        with self.assertRaises(ExecutionDenied):
+            owner.record_usage(observation)
+        owner.reserve(packet, lambda _: None)
+        for change in (
+            {"attemptId": str(uuid.uuid4())},
+            {"attemptId": []},
+            {"ordinal": True},
+            {"threadId": "foreign"},
+            {"cycleId": "foreign"},
+            {"extra": True},
+            {"responseId": ""},
+            {"model": "x" * 201},
+            {"tokenUsage": {"totalTokens": 1}},
+            {"usageMetadata": {"amount": 3, "metadata": None}},
+            {"usageMetadata": {"amount": None, "metadata": "x" * 32768}},
+        ):
+            with self.subTest(change=list(change)), self.assertRaises(ExecutionDenied):
+                owner.record_usage(observation | change)
+        tokens = dict(
+            totalTokens=3,
+            inputTokens=2,
+            cachedInputTokens=0,
+            cacheWriteInputTokens=0,
+            outputTokens=1,
+            reasoningOutputTokens=0,
+        )
+        self.assertTrue(
+            owner.record_usage(observation | {"tokenUsage": tokens})["recorded"]
+        )
+        with self.assertRaises(ExecutionDenied):
+            context._finish("stopped", require_unstarted=True)
+        self.assertEqual(self.store.funding_status("episode")["reserved"], 30)
+
+    def test_unstarted_reconciliation_needs_no_operation_and_preserves_counters(self):
+        for dispatched in (False, True):
+            with self.subTest(dispatched=dispatched):
+                owner, context, _, _ = self.native_owner(
+                    identity=f"not-started-{dispatched}"
+                )
+                if dispatched:
+                    owner.reserve(self.owner_request(owner), lambda _: None)
+                before = self.store.funding_status("episode")
+                if dispatched:
+                    with self.assertRaises(ExecutionDenied):
+                        context._finish("stopped", require_unstarted=True)
+                    self.assertEqual(
+                        self.store.cycle_status(context.cycle.cycle_id)["state"],
+                        "intent",
+                    )
+                else:
+                    context._finish("stopped", require_unstarted=True)
+                    self.assertEqual(
+                        self.store.cycle_status(context.cycle.cycle_id)["state"],
+                        "stopped",
+                    )
+                after = self.store.funding_status("episode")
+                for field in ("calls", "reserved"):
+                    self.assertEqual(before[field], after[field])
+
     def test_native_owner_conserves_parent_limits_and_charges_before_publication(self):
         owner, context, _, _ = self.native_owner()
         descriptor = owner.descriptor()
+        self.assertEqual(
+            descriptor["maxOutputTokens"], context.instruction.max_output_tokens
+        )
         self.assertEqual(
             descriptor["allowance"],
             {

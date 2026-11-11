@@ -8,6 +8,7 @@ budgets, and exclusive tool mediation before being registered by the operator.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import sqlite3
 import threading
@@ -221,12 +222,14 @@ class CycleContext:
         store: ExecutionStore,
         cycle: Cycle,
         instruction: Instruction,
-        broker: NativeBroker,
+        broker: NativeBroker | None,
         monotonic: Callable[[], float],
         monotonic_deadline: float,
         on_terminal: Callable[[CycleContext], None] | None = None,
         source_check: Callable[[], Mapping[str, Any]] | None = None,
+        work: Mapping[str, Any] | None = None,
     ):
+        self.work = work
         self.cycle = cycle
         self.instruction = instruction
         self._store = store
@@ -239,6 +242,129 @@ class CycleContext:
         self._clock_fault = False
         self._last_wall = float("-inf")
         self._fenced = False
+
+    @classmethod
+    def prepare(
+        cls,
+        store: ExecutionStore,
+        broker: NativeBroker | None,
+        identity: str,
+        revision: int,
+        task: str,
+        *,
+        principal: str,
+        binding: tuple[str, str, str, str],
+        work_id: str | None = None,
+        require_funding: bool = True,
+        require_queued_source: bool = True,
+        read_message: Callable[[str], Mapping[str, Any]] | None = None,
+        host_source: Mapping[str, Any] | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        on_terminal: Callable[[CycleContext], None] | None = None,
+    ) -> CycleContext | None:
+        """Reserve the existing signed work without starting a runner.
+
+        The trusted host supplies its fixed principal/binding and current reader.
+        This retains the capability in this process, never serializes its token,
+        creates no authority or account, and cannot recover a dispatched cycle.
+        Owner construction must happen hereafter, outside a dispatch transaction.
+        """
+        # Scheduling metadata and arrival text never create an instruction.
+        if require_queued_source and work_id is None and host_source is None:
+            raise ExecutionDenied("peer execution requires a selected original")
+        source_check = None
+        work = None
+        if work_id is not None:
+            reader = read_message
+            if reader is None:
+                raise ExecutionDenied("no current authenticated source reader")
+
+            def source_check() -> Mapping[str, Any]:
+                return store.check_work_source(work_id, reader)
+
+            source_check()
+            work = store.coordination_work(work_id)
+        if host_source is not None:
+            # Host API only: the App owns its original queue. No peer metadata
+            # or second coordination row is required for this accounting mode.
+            if (
+                work_id is not None
+                or not require_funding
+                or broker is not None
+                or read_message is None
+                or set(host_source)
+                != {"channel_id", "message_id", "message_hash", "local_execution_id"}
+                or not isinstance(host_source["channel_id"], str)
+                or not isinstance(host_source["message_id"], str)
+                or not isinstance(host_source["message_hash"], str)
+                or len(host_source["message_hash"]) != 64
+                or any(c not in "0123456789abcdef" for c in host_source["message_hash"])
+                or not ExecutionStore._positive(host_source["local_execution_id"])
+            ):
+                raise ExecutionDenied("exclusive funded host source required")
+            expected = dict(host_source)
+            host_reader = read_message
+            first = host_reader(expected["message_id"])
+            original_digest = digest(dict(first))
+
+            def source_check() -> Mapping[str, Any]:
+                original = host_reader(expected["message_id"])
+                if (
+                    original.get("event_id") != expected["message_id"]
+                    or original.get("content_hash") != expected["message_hash"]
+                    or digest(dict(original)) != original_digest
+                ):
+                    raise ExecutionDenied("host original changed")
+                return original
+
+            source_check()
+            work = {
+                "source_mode": "app_owned_inbox",
+                **expected,
+                "document_sha256": original_digest,
+            }
+        try:
+            status = store.status(identity, revision)
+        except ExecutionDenied:
+            return None
+        if status["state"] != "active":
+            return None
+        instruction = store.get_instruction(identity, revision)
+        if host_source is not None and not any(
+            scope.channel == host_source["channel_id"] for scope in instruction.scope
+        ):
+            raise ExecutionDenied("host source channel outside signed scope")
+        if require_funding:
+            # Explicit operator profile, never selected by peer/model text. The
+            # actual provider boundary independently requires exact exposure.
+            store.check_funding(instruction)
+        if instruction.principal != principal:
+            raise ExecutionDenied(
+                "instruction principal is not the registered principal"
+            )
+        if hashlib.sha256(task.encode("utf-8")).hexdigest() != instruction.task_sha256:
+            raise ExecutionDenied("task digest mismatch")
+        start_mono = monotonic()
+        if not math.isfinite(start_mono):
+            raise ExecutionDenied("untrusted monotonic clock")
+        cycle = (
+            store.reserve(identity, revision, binding)
+            if work_id is None
+            else store.reserve(identity, revision, binding, work_id=work_id)
+        )
+        if cycle is None:
+            return None
+        return cls(
+            store,
+            cycle,
+            instruction,
+            broker,
+            monotonic,
+            start_mono + instruction.max_cycle_seconds,
+            on_terminal,
+            source_check,
+            work,
+        )
 
     def remaining(self) -> float:
         if self._fenced:
@@ -292,8 +418,13 @@ class CycleContext:
             self._fenced = True
             raise
 
-    def _finish(self, outcome: Literal["completed", "stopped"]) -> None:
-        self._store.finish(self.cycle, outcome)
+    def _finish(
+        self,
+        outcome: Literal["completed", "stopped"],
+        *,
+        require_unstarted: bool = False,
+    ) -> None:
+        self._store.finish(self.cycle, outcome, require_unstarted=require_unstarted)
         self._fenced = True
         if self._on_terminal is not None:
             self._on_terminal(self)
@@ -323,13 +454,18 @@ class CycleContext:
 
     def native(self, scope: Scope, payload: Mapping[str, Any]) -> object:
         self.check()
-        if scope not in self.instruction.scope or not self._broker.authorize(scope):
+        broker = self._broker
+        if (
+            broker is None
+            or scope not in self.instruction.scope
+            or not broker.authorize(scope)
+        ):
             raise ExecutionDenied("scope or communication authorization denied")
 
         def submit() -> object:
-            if not self._broker.authorize(scope):
+            if not broker.authorize(scope):
                 raise ExecutionDenied("communication authorization revoked")
-            return self._broker.submit(scope, payload, min(1.0, self.remaining()))
+            return broker.submit(scope, payload, min(1.0, self.remaining()))
 
         return self._store.dispatch(
             self.cycle, "native", scope, self._checkpoint, submit
@@ -445,7 +581,15 @@ class NativeProviderOwner:
                     str(uuid.uuid4()),
                     context.cycle.cycle_id,
                     "native_owner",
-                    canonical(self._allowance).decode(),
+                    canonical(
+                        self._allowance
+                        | (
+                            {"source": context.work}
+                            if context.work is not None
+                            and context.work.get("source_mode") == "app_owned_inbox"
+                            else {}
+                        )
+                    ).decode(),
                 ),
             )
         self._context = context
@@ -453,6 +597,7 @@ class NativeProviderOwner:
         self._cost_bound = cost_bound
         self._registration = registration
         self._ordinals: set[int] = set()
+        self._attempts: dict[str, int] = {}
         self._lock = threading.Lock()
         self._closed = False
 
@@ -474,6 +619,9 @@ class NativeProviderOwner:
             return {
                 "threadId": self._thread_id,
                 "providerReservationCycleId": self._context.cycle.cycle_id,
+                "maxOutputTokens": min(
+                    self._context.instruction.max_output_tokens, 2**32 - 1
+                ),
                 "allowance": dict(self._allowance),
             }
 
@@ -545,15 +693,141 @@ class NativeProviderOwner:
                         raise ExecutionDenied("native owner deadline reached")
                     return publish(response)
 
-                return self._context.provider_attempt(
+                result = self._context.provider_attempt(
                     request["attemptId"],
                     submit,
                     cost_bound=self._cost_bound,
                     registration=self._registration,
                 )
+                self._attempts[request["attemptId"]] = request["ordinal"]
+                return result
             except BaseException:
                 self._closed = True
                 raise
+
+    def record_usage(
+        self,
+        request: Mapping[str, Any],
+        *,
+        receipt_provider: Callable[[dict[str, Any]], Mapping[str, Any] | None]
+        | None = None,
+    ) -> dict[str, Any]:
+        """Current host's exact attempt evidence, never a signed settlement.
+
+        Do not use admission/source guards: an already admitted response may
+        arrive after a pause. No new call, effect, refund or balance is created.
+        """
+        with self._lock:
+            if receipt_provider is not None and not callable(receipt_provider):
+                raise ExecutionDenied("owner-selected receipt provider required")
+            if (
+                set(request)
+                != {
+                    "threadId",
+                    "cycleId",
+                    "attemptId",
+                    "ordinal",
+                    "responseId",
+                    "model",
+                    "tokenUsage",
+                    "usageMetadata",
+                }
+                or request["threadId"] != self._thread_id
+                or request["cycleId"] != self._context.cycle.cycle_id
+                or not isinstance(request["attemptId"], str)
+                or self._attempts.get(request["attemptId"]) != request["ordinal"]
+                or not ExecutionStore._positive(request["ordinal"])
+                or not isinstance(request["responseId"], str)
+                or not 0 < len(request["responseId"].encode()) <= 200
+                or (
+                    request["model"] is not None
+                    and (
+                        not isinstance(request["model"], str)
+                        or not 0 < len(request["model"].encode()) <= 200
+                    )
+                )
+            ):
+                raise ExecutionDenied(
+                    "provider observation differs from reserved owner"
+                )
+            tokens = request["tokenUsage"]
+            if tokens is not None and (
+                not isinstance(tokens, Mapping)
+                or set(tokens)
+                != {
+                    "totalTokens",
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "cacheWriteInputTokens",
+                    "outputTokens",
+                    "reasoningOutputTokens",
+                }
+                or not all(
+                    ExecutionStore._positive(v, zero=True) for v in tokens.values()
+                )
+            ):
+                raise ExecutionDenied("invalid observed token usage")
+            metadata = request["usageMetadata"]
+            if metadata is not None and (
+                not isinstance(metadata, Mapping)
+                or set(metadata) != {"amount", "metadata"}
+                or (
+                    metadata["amount"] is not None
+                    and not isinstance(metadata["amount"], str)
+                )
+            ):
+                raise ExecutionDenied("invalid observed usage metadata")
+            observation = {
+                "schema": "execution/provider-usage-observation/v1",
+                **dict(request),
+            }
+            fresh = self._context._store.record_provider_usage(
+                self._context.cycle, request["attemptId"], observation
+            )
+            # Persist before contacting an owner-selected external authority.
+            # A crash/lost receipt is never permission to ask again automatically.
+            if fresh and receipt_provider is not None:
+                receipt_request = {
+                    "schema": "execution/usage-receipt-request/v1",
+                    "store_id": self._context._store.store_id,
+                    "principal": self._context.instruction.principal,
+                    "cycle_id": self._context.cycle.cycle_id,
+                    "operation_id": request["attemptId"],
+                    "instruction_sha256": self._context.instruction.sha256,
+                    "registration_sha256": self._cost_bound.registration_sha256,
+                    "provider": self._context.instruction.provider,
+                    "model": self._context.instruction.model,
+                    "route": self._cost_bound.route,
+                    "unit": self._cost_bound.unit,
+                    "deadline_unix_ms": self._allowance["deadlineUnixMs"],
+                    "observation": observation,
+                }
+                encoded_request = canonical(receipt_request)
+                if len(encoded_request) > 65536:
+                    raise ExecutionDenied("bounded accounting request required")
+                receipt = receipt_provider(json.loads(encoded_request))
+                if receipt is not None:
+                    if (
+                        not isinstance(receipt, Mapping)
+                        or set(receipt) != {"usage", "proof"}
+                        or not isinstance(receipt["usage"], Mapping)
+                        or receipt["usage"].get("principal")
+                        != self._context.instruction.principal
+                        or receipt["usage"].get("operation_id") != request["attemptId"]
+                        or receipt["usage"].get("cycle_id")
+                        != self._context.cycle.cycle_id
+                    ):
+                        raise ExecutionDenied(
+                            "usage receipt differs from observed attempt"
+                        )
+                    self._context._store.settle_charge(
+                        self._context.cycle, receipt["usage"], receipt["proof"]
+                    )
+            return {
+                "cycleId": request["cycleId"],
+                "attemptId": request["attemptId"],
+                "recorded": True,
+            }
 
 
 class ReviewController:
@@ -598,63 +872,29 @@ class ReviewController:
     def run_due_once(
         self, identity: str, revision: int, task: str, *, work_id: str | None = None
     ) -> CycleContext | None:
-        # Scheduling metadata and arrival text never create an instruction.
-        if self.require_queued_source and work_id is None:
-            raise ExecutionDenied("peer execution requires a selected original")
-        source_check = None
-        work = None
-        if work_id is not None:
-            reader = self.read_message
-            if reader is None:
-                raise ExecutionDenied("no current authenticated source reader")
-
-            def source_check() -> Mapping[str, Any]:
-                return self.store.check_work_source(work_id, reader)
-
-            source_check()
-            work = self.store.coordination_work(work_id)
-        try:
-            status = self.store.status(identity, revision)
-        except ExecutionDenied:
-            return None
-        if status["state"] != "active":
-            return None
-        instruction = self.store.get_instruction(identity, revision)
-        if self.require_funding:
-            # Explicit operator profile, never selected by peer/model text. The
-            # actual provider boundary independently requires exact exposure.
-            self.store.check_funding(instruction)
-        if instruction.principal != self.runner.expected_principal:
-            raise ExecutionDenied(
-                "instruction principal is not the registered principal"
-            )
-        if hashlib.sha256(task.encode("utf-8")).hexdigest() != instruction.task_sha256:
-            raise ExecutionDenied("task digest mismatch")
-        start_mono = self.monotonic()
-        if not math.isfinite(start_mono):
-            raise ExecutionDenied("untrusted monotonic clock")
-        cycle = (
-            self.store.reserve(identity, revision, self.runner.binding)
-            if work_id is None
-            else self.store.reserve(
-                identity, revision, self.runner.binding, work_id=work_id
-            )
-        )
-        if cycle is None:
-            return None
-        context = CycleContext(
+        context = CycleContext.prepare(
             self.store,
-            cycle,
-            instruction,
             self.broker,
-            self.monotonic,
-            start_mono + instruction.max_cycle_seconds,
-            self._forget,
-            source_check,
+            identity,
+            revision,
+            task,
+            principal=self.runner.expected_principal,
+            binding=self.runner.binding,
+            work_id=work_id,
+            require_funding=self.require_funding,
+            require_queued_source=self.require_queued_source,
+            read_message=self.read_message,
+            monotonic=self.monotonic,
+            on_terminal=self._forget,
         )
+        if context is None:
+            return None
+        cycle, instruction = context.cycle, context.instruction
         with self._contexts_lock:
             self._contexts[(identity, revision, cycle.cycle_id)] = context
-        request = ReviewRequest(instruction, task, cycle.cycle_id, cycle.deadline, work)
+        request = ReviewRequest(
+            instruction, task, cycle.cycle_id, cycle.deadline, context.work
+        )
         self.store.dispatch(
             cycle,
             "inference",

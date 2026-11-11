@@ -138,6 +138,11 @@ A returned technical response is not proof of human reading or task success.
 `finish(cycle, "completed"|"stopped")` is a trusted adapter reconciliation API,
 not a model tool. It requires the exact host-held cycle capability and external
 evidence that the exact runtime turn and all admitted effects are settled.
+The native owner may require `finish(cycle, "stopped", require_unstarted=True)`
+only after trusted exact non-submission evidence. In that same transaction the
+journal requires one returned native-owner marker and no other operation; a
+pre-ACK provider attempt or any native effect refuses. This preserves finite
+cycle counts and all financial reservations. It is not an expiry reclaimer.
 Timeout alone, an interrupted local thread, or an unknown remote send outcome
 cannot justify `finish`. With a lost capability this first core deliberately
 leaves the session blocked; an independently reviewed recovery interface is
@@ -537,6 +542,21 @@ queue/deduplication metadata; rejected traffic adds no row or log. Only the exac
 source reference/hash/author/body/thread and execution correlation are retained;
 message text stays in the native inbox, not another private-history archive.
 
+A native host that already owns its durable inbox work may instead select the
+account-only `CycleContext.prepare(host_source=..., read_message=...)` path.
+It requires conserved funding, no effect broker and no second `work_id`. The
+current authenticated original must match the App-retained event ID/native
+content hash; a separate complete-document digest fences later changes. The
+existing native-owner operation retains those references and the App execution
+ID, never another copy of the message or a second work queue. The App's signed
+cost registration explicitly selects `source_mode=app_owned_inbox`, source channel,
+exact instruction hash and native binding. Legacy coordination remains separate;
+neither a peer field nor a failed legacy selection can choose the new mode.
+The selected signed task must express the authorized Messaging purpose; this
+accounting source proof does not widen its social effect scope or authorize
+native tools. App's existing current execution ownership checks remain necessary
+before and after every reservation, independently of the SDK original check.
+
 `ExecutionStore.enqueue_coordination(message_id, read_message)` is an explicit
 owner invocation using the actual current authenticated native lookup. Only a
 signed communication carrying `execution/coordination-request/v1` with kind
@@ -632,6 +652,15 @@ The submission callback only enqueues the bounded authorization response; this
 does not prove provider transmission or usage. A real owner-connected native
 adapter and authenticated per-attempt usage correlation remain necessary.
 
+`CycleContext.prepare` is the shared preparation entry for the existing review
+controller and a continuing native host. It verifies the selected purpose,
+principal/binding, funding, exact queued source and clocks, then reserves the
+existing cycle without invoking a runner inside the journal transaction. The
+host can construct its native owner afterward without reentering that writer.
+A provider-only context may omit the communication broker; `native()` then
+refuses effects, while accounting still uses the existing signed work. This
+creates no signing authority, serialized capability or executable activation.
+
 `NativeProviderOwner` consumes Core17 reservation parameters using that same
 work capability. The embedding owner selects the actually owned native thread,
 the already-reserved parent allowance and the verified adapter/cost registration;
@@ -653,6 +682,18 @@ even before the first attempt. The journal enforces the inherited attempt cap
 and shorter deadline for direct context callers too; source/pricing checks cannot
 carry publication past that deadline. Authenticated usage settlement never
 reopens the selection. This needs no new schema, ledger or service.
+
+`record_usage` first persists the immutable exact-attempt observation. An optional
+owner-selected `receipt_provider` then receives a copied, bounded request containing
+the attempt/cycle/principal, registration and instruction digests, provider/model,
+route/unit, original deadline and observation. It receives no capability, prompt
+or signing key. Only the first persisted observation requests a receipt; duplicates
+and crash recovery never request it again automatically. `None`, an unavailable
+provider or an invalid signature leaves maximum exposure reserved. A returned
+`{usage, proof}` must match the attempt, cycle and principal and pass the existing
+signed settlement verifier. A lost receipt can be reconciled through the existing
+settlement API; unsigned token telemetry alone never releases exposure. This hook
+selects no real signer, accounting service, prices or account funding.
 
 This is a host library consumer, not a service installer or executable account
 factory. App887 supplies the matching native client but its default callback
@@ -892,3 +933,19 @@ general Conversation is retained; an ephemeral review runner is not its substitu
 Actual per-account ceilings/periods and a qualified cost contract remain necessary
 before claiming real economic enforcement. There is no new default, background
 attention, account/provider change or automatic deployment.
+
+The native owner descriptor exposes `maxOutputTokens` from its signed
+instruction, alongside the existing conserved allowance. The matching App/Core
+candidate carries it as a required funded admission option to physical Responses
+HTTP/WS request construction. It is a requested provider ceiling, not independent
+proof of actual billing or of complete input/media/tool-route exposure.
+
+The native owner can record a closed, at-most32KiB
+`execution/provider-usage-observation/v1` payload only for an attempt UUID and
+ordinal it already reserved. It retains exact optional model/token/metadata
+fields in that operation's existing `scope`, without another row or charge.
+Identical duplicates are idempotent; conflicting reports refuse. Accounting for
+admitted exposure remains available after funding pause or expiry. This evidence
+is not `execution/usage/v1`: only the configured accounting authority's verified
+receipt can settle actual spending or release reserved maximum exposure. Missing
+or uncertain observation never refunds a reservation or resets counters.

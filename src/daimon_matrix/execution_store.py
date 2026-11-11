@@ -1072,6 +1072,42 @@ class ExecutionStore:
                 (payload["paused"], payload["revision"], payload["account_id"]),
             )
 
+    def record_provider_usage(
+        self, cycle: Cycle, operation_id: str, observation: Mapping[str, Any]
+    ) -> bool:
+        """Retain owner-observed evidence on its existing operation, not money.
+
+        Admission may be paused; accounting for admitted exposure remains valid.
+        Only an authenticated usage receipt can change call_charges.actual.
+        """
+        encoded = canonical(dict(observation)).decode()
+        if (
+            len(encoded.encode()) > 32 * 1024
+            or observation.get("schema") != "execution/provider-usage-observation/v1"
+            or observation.get("cycleId") != cycle.cycle_id
+            or observation.get("attemptId") != operation_id
+        ):
+            raise ExecutionDenied("bounded exact provider observation required")
+        with self._transaction() as db:
+            self._cycle(db, cycle)
+            row = db.execute(
+                "SELECT scope FROM operations WHERE cycle_id=? AND operation_id=? "
+                "AND kind='provider_attempt'",
+                (cycle.cycle_id, operation_id),
+            ).fetchone()
+            if row is None:
+                raise ExecutionDenied("provider observation has no reserved attempt")
+            retained = canonical({"usage_observation": dict(observation)}).decode()
+            if row["scope"] is not None:
+                if row["scope"] != retained:
+                    raise ExecutionDenied("conflicting provider observation")
+                return False
+            db.execute(
+                "UPDATE operations SET scope=? WHERE cycle_id=? AND operation_id=?",
+                (retained, cycle.cycle_id, operation_id),
+            )
+        return True
+
     def settle_charge(
         self, cycle: Cycle, payload: Mapping[str, Any], proof: Mapping[str, Any]
     ) -> None:
@@ -1617,7 +1653,9 @@ class ExecutionStore:
                     (cycle.cycle_id,),
                 )
 
-    def finish(self, cycle: Cycle, outcome: str) -> None:
+    def finish(
+        self, cycle: Cycle, outcome: str, *, require_unstarted: bool = False
+    ) -> None:
         """Trusted adapter reconciliation, NOT a model tool or a timeout reclaimer.
 
         Caller must prove the exact runtime turn stopped/completed, including
@@ -1629,6 +1667,22 @@ class ExecutionStore:
             row = self._cycle(db, cycle)
             if row["state"] not in {"intent", "ambiguous"}:
                 raise ExecutionDenied("cycle already terminal")
+            if require_unstarted and (
+                outcome != "stopped"
+                or db.execute(
+                    "SELECT count(*) FROM operations WHERE cycle_id=? "
+                    "AND kind='native_owner' AND state='returned'",
+                    (cycle.cycle_id,),
+                ).fetchone()[0]
+                != 1
+                or db.execute(
+                    "SELECT 1 FROM operations WHERE cycle_id=? "
+                    "AND kind!='native_owner'",
+                    (cycle.cycle_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise ExecutionDenied("unstarted native cycle has admitted operations")
             db.execute(
                 "UPDATE cycles SET state=?,outcome=? WHERE cycle_id=?",
                 (outcome, outcome, cycle.cycle_id),
