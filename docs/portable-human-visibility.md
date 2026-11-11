@@ -212,7 +212,9 @@ tamper rejection, old-schema migration, pending/ambiguous retention and regresse
 clock refusal. The compatible Matrix511/schema-2 successor is selected on all four children;
 all seven current readers were qualified afterward. No eligible live row existed
 at the receiving inspection, so actual production deletion is not claimed.
-Original-three Telegram records remain pinned. App retirement alone does not
+Historical original-three Telegram records remain pinned under their original
+policies; their current installations now select portable Conversation publication.
+App retirement alone does not
 establish complete production composition bounds.
 
 The compatible SDK/imports, four exact Conversation disclosures and all28

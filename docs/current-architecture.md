@@ -86,10 +86,13 @@ Expired carriers return retained results; readable history does not implement
 reliable delivery after a long disconnection.
 
 Human visibility follows the body's selected publication policy.
-The original three receivers retain the [Telegram V2 profile](mandatory-telegram-visibility.md)
-until their owning App deployment selects its already implemented portable
-publisher. The four children use [portable Conversation visibility](portable-human-visibility.md):
-actual signed membership, native readers and request/action/reply journeys passed
+All seven current receivers select [portable Conversation visibility](portable-human-visibility.md).
+The original three also use their owner-selected Conversation journals and
+`compact-text/v1`; their App publisher, signed Matrix installation and current
+reader are distinct selections. Do not repeat a destination migration from this
+document without reading its actual current installation. Historical Telegram
+obligations retain their original policy and uncertainty. The four children's
+signed membership, native readers and request/action/reply journeys passed
 without Telegram accounts or access to the Tribu channel. Telegram is not a
 Matrix/Cluster admission prerequisite.
 
