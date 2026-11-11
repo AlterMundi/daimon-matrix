@@ -592,6 +592,7 @@ class CIScopeTests(unittest.TestCase):
         for entry in (
             "docs/current-architecture.md",
             "docs/dm081-source-runtime.md",
+            "docs/dm054-scope-resolution.md",
             "docs/portable-human-visibility.md",
             "docs/runbooks/same-being-delta.md",
             "docs/runbooks/tribe-updates.md",
@@ -613,7 +614,13 @@ class CIScopeTests(unittest.TestCase):
                     ".github/workflows/tests.yml",
                     "docs/unknown.md",
                 ):
-                    self.assertEqual(profile([*changed, other]), "full")
+                    expected = (
+                        "receiving-control"
+                        if entry.endswith("dm054-scope-resolution.md")
+                        and other == "src/daimon_matrix/service.py"
+                        else "full"
+                    )
+                    self.assertEqual(profile([*changed, other]), expected)
                 for other in (
                     "src/daimon_matrix/human_tribu.py",
                     "src/daimon_matrix/human_tribu_process.py",

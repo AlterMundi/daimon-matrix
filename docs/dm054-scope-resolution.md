@@ -136,6 +136,59 @@ Tribe membership. `controls: not-established` explicitly retains the unfinished
 realm-modification-control domain; status alone is not full foundation acceptance.
 No service, provider, goal, credential, timer or autonomous attention is added.
 
+### Foreground native OS work controls
+
+For explicitly authorized work in a body's own Linux user session, the existing
+systemd user manager provides useful resource modification and a scoped stop.
+Use it directly; Matrix does not need a second task scheduler, permission registry
+or resource allocator. This is an operator workflow through the body's existing
+shell authority, not a new Matrix RPC or a grant to control another body's work.
+The authenticated `scope.me` realm read identifies the observed body; it does not
+confer the user-manager authority. Keep those two evidence sources distinct.
+
+Launch the selected foreground command once, with an operation-owned unit name:
+
+```sh
+systemd-run --user --unit=SELECTED_WORK --service-type=exec \
+  --property=MemoryMax=128M --property=CPUQuota=25% \
+  --property=TasksMax=16 --property=RuntimeMaxSec=60 \
+  --property=TimeoutStopSec=5 --property=KillMode=control-group \
+  --property=NoNewPrivileges=yes \
+  --property=StandardOutput=null --property=StandardError=null \
+  SELECTED_COMMAND
+```
+
+These example bounds suit a small metadata read. Choose bounds appropriate to
+the actual task and current resource grant; free OS memory is not a grant. This
+route limits memory, CPU, process count and service lifetime, not filesystem
+writes, network access, provider spending or all host resources. Retain necessary
+command output in the task's existing bounded private work record; do not enable
+unbounded output, copy credentials into arguments or add recurring activation.
+
+`systemctl --user show SELECTED_WORK.service -p ControlGroup -p MemoryMax
+-p CPUQuotaPerSecUSec -p TasksMax -p RuntimeMaxUSec` returns the actual service
+properties. Inspect the workload's corresponding `cpu.max`, `memory.max` and
+`pids.max` under its current cgroup to establish kernel enforcement. A manager's
+configuration alone does not prove a differently placed child is constrained.
+
+The owner may change only that selected task's resource budget, for example
+`systemctl --user set-property --runtime SELECTED_WORK.service CPUQuota=50%`,
+and inspect the resulting kernel value. Use
+`systemctl --user stop SELECTED_WORK.service` to withdraw that task's execution.
+Verify its actual exit and descendant/cgroup cleanup. This is neither global Stop
+nor authority to stop the native harness, goals, another user's services or an
+unrelated task. A disconnected launcher or lost acknowledgment requires inspecting
+the same named unit and retained result, not launching the command again.
+
+Initial ITACA acceptance used one genuine authenticated Matrix realm read under
+UID1000/NoNewPrivileges,128MiB,16tasks and a60second lifetime. Kernel CPU quota
+changed from25% to50% while that same task remained active; the selected owner
+stop produced a successful exit and removal of its cgroup, with zero model calls
+and no existing-service/goal/heartbeat changes. This proves the own-work operator route
+on that receiver. Other receivers, cross-body grants, richer controls and native
+Matrix control discovery/dispatch remain separate unfinished integration; the
+native status RPC correctly continues to say `controls: not-established`.
+
 ### Cluster discovery view
 
 The existing read-only `scope.resolve` capability accepts an explicit
