@@ -22,6 +22,7 @@ from .execution_instruction import (
     ExecutionDenied,
     Instruction,
     Scope,
+    canonical,
     digest,
 )
 from .execution_store import Cycle, ExecutionStore
@@ -405,33 +406,52 @@ class NativeProviderOwner:
                 or funding["schema"] != "execution/instruction-funding/v2"
             ):
                 raise ExecutionDenied("native owner requires multi-attempt funding")
-        if any(
-            op["kind"] in {"provider", "provider_attempt"}
-            for op in context._store.cycle_status(context.cycle.cycle_id)["operations"]
-        ):
-            raise ExecutionDenied("native provider owner cannot rearm dispatched work")
+            # Claim once in the existing shared journal, before any dispatch.
+            # Object-local counters cannot conserve an inherited parent cap.
+            if (
+                db.execute(
+                    "SELECT 1 FROM operations WHERE cycle_id=? "
+                    "AND kind IN ('native_owner','provider','provider_attempt')",
+                    (context.cycle.cycle_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise ExecutionDenied(
+                    "native provider owner already selected or dispatched"
+                )
+            self._allowance = {
+                "maxProviderAttempts": min(
+                    parent_allowance["maxProviderAttempts"],
+                    funding["max_provider_attempts"],
+                    2**32 - 1,
+                ),
+                "maxRequestBytes": min(
+                    parent_allowance["maxRequestBytes"],
+                    registration["max_request_bytes"],
+                ),
+                "deadlineUnixMs": min(
+                    parent_allowance["deadlineUnixMs"],
+                    int(context.cycle.deadline * 1000),
+                ),
+            }
+            remaining_ms = self._allowance["deadlineUnixMs"] - int(
+                context._store._now(db) * 1000
+            )
+            if not 0 < remaining_ms <= 600_000:
+                raise ExecutionDenied("native owner horizon unavailable")
+            db.execute(
+                "INSERT INTO operations VALUES (?,?,?,?,'returned')",
+                (
+                    str(uuid.uuid4()),
+                    context.cycle.cycle_id,
+                    "native_owner",
+                    canonical(self._allowance).decode(),
+                ),
+            )
         self._context = context
         self._thread_id = thread_id
         self._cost_bound = cost_bound
         self._registration = registration
-        self._allowance = {
-            "maxProviderAttempts": min(
-                parent_allowance["maxProviderAttempts"],
-                funding["max_provider_attempts"],
-                2**32 - 1,
-            ),
-            "maxRequestBytes": min(
-                parent_allowance["maxRequestBytes"], registration["max_request_bytes"]
-            ),
-            "deadlineUnixMs": min(
-                parent_allowance["deadlineUnixMs"], int(context.cycle.deadline * 1000)
-            ),
-        }
-        remaining_ms = self._allowance["deadlineUnixMs"] - int(
-            context._store.observe_clock() * 1000
-        )
-        if not 0 < remaining_ms <= 600_000:
-            raise ExecutionDenied("native owner horizon unavailable")
         self._ordinals: set[int] = set()
         self._lock = threading.Lock()
         self._closed = False

@@ -647,8 +647,12 @@ commits the full charge before `publish` enqueues the exact authorization reply.
 The publisher must not reenter the journal or wait for model work. A failed or
 possibly delivered publication preserves the charge and ambiguity; the owner is
 fenced and never retries/refunds. Local ordinal tracking is not a replacement for
-the journal's durable UUID/call conservation. Constructing another owner over
-already-dispatched work is refused, even after authenticated usage settlement.
+the journal's durable UUID/call conservation. Selection atomically retains the
+parent allowance in the existing operations table, so a second owner is refused
+even before the first attempt. The journal enforces the inherited attempt cap
+and shorter deadline for direct context callers too; source/pricing checks cannot
+carry publication past that deadline. Authenticated usage settlement never
+reopens the selection. This needs no new schema, ledger or service.
 
 This is a host library consumer, not a service installer or executable account
 factory. App887 supplies the matching native client but its default callback

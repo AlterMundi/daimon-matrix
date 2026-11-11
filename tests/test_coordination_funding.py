@@ -459,6 +459,66 @@ class FundingTests(unittest.TestCase):
             )
         self.assertEqual(self.store.funding_status("episode")["calls"], 1)
 
+    def test_native_owner_claim_prevents_preconstructed_duplicate_and_raw_bypass(self):
+        parent = {
+            "maxProviderAttempts": 1,
+            "maxRequestBytes": 128,
+            "deadlineUnixMs": 104000,
+        }
+        owner, context, bound, registration = self.native_owner(
+            parent=parent, attempts=3
+        )
+        # Both constructors run before any provider request. A second object
+        # must not acquire a fresh ordinal set against the larger signed cap.
+        with self.assertRaises(ExecutionDenied):
+            NativeProviderOwner(
+                context,
+                thread_id="selected-native",
+                parent_allowance=parent,
+                cost_bound=bound,
+                registration=registration,
+            )
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        self.settle_attempt(context.cycle, packet["attemptId"], 8)
+        # Even another trusted caller of the underlying context sees the
+        # inherited cap in the same journal, not only the object's counter.
+        with self.assertRaises(ExecutionDenied):
+            context.provider_attempt(
+                str(uuid.uuid4()),
+                lambda: self.fail("journal parent cap bypassed"),
+                cost_bound=bound,
+                registration=registration,
+            )
+        self.assertEqual(self.store.funding_status("episode")["calls"], 1)
+
+    def test_native_owner_journal_rechecks_parent_deadline_after_checkpoint(self):
+        _, context, bound, registration = self.native_owner(
+            parent={
+                "maxProviderAttempts": 1,
+                "maxRequestBytes": 128,
+                "deadlineUnixMs": 103000,
+            }
+        )
+        exposure = bound.exposure(context, registration)
+        checkpoints = []
+
+        def checkpoint():
+            checkpoints.append(True)
+            if len(checkpoints) == 2:
+                self.clock.now = 104
+
+        with self.assertRaises(ExecutionDenied):
+            self.store.dispatch_provider_attempt(
+                context.cycle,
+                str(uuid.uuid4()),
+                checkpoint,
+                lambda: self.fail("expired parent published"),
+                exposure=exposure,
+            )
+        self.assertEqual(len(checkpoints), 2)
+        self.assertEqual(self.store.funding_status("episode")["reserved"], 30)
+
     def test_native_owner_duplicate_ordinal_never_reserves_another_uuid(self):
         owner, context, _, _ = self.native_owner()
         first = self.owner_request(owner)
