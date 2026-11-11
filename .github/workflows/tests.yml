@@ -591,12 +591,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  tests:
+  test-shards:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
     runs-on: ubuntu-latest
-    # Run40077087854 reached the final Weave cases without a failure before
-    # the35min outer cap. Native/operation deadlines remain unchanged.
+    # Keep every discovered test and its module fixtures; independent runners
+    # reduce the serial suite's 35+ minute deployment delay.
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -630,25 +635,41 @@ jobs:
       - run: python tools/generate_dm081_vectors.py --check
       - run: python tools/generate_dm082_vectors.py --check
       - run: python -m compileall -q coordination src tools tests
-      - run: python tools/qualify.py --collective-memory .collective-memory-contract
+      - run: python tools/qualify.py --collective-memory .collective-memory-contract --shard-index ${{ matrix.shard }} --shard-count 4
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: matrix.shard == 0
         with:
           repository: nicoechaniz/hermes-memory-kit
           ref: f10fd5c3089c0962920314c97e14bc024feffa7a
           path: .hmk-contract
       - run: PYTHONPATH=src python -W error::ResourceWarning -m unittest tests.test_dm034_memory_projection -v
+        if: matrix.shard == 0
         env:
           HMK_CONTRACT_ROOT: ${{ github.workspace }}/.hmk-contract
       - run: python tools/check_tribe_provenance.py provenance/tribe-bridge-v1.json
+        if: matrix.shard == 0
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: matrix.shard == 0
         with:
           repository: nicoechaniz/daimon-cluster
           ref: 676495e852e6772a60de8221271ee9fc976f77ce
           path: .cluster-contract
       - name: Verify pinned Cluster hosting and canary evidence
+        if: matrix.shard == 0
         env:
           DAIMON_DM070_CLUSTER_ROOT: ${{ github.workspace }}/.cluster-contract
         run: PYTHONPATH=src python -m unittest tests.test_dm070_multihost.DM070PublishedContractTests.test_cluster_checkout_matches_exact_pins -v
+
+  tests:
+    needs: [scope, test-shards]
+    if: always() && needs.scope.outputs.profile == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require every qualification shard
+        env:
+          SHARD_RESULT: ${{ needs.test-shards.result }}
+        run: test "$SHARD_RESULT" = success
 
   static:
     needs: scope

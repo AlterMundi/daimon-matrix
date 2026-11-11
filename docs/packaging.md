@@ -21,6 +21,22 @@ uses Python 3.13.5, matching the host and receiving containers; consult
 dated RC evidence. Metadata support alone is not interpreter qualification.
 Pure-Python metadata has no upper bound forcing unnecessary protocol migration.
 
+## Unit qualification
+
+`python tools/qualify.py --collective-memory CHECKOUT` validates the pinned
+contract/legacy inputs and runs ordinary unittest discovery in an isolated
+environment without live provider credentials or integration switches.
+Optional `--shard-index INDEX --shard-count 4` selects one of four deterministic
+module groups from that same discovered suite. Imported cases, discovery errors,
+duplicates and within-module fixture ordering remain in the collection; each
+case belongs to exactly one shard. Explicit test selectors retain their existing
+unsharded behavior.
+
+Full CI runs all four shards on separate runners. Its existing `tests` check
+requires every shard to succeed; cancellation or failure cannot produce a pass.
+The additional pinned HMK, provenance and Cluster checks run once on shard zero.
+Other package, conformance, static and receiving checks keep their own jobs.
+
 ## Build
 
 Install development inputs, then run the verifier:
