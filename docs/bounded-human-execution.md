@@ -632,6 +632,35 @@ The submission callback only enqueues the bounded authorization response; this
 does not prove provider transmission or usage. A real owner-connected native
 adapter and authenticated per-attempt usage correlation remain necessary.
 
+`NativeProviderOwner` consumes Core17 reservation parameters using that same
+work capability. The embedding owner selects the actually owned native thread,
+the already-reserved parent allowance and the verified adapter/cost registration;
+the latter hashes its `max_request_bytes` ceiling. Its descriptor intersects the
+parent limits with signed v2 attempt fuel, that request ceiling and the existing
+cycle deadline, within Core's600second horizon. It exposes no capability token,
+account choice, new budget or inference activation. A signature on a registration
+is still not independent proof of real provider pricing or complete exposure.
+
+`reserve(params, publish)` accepts only the exact thread/cycle, canonical attempt
+UUID, unique bounded ordinal and original limits/deadline. The existing journal
+commits the full charge before `publish` enqueues the exact authorization reply.
+The publisher must not reenter the journal or wait for model work. A failed or
+possibly delivered publication preserves the charge and ambiguity; the owner is
+fenced and never retries/refunds. Local ordinal tracking is not a replacement for
+the journal's durable UUID/call conservation. Selection atomically retains the
+parent allowance in the existing operations table, so a second owner is refused
+even before the first attempt. The journal enforces the inherited attempt cap
+and shorter deadline for direct context callers too; source/pricing checks cannot
+carry publication past that deadline. Authenticated usage settlement never
+reopens the selection. This needs no new schema, ledger or service.
+
+This is a host library consumer, not a service installer or executable account
+factory. App887 supplies the matching native client but its default callback
+still denies financial reservations. The receiving host must bind its actual
+native-original lifecycle and isolated journal factory, qualified pricing/route
+and authenticated usage before selecting the composed financial path. No real
+account/provider, default funding, periodic attention or paid call is selected.
+
 Real pricing/protocol verification, funding authority/participants/limits and an
 installed exclusive provider route remain human-selected activation residuals.
 No real credentials, provider choice, background model use, production migration

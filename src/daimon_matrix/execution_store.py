@@ -506,6 +506,16 @@ class ExecutionStore:
         with closing(self._connect()) as db:
             return self._instruction(self._row(db, identity, revision))
 
+    @staticmethod
+    def _native_owner_allowance(
+        db: sqlite3.Connection, cycle: Cycle
+    ) -> dict[str, Any] | None:
+        row = db.execute(
+            "SELECT scope FROM operations WHERE cycle_id=? AND kind='native_owner'",
+            (cycle.cycle_id,),
+        ).fetchone()
+        return json.loads(row["scope"]) if row is not None else None
+
     def _guard(self, db: sqlite3.Connection, cycle: Cycle) -> Instruction:
         now = self._now(db)
         cycle_row = self._cycle(db, cycle)
@@ -519,6 +529,9 @@ class ExecutionStore:
             or not instruction.start <= now < min(instruction.end, cycle.deadline)
         ):
             raise ExecutionDenied("cycle fenced")
+        allowance = self._native_owner_allowance(db, cycle)
+        if allowance is not None and now * 1000 >= allowance["deadlineUnixMs"]:
+            raise ExecutionDenied("native owner deadline reached")
         self._funding(db, instruction)
         return instruction
 
@@ -647,6 +660,9 @@ class ExecutionStore:
                 if kind in {"inference", "provider"}
                 else instruction.max_effects
             )
+            allowance = self._native_owner_allowance(db, cycle)
+            if kind == "provider_attempt" and allowance is not None:
+                limit = min(limit, allowance["maxProviderAttempts"])
             if count >= limit:
                 raise ExecutionDenied("cycle resource budget exhausted")
             db.execute(
@@ -675,6 +691,8 @@ class ExecutionStore:
                     ):
                         raise ExecutionDenied("shared funding became uncertain")
                 checkpoint()
+                # Source/pricing reads may consume the selected parent horizon.
+                self._guard(db, cycle)
                 result = submit()
                 db.execute(
                     "UPDATE operations SET state='returned' WHERE operation_id=?",

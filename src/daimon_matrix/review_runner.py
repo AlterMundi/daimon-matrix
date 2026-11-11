@@ -12,6 +12,7 @@ import math
 import sqlite3
 import threading
 import time
+import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from typing import Any, Literal, Protocol
@@ -21,6 +22,7 @@ from .execution_instruction import (
     ExecutionDenied,
     Instruction,
     Scope,
+    canonical,
     digest,
 )
 from .execution_store import Cycle, ExecutionStore
@@ -361,6 +363,197 @@ class CycleContext:
         return self._store.dispatch_provider_attempt(
             self.cycle, operation_id, checkpoint, submit, exposure=exposure
         )
+
+
+class NativeProviderOwner:
+    """Host-only Core17 reservation consumer over an existing work capability.
+
+    The embedding owner selects the currently owned native thread and supplies
+    the already-reserved parent allowance, verified pricing and actual adapter
+    registration. None comes from a model, RPC body or new balance database.
+    The registration's max_request_bytes participates in its signed cost hash;
+    that assertion still requires independent full-exposure/route qualification.
+    Do not reconstruct this owner to restart dispatched/uncertain native work.
+    """
+
+    def __init__(
+        self,
+        context: CycleContext,
+        *,
+        thread_id: str,
+        parent_allowance: Mapping[str, Any],
+        cost_bound: ProviderCostBound,
+        registration: Mapping[str, Any],
+    ) -> None:
+        context.check()
+        if (
+            not isinstance(thread_id, str)
+            or not 0 < len(thread_id.encode("utf-8")) <= 200
+            or any(ord(c) < 32 for c in thread_id)
+            or set(parent_allowance)
+            != {"maxProviderAttempts", "maxRequestBytes", "deadlineUnixMs"}
+            or not all(ExecutionStore._positive(v) for v in parent_allowance.values())
+            or not ExecutionStore._positive(registration.get("max_request_bytes"))
+            or registration["max_request_bytes"] > 64 * 1024 * 1024
+        ):
+            raise ExecutionDenied("bounded native owner registration required")
+        cost_bound.exposure(context, registration)
+        with context._store._transaction() as db:
+            context._store._guard(db, context.cycle)
+            funding = context._store._funding(db, context.instruction, required=True)
+            if (
+                funding is None
+                or funding["schema"] != "execution/instruction-funding/v2"
+            ):
+                raise ExecutionDenied("native owner requires multi-attempt funding")
+            # Claim once in the existing shared journal, before any dispatch.
+            # Object-local counters cannot conserve an inherited parent cap.
+            if (
+                db.execute(
+                    "SELECT 1 FROM operations WHERE cycle_id=? "
+                    "AND kind IN ('native_owner','provider','provider_attempt')",
+                    (context.cycle.cycle_id,),
+                ).fetchone()
+                is not None
+            ):
+                raise ExecutionDenied(
+                    "native provider owner already selected or dispatched"
+                )
+            self._allowance = {
+                "maxProviderAttempts": min(
+                    parent_allowance["maxProviderAttempts"],
+                    funding["max_provider_attempts"],
+                    2**32 - 1,
+                ),
+                "maxRequestBytes": min(
+                    parent_allowance["maxRequestBytes"],
+                    registration["max_request_bytes"],
+                ),
+                "deadlineUnixMs": min(
+                    parent_allowance["deadlineUnixMs"],
+                    int(context.cycle.deadline * 1000),
+                ),
+            }
+            remaining_ms = self._allowance["deadlineUnixMs"] - int(
+                context._store._now(db) * 1000
+            )
+            if not 0 < remaining_ms <= 600_000:
+                raise ExecutionDenied("native owner horizon unavailable")
+            db.execute(
+                "INSERT INTO operations VALUES (?,?,?,?,'returned')",
+                (
+                    str(uuid.uuid4()),
+                    context.cycle.cycle_id,
+                    "native_owner",
+                    canonical(self._allowance).decode(),
+                ),
+            )
+        self._context = context
+        self._thread_id = thread_id
+        self._cost_bound = cost_bound
+        self._registration = registration
+        self._ordinals: set[int] = set()
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def _check(self) -> None:
+        if self._closed:
+            raise ExecutionDenied("native provider owner is fenced")
+        self._context.check()
+        self._cost_bound.exposure(self._context, self._registration)
+        if (
+            self._context._store.observe_clock() * 1000
+            >= self._allowance["deadlineUnixMs"]
+        ):
+            raise ExecutionDenied("native owner deadline reached")
+
+    def descriptor(self) -> dict[str, Any]:
+        """Exact immutable bounded-start fields; never the cycle capability token."""
+        with self._lock:
+            self._check()
+            return {
+                "threadId": self._thread_id,
+                "providerReservationCycleId": self._context.cycle.cycle_id,
+                "allowance": dict(self._allowance),
+            }
+
+    def reserve(
+        self,
+        request: Mapping[str, Any],
+        publish: Callable[[dict[str, Any]], object],
+    ) -> object:
+        """Reserve before publishing this exact authorization response once.
+
+        publish only enqueues bounded owner-channel bytes, without reentering
+        this owner/journal or waiting for native inference. If it fails after a
+        possible write, the existing journal preserves ambiguity and exposure.
+        Refusal fences this owner; no retry, refund or new cycle follows here.
+        """
+        with self._lock:
+            try:
+                self._check()
+                if not isinstance(request, Mapping) or not callable(publish):
+                    raise ExecutionDenied(
+                        "native request and bounded publisher required"
+                    )
+                attempt_id = request.get("attemptId")
+                try:
+                    canonical_attempt = (
+                        isinstance(attempt_id, str)
+                        and str(uuid.UUID(attempt_id)) == attempt_id
+                    )
+                except ValueError:
+                    canonical_attempt = False
+                if (
+                    set(request)
+                    != {
+                        "threadId",
+                        "cycleId",
+                        "attemptId",
+                        "ordinal",
+                        "maxRequestBytes",
+                        "deadlineUnixMs",
+                    }
+                    or request["threadId"] != self._thread_id
+                    or request["cycleId"] != self._context.cycle.cycle_id
+                    or not canonical_attempt
+                    or not ExecutionStore._positive(request["ordinal"])
+                    or request["ordinal"] > self._allowance["maxProviderAttempts"]
+                    or request["ordinal"] in self._ordinals
+                    or any(
+                        type(request[k]) is not int or request[k] != self._allowance[k]
+                        for k in ("maxRequestBytes", "deadlineUnixMs")
+                    )
+                ):
+                    raise ExecutionDenied(
+                        "native reservation differs from owned execution"
+                    )
+                self._ordinals.add(request["ordinal"])
+                response = {
+                    "cycleId": self._context.cycle.cycle_id,
+                    "attemptId": request["attemptId"],
+                    "authorized": True,
+                }
+
+                def submit() -> object:
+                    # The surrounding context already rechecks source/pricing
+                    # inside the journal. Do not reenter its transaction here.
+                    if (
+                        self._context._store.observe_clock() * 1000
+                        >= self._allowance["deadlineUnixMs"]
+                    ):
+                        raise ExecutionDenied("native owner deadline reached")
+                    return publish(response)
+
+                return self._context.provider_attempt(
+                    request["attemptId"],
+                    submit,
+                    cost_bound=self._cost_bound,
+                    registration=self._registration,
+                )
+            except BaseException:
+                self._closed = True
+                raise
 
 
 class ReviewController:

@@ -20,6 +20,7 @@ from daimon_matrix.execution_instruction import ExecutionDenied, Instruction, di
 from daimon_matrix.execution_store import ExecutionStore
 from daimon_matrix.review_runner import (
     CycleContext,
+    NativeProviderOwner,
     ProviderCostBound,
     ReviewController,
 )
@@ -262,7 +263,9 @@ class FundingTests(unittest.TestCase):
         with self.assertRaises(ExecutionDenied):
             self.settle_attempt(cycle, first, 7)  # conflicting usage still refused
 
-    def native_context(self, instruction, cycle, source_check=None):
+    def native_context(
+        self, instruction, cycle, source_check=None, registration_extra=None
+    ):
         context = CycleContext(
             self.store,
             cycle,
@@ -278,6 +281,7 @@ class FundingTests(unittest.TestCase):
             provider=instruction.provider,
             model=instruction.model,
         )
+        registration.update(registration_extra or {})
         payload = dict(
             schema="execution/provider-cost-bound/v1",
             principal=instruction.principal,
@@ -296,6 +300,266 @@ class FundingTests(unittest.TestCase):
             payload, self.signed(payload), verifier(self.human)
         )
         return context, bound, registration
+
+    def native_owner(self, identity="native-owner", parent=None, attempts=2):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(identity, attempts=attempts)
+        cycle = self.cycle(instruction)
+        context, bound, registration = self.native_context(
+            instruction, cycle, registration_extra={"max_request_bytes": 512}
+        )
+        owner = NativeProviderOwner(
+            context,
+            thread_id="selected-native",
+            parent_allowance=parent
+            or {
+                "maxProviderAttempts": 5,
+                "maxRequestBytes": 4096,
+                "deadlineUnixMs": 200000,
+            },
+            cost_bound=bound,
+            registration=registration,
+        )
+        return owner, context, bound, registration
+
+    def owner_request(self, owner, ordinal=1, identity=None):
+        descriptor = owner.descriptor()
+        return dict(
+            threadId=descriptor["threadId"],
+            cycleId=descriptor["providerReservationCycleId"],
+            attemptId=identity or str(uuid.uuid4()),
+            ordinal=ordinal,
+            maxRequestBytes=descriptor["allowance"]["maxRequestBytes"],
+            deadlineUnixMs=descriptor["allowance"]["deadlineUnixMs"],
+        )
+
+    def test_native_owner_conserves_parent_limits_and_charges_before_publication(self):
+        owner, context, _, _ = self.native_owner()
+        descriptor = owner.descriptor()
+        self.assertEqual(
+            descriptor["allowance"],
+            {
+                "maxProviderAttempts": 2,
+                "maxRequestBytes": 512,
+                "deadlineUnixMs": 108000,
+            },
+        )
+        self.assertNotIn(context.cycle.token, str(descriptor))
+        published = []
+        for ordinal in (1, 2):
+            packet = self.owner_request(owner, ordinal)
+
+            def publish(response):
+                # A separate connection sees the committed maximum before the
+                # final authorization response crosses its transport boundary.
+                with closing(sqlite3.connect(self.path)) as db:
+                    amount = db.execute(
+                        "SELECT maximum FROM call_charges WHERE operation_id=?",
+                        (response["attemptId"],),
+                    ).fetchone()[0]
+                self.assertEqual(amount, 30)
+                published.append(response)
+                return "enqueued"
+
+            self.assertEqual(owner.reserve(packet, publish), "enqueued")
+            self.assertEqual(
+                published[-1],
+                {
+                    "cycleId": context.cycle.cycle_id,
+                    "attemptId": packet["attemptId"],
+                    "authorized": True,
+                },
+            )
+            self.settle_attempt(context.cycle, packet["attemptId"], 8)
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(self.owner_request(owner, 3), published.append)
+        self.assertEqual(len(published), 2)
+        status = self.store.funding_status("episode")
+        self.assertEqual(
+            (status["calls"], status["spent"], status["reserved"]), (2, 16, 0)
+        )
+
+    def test_native_owner_rejects_changed_rpc_without_charging_or_publishing(self):
+        for index, change in enumerate(
+            [
+                {"threadId": "other"},
+                {"cycleId": str(uuid.uuid4())},
+                {"maxRequestBytes": 1},
+                {"deadlineUnixMs": 108001},
+                {"ordinal": True},
+                {"extra": "budget"},
+                {"attemptId": "invalid"},
+            ]
+        ):
+            owner, _, _, _ = self.native_owner(f"changed-{index}")
+            packet = self.owner_request(owner) | change
+            with self.assertRaises(ExecutionDenied):
+                owner.reserve(packet, lambda _: self.fail("unexpected publication"))
+            with self.assertRaises(ExecutionDenied):
+                owner.descriptor()
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+
+    def test_native_owner_unknown_publication_retains_charge_and_cannot_rearm(self):
+        owner, context, bound, registration = self.native_owner()
+        packet = self.owner_request(owner)
+        publications = []
+
+        def lost(response):
+            publications.append(response)
+            raise TimeoutError("synthetic lost authorization acknowledgment")
+
+        with self.assertRaises(TimeoutError):
+            owner.reserve(packet, lost)
+        self.store = ExecutionStore(self.path, verifier(self.human), clock=self.clock)
+        status = self.store.funding_status("episode")
+        self.assertEqual(
+            (status["calls"], status["reserved"], status["spent"]), (1, 30, 0)
+        )
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(packet, publications.append)
+        with self.assertRaises(ExecutionDenied):
+            NativeProviderOwner(
+                context,
+                thread_id="selected-native",
+                parent_allowance={
+                    "maxProviderAttempts": 2,
+                    "maxRequestBytes": 512,
+                    "deadlineUnixMs": 108000,
+                },
+                cost_bound=bound,
+                registration=registration,
+            )
+        self.assertEqual(len(publications), 1)
+
+    def test_native_owner_parent_cap_and_known_dispatch_cannot_be_rearmed(self):
+        parent = {
+            "maxProviderAttempts": 1,
+            "maxRequestBytes": 128,
+            "deadlineUnixMs": 104000,
+        }
+        owner, context, bound, registration = self.native_owner(
+            parent=parent, attempts=3
+        )
+        self.assertEqual(owner.descriptor()["allowance"], parent)
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        self.settle_attempt(context.cycle, packet["attemptId"], 8)
+        with self.assertRaises(ExecutionDenied):
+            NativeProviderOwner(
+                context,
+                thread_id="selected-native",
+                parent_allowance=parent,
+                cost_bound=bound,
+                registration=registration,
+            )
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(
+                self.owner_request(owner, 2),
+                lambda _: self.fail("parent fuel exceeded"),
+            )
+        self.assertEqual(self.store.funding_status("episode")["calls"], 1)
+
+    def test_native_owner_claim_prevents_preconstructed_duplicate_and_raw_bypass(self):
+        parent = {
+            "maxProviderAttempts": 1,
+            "maxRequestBytes": 128,
+            "deadlineUnixMs": 104000,
+        }
+        owner, context, bound, registration = self.native_owner(
+            parent=parent, attempts=3
+        )
+        # Both constructors run before any provider request. A second object
+        # must not acquire a fresh ordinal set against the larger signed cap.
+        with self.assertRaises(ExecutionDenied):
+            NativeProviderOwner(
+                context,
+                thread_id="selected-native",
+                parent_allowance=parent,
+                cost_bound=bound,
+                registration=registration,
+            )
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        self.settle_attempt(context.cycle, packet["attemptId"], 8)
+        # Even another trusted caller of the underlying context sees the
+        # inherited cap in the same journal, not only the object's counter.
+        with self.assertRaises(ExecutionDenied):
+            context.provider_attempt(
+                str(uuid.uuid4()),
+                lambda: self.fail("journal parent cap bypassed"),
+                cost_bound=bound,
+                registration=registration,
+            )
+        self.assertEqual(self.store.funding_status("episode")["calls"], 1)
+
+    def test_native_owner_journal_rechecks_parent_deadline_after_checkpoint(self):
+        _, context, bound, registration = self.native_owner(
+            parent={
+                "maxProviderAttempts": 1,
+                "maxRequestBytes": 128,
+                "deadlineUnixMs": 103000,
+            }
+        )
+        exposure = bound.exposure(context, registration)
+        checkpoints = []
+
+        def checkpoint():
+            checkpoints.append(True)
+            if len(checkpoints) == 2:
+                self.clock.now = 104
+
+        with self.assertRaises(ExecutionDenied):
+            self.store.dispatch_provider_attempt(
+                context.cycle,
+                str(uuid.uuid4()),
+                checkpoint,
+                lambda: self.fail("expired parent published"),
+                exposure=exposure,
+            )
+        self.assertEqual(len(checkpoints), 2)
+        self.assertEqual(self.store.funding_status("episode")["reserved"], 30)
+
+    def test_native_owner_duplicate_ordinal_never_reserves_another_uuid(self):
+        owner, context, _, _ = self.native_owner()
+        first = self.owner_request(owner)
+        owner.reserve(first, lambda _: None)
+        self.settle_attempt(context.cycle, first["attemptId"], 8)
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(
+                self.owner_request(owner), lambda _: self.fail("duplicate ordinal")
+            )
+        self.assertEqual(self.store.funding_status("episode")["calls"], 1)
+
+    def test_native_owner_pause_parent_expiry_and_registration_change_prevent_write(
+        self,
+    ):
+        # Advance time only for the final case; never reset the durable clock.
+        owner, _, _, _ = self.native_owner("paused")
+        packet = self.owner_request(owner)
+        self.pause()
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(packet, lambda _: self.fail("unexpected publication"))
+        self.pause(2, False)
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(packet, lambda _: self.fail("unexpected resumed publication"))
+        owner, _, _, registration = self.native_owner("changed-registration")
+        packet = self.owner_request(owner)
+        registration["model"] = "changed"
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(packet, lambda _: self.fail("unexpected changed publication"))
+        owner, _, _, _ = self.native_owner(
+            "parent-expiry",
+            parent={
+                "maxProviderAttempts": 1,
+                "maxRequestBytes": 256,
+                "deadlineUnixMs": 103000,
+            },
+        )
+        packet = self.owner_request(owner)
+        self.clock.now = 104
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(packet, lambda _: self.fail("unexpected expired publication"))
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
 
     def test_native_context_reserves_exact_attempts_without_review_runner(self):
         self.store.enable_provider_attempts()
