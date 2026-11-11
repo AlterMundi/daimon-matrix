@@ -618,6 +618,9 @@ class NativeProviderOwner:
             return {
                 "threadId": self._thread_id,
                 "providerReservationCycleId": self._context.cycle.cycle_id,
+                "maxOutputTokens": min(
+                    self._context.instruction.max_output_tokens, 2**32 - 1
+                ),
                 "allowance": dict(self._allowance),
             }
 

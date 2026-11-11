@@ -599,6 +599,9 @@ class FundingTests(unittest.TestCase):
         owner, context, _, _ = self.native_owner()
         descriptor = owner.descriptor()
         self.assertEqual(
+            descriptor["maxOutputTokens"], context.instruction.max_output_tokens
+        )
+        self.assertEqual(
             descriptor["allowance"],
             {
                 "maxProviderAttempts": 2,

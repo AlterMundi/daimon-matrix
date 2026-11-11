@@ -922,6 +922,12 @@ Actual per-account ceilings/periods and a qualified cost contract remain necessa
 before claiming real economic enforcement. There is no new default, background
 attention, account/provider change or automatic deployment.
 
+The native owner descriptor exposes `maxOutputTokens` from its signed
+instruction, alongside the existing conserved allowance. The matching App/Core
+candidate carries it as a required funded admission option to physical Responses
+HTTP/WS request construction. It is a requested provider ceiling, not independent
+proof of actual billing or of complete input/media/tool-route exposure.
+
 The native owner can record a closed, at-most32KiB
 `execution/provider-usage-observation/v1` payload only for an attempt UUID and
 ordinal it already reserved. It retains exact optional model/token/metadata
