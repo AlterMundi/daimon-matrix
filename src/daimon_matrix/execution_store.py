@@ -1074,7 +1074,7 @@ class ExecutionStore:
 
     def record_provider_usage(
         self, cycle: Cycle, operation_id: str, observation: Mapping[str, Any]
-    ) -> None:
+    ) -> bool:
         """Retain owner-observed evidence on its existing operation, not money.
 
         Admission may be paused; accounting for admitted exposure remains valid.
@@ -1101,11 +1101,12 @@ class ExecutionStore:
             if row["scope"] is not None:
                 if row["scope"] != retained:
                     raise ExecutionDenied("conflicting provider observation")
-                return
+                return False
             db.execute(
                 "UPDATE operations SET scope=? WHERE cycle_id=? AND operation_id=?",
                 (retained, cycle.cycle_id, operation_id),
             )
+        return True
 
     def settle_charge(
         self, cycle: Cycle, payload: Mapping[str, Any], proof: Mapping[str, Any]

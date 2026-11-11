@@ -683,6 +683,18 @@ and shorter deadline for direct context callers too; source/pricing checks canno
 carry publication past that deadline. Authenticated usage settlement never
 reopens the selection. This needs no new schema, ledger or service.
 
+`record_usage` first persists the immutable exact-attempt observation. An optional
+owner-selected `receipt_provider` then receives a copied, bounded request containing
+the attempt/cycle/principal, registration and instruction digests, provider/model,
+route/unit, original deadline and observation. It receives no capability, prompt
+or signing key. Only the first persisted observation requests a receipt; duplicates
+and crash recovery never request it again automatically. `None`, an unavailable
+provider or an invalid signature leaves maximum exposure reserved. A returned
+`{usage, proof}` must match the attempt, cycle and principal and pass the existing
+signed settlement verifier. A lost receipt can be reconciled through the existing
+settlement API; unsigned token telemetry alone never releases exposure. This hook
+selects no real signer, accounting service, prices or account funding.
+
 This is a host library consumer, not a service installer or executable account
 factory. App887 supplies the matching native client but its default callback
 still denies financial reservations. The receiving host must bind its actual

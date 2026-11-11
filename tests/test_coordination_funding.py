@@ -532,6 +532,122 @@ class FundingTests(unittest.TestCase):
         self.assertEqual(self.store.funding_status("episode")["spent"], 8)
         self.assertTrue(self.store.funding_status("episode")["paused"])
 
+    def receipt_for(self, request, *, key=None, operation=None):
+        payload = dict(
+            schema="execution/usage/v1",
+            store_id=request["store_id"],
+            principal=request["principal"],
+            cycle_id=request["cycle_id"],
+            operation_id=operation or request["operation_id"],
+            actual=8,
+        )
+        return {"usage": payload, "proof": self.signed(payload, key or self.accountant)}
+
+    def test_native_receipt_provider_commits_observation_before_once_only_settlement(
+        self,
+    ):
+        owner, context, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        observation = self.owner_usage(packet)
+        self.pause()
+        requests = []
+
+        def accountant(request):
+            requests.append(request)
+            self.assertNotIn(context.cycle.token, json.dumps(request))
+            self.assertEqual(
+                request["registration_sha256"], owner._cost_bound.registration_sha256
+            )
+            with closing(sqlite3.connect(self.path)) as db:
+                retained = json.loads(
+                    db.execute(
+                        "SELECT scope FROM operations WHERE operation_id=?",
+                        (packet["attemptId"],),
+                    ).fetchone()[0]
+                )
+            self.assertEqual(
+                retained["usage_observation"]["responseId"], observation["responseId"]
+            )
+            request["observation"]["model"] = "must-not-mutate-original"
+            return self.receipt_for(request)
+
+        self.assertTrue(
+            owner.record_usage(observation, receipt_provider=accountant)["recorded"]
+        )
+        self.assertTrue(
+            owner.record_usage(observation, receipt_provider=accountant)["recorded"]
+        )
+        self.assertEqual(len(requests), 1)
+        self.assertIsNone(observation["model"])
+        account = self.store.funding_status("episode")
+        self.assertEqual(
+            (account["calls"], account["spent"], account["reserved"]), (1, 8, 0)
+        )
+        self.assertTrue(account["paused"])
+
+    def test_native_receipt_provider_failure_preserves_maximum_and_never_repeats(self):
+        for index, mode in enumerate(("lost", "wrong-key", "other-attempt"), 1):
+            owner, context, _, _ = self.native_owner(mode)
+            packet = self.owner_request(owner)
+            owner.reserve(packet, lambda _: None)
+            observation = self.owner_usage(packet)
+            requests = []
+
+            def accountant(request, mode=mode, requests=requests):
+                requests.append(request)
+                if mode == "lost":
+                    raise TimeoutError("synthetic accounting receipt lost")
+                return self.receipt_for(
+                    request,
+                    key=self.human if mode == "wrong-key" else None,
+                    operation=str(uuid.uuid4()) if mode == "other-attempt" else None,
+                )
+
+            with self.assertRaises((TimeoutError, ExecutionDenied)):
+                owner.record_usage(observation, receipt_provider=accountant)
+            self.assertTrue(
+                owner.record_usage(observation, receipt_provider=accountant)["recorded"]
+            )
+            self.assertEqual(len(requests), 1)
+            account = self.store.funding_status("episode")
+            self.assertEqual(
+                (account["calls"], account["spent"], account["reserved"]),
+                (index, 0, index * 30),
+            )
+            reopened = ExecutionStore(
+                self.path,
+                verifier(self.human),
+                clock=self.clock,
+                usage_verifier=verifier(self.accountant),
+            )
+            self.assertFalse(
+                reopened.record_provider_usage(
+                    context.cycle,
+                    packet["attemptId"],
+                    {
+                        "schema": "execution/provider-usage-observation/v1",
+                        **observation,
+                    },
+                )
+            )
+
+    def test_native_receipt_decline_is_not_zero_spending_or_permission_to_retry(self):
+        owner, _, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        observation = self.owner_usage(packet)
+        requests = []
+
+        def callback(request):
+            requests.append(request)
+
+        owner.record_usage(observation, receipt_provider=callback)
+        owner.record_usage(observation, receipt_provider=callback)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(self.store.funding_status("episode")["reserved"], 30)
+        self.assertEqual(self.store.funding_status("episode")["spent"], 0)
+
     def test_native_usage_requires_reserved_identity_and_bounded_closed_payload(self):
         owner, context, _, _ = self.native_owner()
         packet = self.owner_request(owner)

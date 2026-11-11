@@ -8,6 +8,7 @@ budgets, and exclusive tool mediation before being registered by the operator.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import sqlite3
 import threading
@@ -704,13 +705,21 @@ class NativeProviderOwner:
                 self._closed = True
                 raise
 
-    def record_usage(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def record_usage(
+        self,
+        request: Mapping[str, Any],
+        *,
+        receipt_provider: Callable[[dict[str, Any]], Mapping[str, Any] | None]
+        | None = None,
+    ) -> dict[str, Any]:
         """Current host's exact attempt evidence, never a signed settlement.
 
         Do not use admission/source guards: an already admitted response may
         arrive after a pause. No new call, effect, refund or balance is created.
         """
         with self._lock:
+            if receipt_provider is not None and not callable(receipt_provider):
+                raise ExecutionDenied("owner-selected receipt provider required")
             if (
                 set(request)
                 != {
@@ -772,9 +781,48 @@ class NativeProviderOwner:
                 "schema": "execution/provider-usage-observation/v1",
                 **dict(request),
             }
-            self._context._store.record_provider_usage(
+            fresh = self._context._store.record_provider_usage(
                 self._context.cycle, request["attemptId"], observation
             )
+            # Persist before contacting an owner-selected external authority.
+            # A crash/lost receipt is never permission to ask again automatically.
+            if fresh and receipt_provider is not None:
+                receipt_request = {
+                    "schema": "execution/usage-receipt-request/v1",
+                    "store_id": self._context._store.store_id,
+                    "principal": self._context.instruction.principal,
+                    "cycle_id": self._context.cycle.cycle_id,
+                    "operation_id": request["attemptId"],
+                    "instruction_sha256": self._context.instruction.sha256,
+                    "registration_sha256": self._cost_bound.registration_sha256,
+                    "provider": self._context.instruction.provider,
+                    "model": self._context.instruction.model,
+                    "route": self._cost_bound.route,
+                    "unit": self._cost_bound.unit,
+                    "deadline_unix_ms": self._allowance["deadlineUnixMs"],
+                    "observation": observation,
+                }
+                encoded_request = canonical(receipt_request)
+                if len(encoded_request) > 65536:
+                    raise ExecutionDenied("bounded accounting request required")
+                receipt = receipt_provider(json.loads(encoded_request))
+                if receipt is not None:
+                    if (
+                        not isinstance(receipt, Mapping)
+                        or set(receipt) != {"usage", "proof"}
+                        or not isinstance(receipt["usage"], Mapping)
+                        or receipt["usage"].get("principal")
+                        != self._context.instruction.principal
+                        or receipt["usage"].get("operation_id") != request["attemptId"]
+                        or receipt["usage"].get("cycle_id")
+                        != self._context.cycle.cycle_id
+                    ):
+                        raise ExecutionDenied(
+                            "usage receipt differs from observed attempt"
+                        )
+                    self._context._store.settle_charge(
+                        self._context.cycle, receipt["usage"], receipt["proof"]
+                    )
             return {
                 "cycleId": request["cycleId"],
                 "attemptId": request["attemptId"],
