@@ -16,9 +16,13 @@ from threading import Barrier
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from daimon_matrix.execution_instruction import ExecutionDenied, Instruction
+from daimon_matrix.execution_instruction import ExecutionDenied, Instruction, digest
 from daimon_matrix.execution_store import ExecutionStore
-from daimon_matrix.review_runner import ReviewController
+from daimon_matrix.review_runner import (
+    CycleContext,
+    ProviderCostBound,
+    ReviewController,
+)
 from tests.test_execution_instruction import proof, request, verifier
 from tests.test_execution_store import Clock
 from tests.test_passive_messaging_execution import BoundedFakeRunner, Broker
@@ -257,6 +261,105 @@ class FundingTests(unittest.TestCase):
         self.assertEqual(self.store.cycle_status(cycle.cycle_id)["state"], "intent")
         with self.assertRaises(ExecutionDenied):
             self.settle_attempt(cycle, first, 7)  # conflicting usage still refused
+
+    def native_context(self, instruction, cycle, source_check=None):
+        context = CycleContext(
+            self.store,
+            cycle,
+            instruction,
+            Broker(),
+            self.clock,
+            cycle.deadline,
+            source_check=source_check,
+        )
+        registration = dict(
+            store_id=self.store.store_id,
+            principal=instruction.principal,
+            provider=instruction.provider,
+            model=instruction.model,
+        )
+        payload = dict(
+            schema="execution/provider-cost-bound/v1",
+            principal=instruction.principal,
+            store_id=self.store.store_id,
+            registration_sha256=digest(registration),
+            route="isolated-fake",
+            unit="synthetic-charge",
+            expires=int(cycle.deadline),
+            max_input_tokens=instruction.max_input_tokens,
+            max_output_tokens=instruction.max_output_tokens,
+            input_price=0,
+            output_price=0,
+            fixed_charge=30,
+        )
+        bound = ProviderCostBound.verify(
+            payload, self.signed(payload), verifier(self.human)
+        )
+        return context, bound, registration
+
+    def test_native_context_reserves_exact_attempts_without_review_runner(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=2)
+        cycle = self.cycle(instruction)
+        context, bound, registration = self.native_context(instruction, cycle)
+        identities = [str(uuid.uuid4()) for _ in range(2)]
+        for identity in identities:
+            result = context.provider_attempt(
+                identity,
+                lambda identity=identity: (
+                    self.calls.append(identity) or {"authorized": True}
+                ),
+                cost_bound=bound,
+                registration=registration,
+            )
+            self.assertEqual(result, {"authorized": True})
+            self.settle_attempt(cycle, identity, 9)
+        with self.assertRaises(ExecutionDenied):
+            context.provider_attempt(
+                identities[0],
+                lambda: self.calls.append("replay"),
+                cost_bound=bound,
+                registration=registration,
+            )
+        self.assertEqual(self.calls, identities)
+        self.assertEqual(self.store.funding_status("episode")["spent"], 18)
+
+    def test_native_context_registration_and_source_rechecked_before_reply(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=2)
+        cycle = self.cycle(instruction)
+        context, bound, registration = self.native_context(instruction, cycle)
+        with self.assertRaises(ExecutionDenied):
+            context.provider_attempt(
+                str(uuid.uuid4()),
+                lambda: self.calls.append("wrong-model"),
+                cost_bound=bound,
+                registration=registration | {"model": "other"},
+            )
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+        checks = 0
+
+        def source_check():
+            nonlocal checks
+            checks += 1
+            if checks == 3:  # final checkpoint, after durable reservation
+                registration["model"] = "changed"
+            return {}
+
+        context._source_check = source_check
+        identity = str(uuid.uuid4())
+        with self.assertRaises(ExecutionDenied):
+            context.provider_attempt(
+                identity,
+                lambda: self.calls.append("changed-registration"),
+                cost_bound=bound,
+                registration=registration,
+            )
+        self.assertEqual(checks, 3)
+        self.assertEqual(self.calls, [])
+        status = self.store.funding_status("episode")
+        self.assertEqual((status["calls"], status["reserved"]), (1, 30))
+        self.assertEqual(self.store.cycle_status(cycle.cycle_id)["state"], "ambiguous")
 
     def test_native_attempt_global_fuel_is_atomic_within_one_work(self):
         self.store.enable_provider_attempts()

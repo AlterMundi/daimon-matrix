@@ -333,6 +333,35 @@ class CycleContext:
             self.cycle, "native", scope, self._checkpoint, submit
         )
 
+    def provider_attempt(
+        self,
+        operation_id: str,
+        submit: Callable[[], object],
+        *,
+        cost_bound: ProviderCostBound,
+        registration: Mapping[str, Any],
+    ) -> object:
+        """Reserve one native physical attempt in this existing work context.
+
+        The owner supplies its verified cost contract and exact registration,
+        never a model-supplied charge estimate. Recheck them at both journal
+        checkpoints, including after a source authorization read. ``submit``
+        only writes the bounded authorization response; it must not await the
+        native model, reenter the journal, or claim that provider I/O occurred.
+        Lost responses retain the original UUID/exposure; they are not replayed.
+        This method selects no account, signer, transport or native execution.
+        """
+        self.check()
+        exposure = cost_bound.exposure(self, registration)
+
+        def checkpoint() -> None:
+            self._checkpoint()
+            cost_bound.exposure(self, registration)
+
+        return self._store.dispatch_provider_attempt(
+            self.cycle, operation_id, checkpoint, submit, exposure=exposure
+        )
+
 
 class ReviewController:
     def __init__(

@@ -621,6 +621,17 @@ boundary but its optional exact pinned-native tests remain separately qualified.
 Authenticated usage settlement is still the separate accounting-authority path;
 a successful response alone does not refund the conservative charge.
 
+For a continuing native execution, the existing host-only
+`CycleContext.provider_attempt` combines this verified cost bound and exact
+registration with the schema5 per-attempt journal gate. It retains the native
+attempt UUID and rechecks source authorization, both clocks and the cost
+registration before the authorization response is written. Reusing a UUID never
+writes another response. A failed final check retains the reservation and marks
+the cycle ambiguous. No review runner or fresh reasoning conversation is needed.
+The submission callback only enqueues the bounded authorization response; this
+does not prove provider transmission or usage. A real owner-connected native
+adapter and authenticated per-attempt usage correlation remain necessary.
+
 Real pricing/protocol verification, funding authority/participants/limits and an
 installed exclusive provider route remain human-selected activation residuals.
 No real credentials, provider choice, background model use, production migration
