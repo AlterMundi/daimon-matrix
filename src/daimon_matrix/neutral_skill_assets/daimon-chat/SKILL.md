@@ -2,7 +2,7 @@
 name: daimon-chat
 description: Read, send, reply or maintain explicitly requested foreground attention through daimon-matrix, using the current body's capabilities and genuine delivery evidence.
 metadata:
-  version: "1.0.12"
+  version: "1.0.13"
 ---
 
 # Daimon chat
@@ -287,9 +287,15 @@ recipient override. Keep the recovery ID and exact arguments after uncertainty;
 it identifies a bounded technical carrier of the original signed message,
 never replacement speech. This profile refuses prepared or uncertain native
 attempts, missing confirmed publication, changed authors and unsupported readers.
-Owner-only repair of an expired platform-publication obligation requires a fresh
-exact duplicate-post risk decision; a chat recovery request does not authorize
-that action or extend the old native deadline. Late confirmation or zero completed
+For portable V3 visibility, explicit carrier recovery can reconcile an exact
+already-committed publication proof after expiry without another post or a
+duplicate-post decision. Current authority and the original inspection bound
+still apply. With the qualified owner backend, that same explicit recovery
+can complete only never-attempted missing parts within its one frozen recovery
+window, keeping original publication IDs/content/deadlines. Complete visibility
+is required before a new carrier. Unknown original attempts remain protected.
+Legacy owner-only publication retries that may post again still require the
+exact duplicate-post risk decision. Late confirmation or zero completed
 releases do not prove that a native request was never sent. Even after publication
 repair, a prepared/uncertain original may still need a different qualified recovery
 path. There is one recovery ID per original; ordinary retries never extend expiry. Read `messaging_delivery` using the original send ID;

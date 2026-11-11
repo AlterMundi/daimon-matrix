@@ -343,6 +343,145 @@ class PortablePublicationTests(unittest.TestCase):
             )
         self.assertEqual(self.publisher.calls, 1)
 
+    def test_explicit_late_reconciliation_reads_exact_proof_without_publication(self):
+        digest = self.admit()
+        retained = []
+        send = self.publisher.send
+
+        def lose(request):
+            retained.append(send(request))
+            raise TimeoutError("lost result after commit")
+
+        with patch.object(self.publisher, "send", side_effect=lose):
+            self.worker.advance("portable-operation", digest)
+        self.worker._clock = lambda: 4102444800000
+        with (
+            patch.object(
+                self.publisher, "send", side_effect=AssertionError("no resend")
+            ),
+            patch.object(
+                self.publisher,
+                "inspect_publication",
+                return_value=retained[0],
+                create=True,
+            ) as reader,
+        ):
+            state = self.worker.reconcile_publication("portable-operation", digest)
+            self.assertEqual(state["state"], "confirmed")
+            self.worker.reconcile_publication("portable-operation", digest)
+            self.assertEqual(reader.call_count, 1)
+        record = self.journal._load("portable-operation", digest)
+        self.assertEqual(record["binding"]["publication_not_after_ms"], 4102444800000)
+        self.assertTrue(
+            self.worker.observed_at_or_after(
+                "portable-operation",
+                digest,
+                4102444800000,
+            )
+        )
+        self.assertEqual(self.publisher.calls, 1)
+
+    def test_late_multipart_proof_does_not_publish_its_missing_remainder(self):
+        self.policy["representation"] = "compact-text/v1"
+        self.source = projection("0123456789😀" * 800)
+        digest = self.admit()
+        retained = []
+        send = self.publisher.send
+
+        def lose(request):
+            retained.append(send(request))
+            raise TimeoutError("lost first part result")
+
+        with patch.object(self.publisher, "send", side_effect=lose):
+            self.worker.advance("portable-operation", digest)
+        self.worker._clock = lambda: 4102444800000
+        with (
+            patch.object(self.publisher, "send", side_effect=AssertionError("no send")),
+            patch.object(
+                self.publisher,
+                "inspect_publication",
+                return_value=retained[0],
+                create=True,
+            ),
+        ):
+            state = self.worker.reconcile_publication("portable-operation", digest)
+            self.assertEqual(state["state"], "queued")
+            self.assertEqual(state["confirmed_parts"], 1)
+            self.assertGreater(state["part_count"], 1)
+            with self.assertRaisesRegex(echo.EchoError, "echo_publication_expired"):
+                self.worker.advance("portable-operation", digest)
+        self.assertEqual(self.publisher.calls, 1)
+        self.assertEqual(self.publisher.confirmations, [])
+
+    def test_exact_owner_proof_read_has_its_own_bound_after_expiry(self):
+        import uuid
+
+        transport = echo.ConversationJournalTransport(Path("/fixture/owner.sock"))
+        identifier = str(uuid.uuid4())
+        with (
+            patch.object(
+                transport, "_exchange", return_value={"proof": "retained"}
+            ) as read,
+            patch.object(echo.time, "monotonic_ns", return_value=1000),
+        ):
+            self.assertEqual(
+                transport.inspect_publication(
+                    {"publication_id": identifier, "not_after_ms": 1}
+                ),
+                b'{"proof":"retained"}',
+            )
+            read.assert_called_once_with(
+                "matrix publication inspect " + identifier,
+                5_000_001_000,
+            )
+
+    def test_explicit_completion_only_sends_never_attempted_remaining_parts(self):
+        self.policy["representation"] = "compact-text/v1"
+        self.source = projection("Exact original " + "a" * 4500 + "😀" * 16)
+        digest = self.admit()
+        self.worker.advance("portable-operation", digest)
+        before = self.journal._load("portable-operation", digest)
+        self.assertGreater(len(before["parts"]), 1)
+        first = echo._copy(before["parts"][0])
+        self.worker._clock = lambda: 4102444800000
+        control = dict(
+            schema="dm.visibility.publication-completion/v1",
+            recovery_id="00000000-0000-4000-8000-000000000001",
+            issued_at_ms=4102444800000,
+            expires_at_ms=4102444860000,
+        )
+        with patch.object(
+            self.publisher,
+            "complete_publication",
+            side_effect=lambda request, _: self.publisher.send(request),
+            create=True,
+        ):
+            self.assertEqual(
+                self.worker.complete_publication("portable-operation", digest, control)[
+                    "state"
+                ],
+                "confirmed",
+            )
+            count = self.publisher.calls
+            self.worker.complete_publication("portable-operation", digest, control)
+        after = self.journal._load("portable-operation", digest)
+        self.assertEqual(after["binding"], before["binding"])
+        self.assertEqual(after["parts"][0], first)
+        self.assertEqual(count, len(after["parts"]))
+        self.assertEqual(self.publisher.calls, count)
+        self.assertTrue(all(len(p["attempts"]) == 1 for p in after["parts"]))
+
+    def test_late_reconciliation_requires_current_authority(self):
+        digest = self.admit()
+        self.publisher.lose_ack = True
+        self.worker.advance("portable-operation", digest)
+        self.worker._clock = lambda: 4102444800000
+        self.worker._authorize = lambda _: False
+        with patch.object(self.publisher, "inspect_publication", create=True) as reader:
+            with self.assertRaisesRegex(echo.EchoError, "echo_authorization_blocked"):
+                self.worker.reconcile_publication("portable-operation", digest)
+            reader.assert_not_called()
+
     def test_expired_original_never_starts_a_new_inspection(self):
         digest = self.admit()
         self.publisher.lose_ack = True
@@ -396,7 +535,7 @@ class NativePublicationRetirementTests(unittest.TestCase):
             )
         self.controller = self.controller_for("synthetic")
 
-    def controller_for(self, mode):
+    def controller_for(self, mode, path_id="peer-converse-request"):
         from daimon_matrix.native_egress import MandatoryEgressController
 
         c = MandatoryEgressController(
@@ -419,10 +558,10 @@ class NativePublicationRetirementTests(unittest.TestCase):
             resolve=resolve,
             authorize=lambda _: True,
         )
-        c.register_path("peer-converse-request", "native-retirement")
+        c.register_path(path_id, "native-retirement")
         return c
 
-    def admit(self, name):
+    def admit(self, name, path_id="peer-converse-request"):
         raw = name.encode()
         with closing(sqlite3.connect(self.path)) as db:
             db.row_factory = sqlite3.Row
@@ -435,7 +574,7 @@ class NativePublicationRetirementTests(unittest.TestCase):
             binding = self.controller.admit_in_transaction(
                 db,
                 catalog_id="native-retirement",
-                path_id="peer-converse-request",
+                path_id=path_id,
                 operation_id=name,
                 locator=name,
                 native_bytes=raw,
@@ -455,6 +594,52 @@ class NativePublicationRetirementTests(unittest.TestCase):
                 ).fetchone()[0],
                 db.execute("SELECT count(*) FROM echo_v2_obligations").fetchone()[0],
             )
+
+    def test_late_publication_reconciliation_never_reopens_native_release(self):
+        from daimon_matrix.native_egress import NativeEgressError
+
+        self.controller = self.controller_for("synthetic", "tribe-message-request")
+        binding = self.admit("late-publication", "tribe-message-request")
+        retained = []
+        send = self.publisher.send
+
+        def lose(request):
+            retained.append(send(request))
+            raise TimeoutError("lost commit response")
+
+        with patch.object(self.publisher, "send", side_effect=lose):
+            self.controller.advance_one(binding)
+        self.now = binding.deadline_ms
+        with (
+            patch.object(
+                self.publisher, "send", side_effect=AssertionError("no resend")
+            ),
+            patch.object(
+                self.publisher,
+                "inspect_publication",
+                return_value=retained[0],
+                create=True,
+            ) as reader,
+        ):
+            self.assertEqual(
+                self.controller.reconcile_publication(binding)["state"],
+                "confirmed",
+            )
+            self.assertEqual(reader.call_count, 1)
+        self.assertEqual(
+            self.controller.inspect_retained(binding)["completed_releases"], 0
+        )
+        with self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"):
+            self.controller.release(
+                binding, b"late-publication", lambda _: self.fail("effect")
+            )
+        # A late proof is not a route around a later regressed wall clock either.
+        self.now -= 1
+        with self.assertRaisesRegex(NativeEgressError, "egress_authority_blocked"):
+            self.controller.release(
+                binding, b"late-publication", lambda _: self.fail("effect")
+            )
+        self.assertEqual(self.publisher.calls, 1)
 
     def test_capacity_reclaimed_without_losing_original_or_reopening_clock(self):
         from daimon_matrix.native_egress import (

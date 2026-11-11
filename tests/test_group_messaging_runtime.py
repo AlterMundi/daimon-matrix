@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -673,14 +674,11 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertEqual(len(receiver.page(after=0, limit=100)), 1)
         self.assertEqual(len(sender.egress._transport.requests), before_echo)
 
-    def test_portable_readable_successor_recovers_plain_original_without_new_speech(
-        self,
-    ):
+    def portable_publishers(self, representation="compact-text/v1"):
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
         from tests.test_portable_visibility import JournalPublisher, encoded
 
-        sender, receiver = self.groups
         publishers = []
         for index, group in enumerate(self.groups):
             key = Ed25519PrivateKey.from_private_bytes(bytes([index + 1]) * 32)
@@ -692,7 +690,7 @@ class GroupRuntimeTests(unittest.TestCase):
                 schema="daimon-visibility-policy/v3",
                 generation=1,
                 origin="fixture",
-                representation="plain-json/v2",
+                representation=representation,
                 acceptance_digest="a" * 64,
                 proof_key_id="fixture",
                 publication=dict(
@@ -703,6 +701,13 @@ class GroupRuntimeTests(unittest.TestCase):
                 ),
             )
             publishers.append(publisher)
+        return publishers
+
+    def test_portable_readable_successor_recovers_plain_original_without_new_speech(
+        self,
+    ):
+        sender, receiver = self.groups
+        publishers = self.portable_publishers("plain-json/v2")
         sender.direct_reader_ready = lambda _: False
         args = dict(
             client_id="test",
@@ -775,6 +780,82 @@ class GroupRuntimeTests(unittest.TestCase):
         self.assertTrue(replay["ok"])
         self.assertEqual(replay["result"]["message_id"], original["message_id"])
         self.assertEqual(publishers[0].calls, before)
+
+    def test_expired_partial_publication_completes_original_and_delivers_once(self):
+        sender, receiver = self.groups
+        publishers = self.portable_publishers()
+        publisher = publishers[0]
+        retained = []
+        publish = publisher.send
+
+        def lose(request):
+            retained.append(publish(request))
+            raise TimeoutError("committed first part; lost native receipt")
+
+        args = dict(
+            client_id="test",
+            send_id=str(uuid.uuid4()),
+            thread_id=str(uuid.uuid4()),
+            text="Original protocol " + "a" * 4500 + "😀" * 16,
+            destination={"kind": "being", "being_ref": receiver.lane.being_ref},
+        )
+        with patch.object(publisher, "send", side_effect=lose):
+            original = sender.send(**args)
+        self.assertEqual(original["visibility"]["echo_state"], "ambiguous")
+        self.assertEqual(publisher.calls, 1)
+        self.assertGreater(original["visibility"]["part_count"], 1)
+        native = sender.records.get("native", args["send_id"])
+        self.fixture.now += sender.policy.max_ttl_ms + 1
+        sender.direct_reader_ready = lambda _: True
+        recovery_id = str(uuid.uuid4())
+        completions = []
+
+        def complete(request, control):
+            completions.append((request, control))
+            self.assertNotEqual(
+                request["publication_id"], json.loads(retained[0])["publication_id"]
+            )
+            return publish(request)
+
+        with (
+            patch.object(
+                publisher, "inspect_publication", return_value=retained[0], create=True
+            ),
+            patch.object(publisher, "prepare_publication_completion", create=True),
+            patch.object(
+                publisher, "complete_publication", side_effect=complete, create=True
+            ),
+        ):
+            sender.recover(
+                client_id="test",
+                original_send_id=args["send_id"],
+                recovery_id=recovery_id,
+            )
+            for server in [*self.servers, self.servers[0]]:
+                server._threads.join()
+            current = sender.inspect(client_id="test", send_id=args["send_id"])
+            self.assertTrue(
+                current["semantic"]["terminal"], json.dumps(current, sort_keys=True)
+            )
+            self.assertEqual(current["message_id"], original["message_id"])
+            self.assertEqual(current["thread_id"], original["thread_id"])
+            self.assertEqual(sender.records.get("native", args["send_id"]), native)
+            self.assertEqual(
+                len(receiver.page(after=0, limit=10, thread_id=args["thread_id"])), 1
+            )
+            count = publisher.calls
+            sender.recover(
+                client_id="test",
+                original_send_id=args["send_id"],
+                recovery_id=recovery_id,
+            )
+            self.assertEqual(publisher.calls, count)
+        self.assertEqual(len(completions), original["visibility"]["part_count"] - 1)
+        intent = sender.records.get("recovery-intent", recovery_id)
+        self.assertLessEqual(intent["expires_at_ms"] - intent["issued_at_ms"], 60000)
+        self.assertTrue(
+            all(c["expires_at_ms"] == intent["expires_at_ms"] for _, c in completions)
+        )
 
     def test_group_recovery_preserves_author_retention_and_whole_frozen_audience(self):
         sender, receiver = self.groups

@@ -104,6 +104,30 @@ each part keeps its deterministic publication identity and one normal attempt.
 If a previous result was lost, inspect that exact App publication before any
 recovery. A committed first part does not prove later publication or delivery.
 
+An explicit existing carrier-recovery request first reconciles the exact retained
+App proof through the current authenticated owner connection. This read has its
+own five-second I/O bound and consumes the original attempt's single durable
+inspection reservation; it does not republish content or extend either deadline.
+The signature, audience, content and current native authority are still checked.
+A late proof remains valid historical visibility and durably prevents reopening
+the old native release after clock rollback. If parts remain unattempted, the
+same explicit recovery first checks the owner App's completion capability, then
+freezes its existing recovery intent for at most60seconds. This single window
+covers missing publication and the new carrier; retries never refresh it.
+Only the never-attempted remainder is submitted through the owner's typed
+`publication complete` command, retaining the exact original request IDs,
+content, audience, digest and deadline. All parts must have signed receipts
+before the new technical carrier can proceed. A prepared/uncertain original
+transport, unknown publication attempt, unavailable backend or expired recovery
+window never permits another publication or native release. No new speech,
+account, model attention or alternate delivery route is introduced.
+
+The App requires a retained same-resource multipart anchor and pins group-level
+acknowledgment on surviving rows, preventing a partially acknowledged/retired
+prefix from being recreated. Its upgrade preserves the predecessor retirement
+floor where old group evidence might already be gone. These checks do not erase
+unknown records; actual legacy uncertainty remains inspectable.
+
 Use the existing accepted presentation/visibility successor writer after all
 required readers support that exact profile. The publication descriptor, audience,
 proof key, native identity and original message bindings remain unchanged.
@@ -164,12 +188,14 @@ byte-for-byte. Telegram installations keep their existing format and behavior.
 The transport connects only to the existing owner-only App Unix socket. It
 checks socket ownership/mode and Linux peer credentials, uses fixed typed
 publication/confirmation commands, and bounds request/response bytes and each
-exchange by the earlier native deadline or five seconds. The complete metadata
+publication exchange by the earlier native deadline or five seconds. Proof reads
+use their own five-second bound. The complete metadata
 acknowledgment batch shares five seconds. It starts no server, executable, model
 or alternate router. After a lost result, it reserves at most one exact retained
 proof inspection durably before reading. That read can also resume after native
 restart; an already consumed inspection budget is not reset. An expired original
-starts no inspection. A valid proof records `response_source: retained-publication`
+starts no ordinary inspection; explicit retained-proof reconciliation above can
+read an already committed receipt without reopening that lifetime. A valid proof records `response_source: retained-publication`
 and its inspection time in the authenticated journal, without another publication
 call. Failed/invalid reads keep uncertainty. Confirmation acknowledges only an
 already committed native proof and can safely repeat that exact metadata

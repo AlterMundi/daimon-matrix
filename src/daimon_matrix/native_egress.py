@@ -2712,7 +2712,11 @@ class MandatoryEgressController:
         return value
 
     def _mandatory(
-        self, binding: OperationBinding, database: sqlite3.Connection
+        self,
+        binding: OperationBinding,
+        database: sqlite3.Connection,
+        *,
+        retained_publication: bool = False,
     ) -> MandatoryEcho:
         catalog = self._catalogs[binding.catalog_id]
         journal = EchoJournal(
@@ -2724,7 +2728,11 @@ class MandatoryEgressController:
             journal,
             transport=self._transport,
             resolve=lambda _operation: self._load_projection(binding),
-            authorize=lambda _record: self._authorize(binding, catalog),
+            authorize=lambda _record: (
+                self._authorize_retained(binding, catalog)
+                if retained_publication
+                else self._authorize(binding, catalog)
+            ),
             clock=self._clock,
             storage_guard=self.local_storage,
         )
@@ -3047,6 +3055,65 @@ class MandatoryEgressController:
                 "expires_at_ms": binding.deadline_ms,
                 "echo_last_failure": state["last_failure"],
             }
+
+    def reconcile_publication(self, binding: OperationBinding) -> dict[str, Any]:
+        """Explicit trusted recovery of an exact existing publication proof.
+
+        No publisher send, native permit, deadline extension or release occurs.
+        Current authority/content and the authenticated original journal remain
+        required. Partial publication stays incomplete for carrier recovery.
+        """
+        catalog = self._catalogs.get(binding.catalog_id)
+        if catalog is None:
+            raise NativeEgressError("egress_catalog_invalid")
+        with (
+            self._retry_execution_guard(),
+            self._publication_database(catalog) as database,
+        ):
+            try:
+                with self.local_storage():
+                    retired = self._retired_status(database, binding)
+                    if retired is not None:
+                        return retired
+                    echo = self._mandatory(binding, database, retained_publication=True)
+                return echo.reconcile_publication(
+                    binding.echo_operation_id, binding.echo_binding_digest
+                )
+            except EchoError as exception:
+                raise NativeEgressError(str(exception)) from None
+
+    def prepare_publication_completion(self, binding: OperationBinding) -> None:
+        """Check current owner backend before freezing the one recovery window."""
+        catalog = self._catalogs.get(binding.catalog_id)
+        if catalog is None or not self._authorize_retained(binding, catalog):
+            raise NativeEgressError("egress_authority_blocked")
+        prepare = getattr(self._transport, "prepare_publication_completion", None)
+        if prepare is None:
+            raise NativeEgressError("echo_publication_completion_unavailable")
+        try:
+            prepare()
+        except EchoError as exception:
+            raise NativeEgressError(str(exception)) from None
+
+    def complete_publication(
+        self, binding: OperationBinding, control: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Finish only missing parts under the frozen explicit recovery window."""
+        catalog = self._catalogs.get(binding.catalog_id)
+        if catalog is None:
+            raise NativeEgressError("egress_catalog_invalid")
+        with (
+            self._retry_execution_guard(),
+            self._publication_database(catalog) as database,
+        ):
+            try:
+                with self.local_storage():
+                    echo = self._mandatory(binding, database, retained_publication=True)
+                return echo.complete_publication(
+                    binding.echo_operation_id, binding.echo_binding_digest, control
+                )
+            except EchoError as exception:
+                raise NativeEgressError(str(exception)) from None
 
     def retry_ambiguous(
         self, binding: OperationBinding, authorization: bytes

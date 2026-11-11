@@ -2806,13 +2806,8 @@ class GroupMessaging:
                 canonical_bytes(asdict(parent))
             ).hexdigest(),
         }
-        # Check original uncertainty before creating any technical authorization.
-        publication = self.egress.inspect_retained(parent)
-        if (
-            publication["echo_state"] != "confirmed"
-            or publication["completed_releases"]
-        ):
-            raise ValueError("tribe_recovery_original_not_unattempted")
+        # No fresh publication or carrier while any original native attempt is
+        # prepared/uncertain. Zero completed releases alone never proves this.
         for row in plan["rows"]:
             transport_id = str(
                 uuid.uuid5(
@@ -2822,11 +2817,34 @@ class GroupMessaging:
             )
             if self.records.get("transport", transport_id) is not None:
                 raise ValueError("tribe_recovery_original_attempt_uncertain")
+        publication = self.egress.inspect_retained(parent)
+        if publication["completed_releases"]:
+            raise ValueError("tribe_recovery_original_not_unattempted")
+        if publication["echo_state"] == "ambiguous":
+            self.egress.reconcile_publication(parent)
+            publication = self.egress.inspect_retained(parent)
+        needs_completion = publication["echo_state"] == "queued" and bool(
+            publication["confirmed_parts"]
+        )
+        if needs_completion:
+            # A backend capability read has no publication effect and must pass
+            # before freezing the finite recovery clock. Old Apps remain safe.
+            self.egress.prepare_publication_completion(parent)
+        elif publication["echo_state"] != "confirmed":
+            raise ValueError("tribe_recovery_publication_incomplete")
         self.records.reserve(
             "recovery-selection",
             original_send_id,
             {"recovery_id": recovery_id},
             lambda: {"recovery_id": recovery_id},
+        )
+        retained_intent = self.records.get("recovery-intent", recovery_id)
+        ttl = (
+            retained_intent["expires_at_ms"] - retained_intent["issued_at_ms"]
+            if retained_intent is not None
+            else min(self.policy.max_ttl_ms, 60000)
+            if needs_completion
+            else self.policy.max_ttl_ms
         )
         prepared = self.lane.prepare_recovery(
             original_send_id=original_send_id,
@@ -2834,8 +2852,20 @@ class GroupMessaging:
             message=message,
             resolution=resolution,
             original_publication_sha256=parent_reference["original_publication_sha256"],
-            ttl_ms=self.policy.max_ttl_ms,
+            ttl_ms=ttl,
         )
+        if needs_completion:
+            self.egress.complete_publication(
+                parent,
+                {
+                    "schema": "dm.visibility.publication-completion/v1",
+                    "recovery_id": recovery_id,
+                    "issued_at_ms": prepared["issued_at_ms"],
+                    "expires_at_ms": prepared["expires_at_ms"],
+                },
+            )
+            if self.egress.inspect_retained(parent)["echo_state"] != "confirmed":
+                raise ValueError("tribe_recovery_publication_incomplete")
         recovery = {
             **parent_reference,
             "event": prepared["recovery"],
