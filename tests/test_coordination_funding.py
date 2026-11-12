@@ -711,6 +711,32 @@ class FundingTests(unittest.TestCase):
                 for field in ("calls", "reserved"):
                     self.assertEqual(before[field], after[field])
 
+    def test_native_owner_input_exposure_caps_complete_request_before_reservation(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(
+            "small-native-input", attempts=2, max_input_tokens=128
+        )
+        cycle = self.cycle(instruction)
+        context, bound, registration = self.native_context(
+            instruction, cycle, registration_extra={"max_request_bytes": 512}
+        )
+        owner = NativeProviderOwner(
+            context,
+            thread_id="selected-native",
+            parent_allowance={
+                "maxProviderAttempts": 2,
+                "maxRequestBytes": 4096,
+                "deadlineUnixMs": 108000,
+            },
+            cost_bound=bound,
+            registration=registration,
+        )
+        self.assertEqual(owner.descriptor()["allowance"]["maxRequestBytes"], 128)
+        packet = self.owner_request(owner) | {"maxRequestBytes": 129}
+        with self.assertRaises(ExecutionDenied):
+            owner.reserve(packet, lambda _: self.fail("unpriced input authorized"))
+        self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+
     def test_native_owner_conserves_parent_limits_and_charges_before_publication(self):
         owner, context, _, _ = self.native_owner()
         descriptor = owner.descriptor()
