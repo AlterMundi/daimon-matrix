@@ -69,14 +69,18 @@ Messaging does not renew it or activate an optional successor.
 
 Root's retained 12 November receiving checkpoint selects complete
 [Core41](https://github.com/compaii/codex/pull/41) source `cc9cb6ed` (merge
-`8efed805`), native [App906](https://github.com/AlterMundi/DaimonApp/pull/906)
-source `180f3580`, and composed web
-[App904](https://github.com/AlterMundi/DaimonApp/pull/904) source `3ebad586`.
-This is Root-specific evidence, not a claim that every receiver has this
-composition. The one nonforcing handoff observed old-process exit, exact complete
-package selection and replacement in the persistent native service cgroup.
-All27 goal identities/budgets were preserved, accounting remained nondecreasing,
-and existing pauses were unchanged.
+`8efed805`). Its initial App906/web904 composition and nonforcing complete-package
+handoff remain retained acceptance: old-process exit, persistent native-service
+placement, all27 then-current goal identities/budgets, nondecreasing accounting
+and existing pauses were verified.
+
+Root now selects the qualified [App908](https://github.com/AlterMundi/DaimonApp/pull/908)
+candidate: native runtime `98959ea1`, qualified source `e045b4ef`, and composed
+[web904](https://github.com/AlterMundi/DaimonApp/pull/904) source `3ebad586` plus
+that one-file provider correction. The default-audio binary,46routes, current
+goals/accounting/pauses, active collectors, unchanged Core process/package and
+own/anonymous HTTP boundaries are verified. This is Root-specific receiving;
+peer compositions remain separate.
 
 Earlier experimental activations4247/4249 failed before useful work: a symlinked
 file restriction, then a packaged filesystem helper masked by the private-home
@@ -95,9 +99,21 @@ attempted or rejected controller call establishes that separate claim.
 The experimental profile is now **unselected**: the retained field-only recovery
 completed successfully, restoring ordinary bounded Messaging/Reports with46routes,
 controls, accounts/goals and native collectors preserved, without restarting web.
-Core41 remains deployed. Next work is to correct the purpose-specific tool/path
-selection and observe a distinct authorized activation's useful tool/action/return;
-execution4259 and earlier failed originals are not to be replayed or refunded.
+Core41 remains deployed. Ordinary automatic4262 already used controller and Drive,
+reconciled27folders/150files, saved its cursor and returned a useful answer.
+App908 now supplies the selected fixed private host route for the existing Reports
+purpose: pinned input, bounded unknown-input retention and read-only Home-effect
+inspection/CAS settlement. The complete Core CLI/App/controller journey passed
+against a local provider stand-in; the installed adapter verified real private
+Home immutable/served bytes without publishing. Its native-only descriptor keeps
+its full invocation identity while preserving Web actor/audience/data/control
+identity and existing Alerts/Traffic/browser/device state. Natural Reports4274
+then used the configured route after its intake reconciliation: the exact native
+call/outcome, completed turn and reviewed return are verified. The command returned
+`unchanged`, retaining the existing Home version; no new publication or final
+human-visible text is claimed for this no-news pass. Complete physical-purpose
+tool/path selection and broader cohort acceptance remain. Execution4259 and
+earlier failed originals are not to be replayed or refunded.
 Saved-thread restoration is asynchronous after listener readiness; the exact-thread
 observation correction is maintained in
 [App907](https://github.com/AlterMundi/DaimonApp/pull/907).
