@@ -75,9 +75,10 @@ placement, all27 then-current goal identities/budgets, nondecreasing accounting
 and existing pauses were verified.
 
 Root now selects the qualified [App908](https://github.com/AlterMundi/DaimonApp/pull/908)
-candidate: native runtime `98959ea1`, qualified source `e045b4ef`, and composed
+candidate: native source `20091b28` and composed
 [web904](https://github.com/AlterMundi/DaimonApp/pull/904) source `3ebad586` plus
-that one-file provider correction. The default-audio binary,46routes, current
+the provider-only `20091b28` correction. Root-only lane profiles preserve
+Messaging and delegated work on their existing global/default selection. The default-audio binary,46routes, current
 goals/accounting/pauses, active collectors, unchanged Core process/package and
 own/anonymous HTTP boundaries are verified. This is Root-specific receiving;
 peer compositions remain separate.
@@ -114,6 +115,19 @@ call/outcome, completed turn and reviewed return are verified. The command retur
 human-visible text is claimed for this no-news pass. Complete physical-purpose
 tool/path selection and broader cohort acceptance remain. Execution4259 and
 earlier failed originals are not to be replayed or refunded.
+A later root-only Reports profile selection preserved46routes, all current
+goals/accounting/pauses and active collectors. Its mutable snapshot moved into
+the existing task directory, retaining a host compatibility read link. Natural
+Reports4280 then completed without tools, final text or batch review: useful
+physical-profile acceptance is not established and the original is not replayed.
+The physical selector was removed through field-only recovery; ordinary Reports
+and Messaging remain available, with App20091 and the real snapshot path retained.
+A complete-Core Code Mode fixture separately reproduced unsupported isolated
+sessions in the default stdio provider. A focused Core adapter correction routes
+only isolated creation through its existing sandboxed owned gRPC implementation;
+ordinary creation retains stdio. This source correction is qualifying, not deployed,
+and the fixture finding does not prove the cause of natural4280's empty result.
+
 Saved-thread restoration is asynchronous after listener readiness; the exact-thread
 observation correction is maintained in
 [App907](https://github.com/AlterMundi/DaimonApp/pull/907).
