@@ -43,7 +43,7 @@ One supported native MCP refresh recovered the existing Matrix conversation:
 connected, all30 tools, matching server version and unchanged configuration.
 Actual native `source_status` then returned the two known Sources and the Skills
 publication/assessment state. No new model turn or peer message was started.
-Peer installation and a new Source publication are not claimed.
+That connection recovery itself installed no peer content and published no Source.
 
 Matrix545 intersects the signed input ceiling with existing request-byte limits;
 its exact CI and composed Core/App/Matrix test passed. This corrects text-only
@@ -189,8 +189,16 @@ accounting. The portable evidence correction is published as
 [Skills354](https://github.com/AlterMundi/Skills/pull/354), version2.0.25, and
 installed with exact selective-updater/content verification on all seven.
 Root's neutral surface check passed; peers have no checker at that standard
-binding. Existing peer conversations were not restarted or awakened; their
-model use remains unobserved. The sole #437 map
+binding. Installation itself restarted or awakened no conversation.
+The exact guide subsequently received a signed Source publication and bounded
+diff/quarantine intake on Oliva and Eko. One authorized directed Messaging request
+then produced Oliva's signed useful adoption response, correlated with its native
+general-conversation turn. Oliva read the complete19084-byte guide, checked its
+hash and stated a qualification practice and evidence limits; no actual peer
+Code Mode runtime test or future behavior is inferred. The existing owner writer
+then promoted that reviewed external reference on Oliva, with active projection
+readback. Eko keeps the offer in quarantine and Messaging pause4 unchanged;
+children's guide use and broader reciprocal uptake remain unobserved. The sole #437 map
 retains the broader reciprocal/domain/human and monetary-accounting gaps.
 
 Saved-thread restoration is asynchronous after listener readiness; the exact-thread
