@@ -38,7 +38,8 @@ admission and independent lane controls, the selected permanent Messaging route,
 portable general-Conversation visibility and bounded technical-journal retirement
 are installed. Later per-body choices remain authoritative: preserve Eko's
 explicit Messaging pause4, Root goal53's pause and unrelated paused/blocked goals.
-This document neither resumes them nor enables sensory/issues/tasks/Bitacora.
+This document neither resumes them nor selects another lane. Separately authorized
+Reports work below retains its own existing contract; it is not Messaging authority.
 Standing reservations are48 envelopes/hour,64 possible provider attempts per
 execution,600seconds and8MiB/request under each body's actual account; they are
 not measured token or monetary spending. Finite legacy contracts retain their own
@@ -67,14 +68,23 @@ behavior uptake, useful work across compaction and sustained consolidation remai
 Original SourceReview expired on10November with its counters/cursor retained;
 Messaging does not renew it or activate an optional successor.
 
-Root's retained 12 November receiving checkpoint selects complete
+Root's prior 12 November receiving checkpoint selected complete
 [Core41](https://github.com/compaii/codex/pull/41) source `cc9cb6ed` (merge
 `8efed805`). Its initial App906/web904 composition and nonforcing complete-package
 handoff remain retained acceptance: old-process exit, persistent native-service
 placement, all27 then-current goal identities/budgets, nondecreasing accounting
 and existing pauses were verified.
 
-Root now selects the qualified [App908](https://github.com/AlterMundi/DaimonApp/pull/908)
+Root now selects [Core42](https://github.com/compaii/codex/pull/42), source
+`9208454f` (merge `618070a2`), after the existing nonforcing maintenance route
+reported handoffReady and the old process exit was observed. The complete
+successor was restored in the same persistent service and its watcher resumed.
+All48native session identities and19goals retained their objective, budget,
+accounting and existing pauses. No goal control, global Stop, native input,
+account/provider change or original replay was used. This verifies Root adoption,
+not a peer rollout or full foundation completion.
+
+Root also selects the qualified [App908](https://github.com/AlterMundi/DaimonApp/pull/908)
 candidate: native source `20091b28` and composed
 [web904](https://github.com/AlterMundi/DaimonApp/pull/904) source `3ebad586` plus
 the provider-only `20091b28` correction. Root-only lane profiles preserve
@@ -92,15 +102,15 @@ keeping the private-home denial. Three actual owned-executor journeys and the
 complete-package handoff/recovery passed before production adoption.
 
 After Core41 adoption, the experimental physical profile was selected. Actual
-Reports execution4259 started and completed on12November,13:01UTC, but invoked
-no tools and did not complete the offered Bitacora work. Its tool ceiling omitted
+Reports execution4259 started and completed on12November,13:01UTC, but projected
+no nested tools and did not complete the offered Bitacora work. Its tool ceiling omitted
 Drive and tool search. The model also reported controller unavailability; no
 attempted or rejected controller call establishes that separate claim.
 
-The experimental profile is now **unselected**: the retained field-only recovery
+That experimental profile was then **unselected**: the retained field-only recovery
 completed successfully, restoring ordinary bounded Messaging/Reports with46routes,
 controls, accounts/goals and native collectors preserved, without restarting web.
-Core41 remains deployed. Ordinary automatic4262 already used controller and Drive,
+Core41 remained deployed at that stage. Ordinary automatic4262 already used controller and Drive,
 reconciled27folders/150files, saved its cursor and returned a useful answer.
 App908 now supplies the selected fixed private host route for the existing Reports
 purpose: pinned input, bounded unknown-input retention and read-only Home-effect
@@ -115,18 +125,38 @@ call/outcome, completed turn and reviewed return are verified. The command retur
 human-visible text is claimed for this no-news pass. Complete physical-purpose
 tool/path selection and broader cohort acceptance remain. Execution4259 and
 earlier failed originals are not to be replayed or refunded.
-A later root-only Reports profile selection preserved46routes, all current
-goals/accounting/pauses and active collectors. Its mutable snapshot moved into
-the existing task directory, retaining a host compatibility read link. Natural
-Reports4280 then completed without tools, final text or batch review: useful
-physical-profile acceptance is not established and the original is not replayed.
-The physical selector was removed through field-only recovery; ordinary Reports
-and Messaging remain available, with App20091 and the real snapshot path retained.
-A complete-Core Code Mode fixture separately reproduced unsupported isolated
-sessions in the default stdio provider. A focused Core adapter correction routes
-only isolated creation through its existing sandboxed owned gRPC implementation;
-ordinary creation retains stdio. This source correction is qualifying, not deployed,
-and the fixture finding does not prove the cause of natural4280's empty result.
+A later Root-only Reports selection moved the mutable snapshot into its existing
+task directory, retaining a host compatibility read link. Natural4280 completed
+without projected nested calls, final text or batch review. Its outer Code Mode
+attempt remains unknown: typed thread items can omit outer custom calls, so this
+is not evidence that no tool was attempted. No replay or inferred cause follows.
+
+Core42 corrects isolated Code Mode creation in the default provider by routing it
+through the existing sandboxed owned gRPC implementation; ordinary creation keeps
+stdio. Its complete CodeModeOnly/local-provider fixture passed task/read/run-once,
+retained inspection/CAS/review and ordinary contact under process limits. That
+fixture placed the engine outside the denied native home: its acceptance does
+not cover the installed private package layout.
+
+Ordinary natural Reports4282 separately completed intake, the fixed action and
+canonical review with an unchanged Home result. No final text or hearing is
+claimed. The next physical-profile activation4286 attempted outer Code Mode
+`exec` for the controller, but session opening failed with a host-transport error
+before nested action or review. Bounded exact-turn owner diagnostics recovered
+that attempt; the typed projection alone had omitted it. A complete private-layout
+fixture reproduced engine execution denied by the immutable native-home rule,
+even with an exact executable read grant.
+
+The Reports-only physical selector is now **unselected** and the ineffective file
+grant removed. Ordinary bounded Reports/Messaging, Core42/App20091, snapshot,
+collectors, controls, accounts and goals remain preserved. A focused source
+correction reuses the existing sealed exact-executable bootstrap for the literal
+package-sibling Code Mode engine and its exact stdio invocation; it exposes no
+package directory or native custody. Six bootstrap tests and the owned-host
+regression passed. Complete private-layout package qualification and adoption
+remain unfinished; no candidate bootstrap deployment is claimed. Do not replay
+4280/4286 or refund/reset their accounting. The sole #437 coverage map retains
+this boundary and the broader reciprocal/domain/human gaps.
 
 Saved-thread restoration is asynchronous after listener readiness; the exact-thread
 observation correction is maintained in
