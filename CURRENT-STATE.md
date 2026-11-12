@@ -160,8 +160,11 @@ Home publication; it is not natural receiving-model acceptance.
 After verified Core43 adoption, the Reports-only physical selector was restored
 through a field-only voice-fenced operation. All46 routes, collectors, goals,
 accounts and controls were preserved; web was not restarted. Messaging/delegates
-retain their global/default policy. The next distinct natural Reports activation
-under this profile remains pending. Do not replay4280/4286 or refund/reset their
+retain their global/default policy. Distinct natural Reports4291 completed intake
+and29Drive fetches, invoked the fixed action once and committed canonical review.
+Its outcome was unchanged, preserving the existing Home version; final text was
+empty and hearing=false. This proves Root constrained model action/review, not a
+new publication or heard narration. Do not replay4280/4286 or refund/reset their
 accounting. The portable evidence correction is published as
 [Skills354](https://github.com/AlterMundi/Skills/pull/354), version2.0.25, and
 installed on Root; peer installation/model use is not claimed. The sole #437 map
