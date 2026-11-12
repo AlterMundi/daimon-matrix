@@ -39,9 +39,11 @@ Root's configured Foundation client also recovered its actual 30-tool MCP
 catalog on12November after removal of three derived bytecode files from its
 qualified import tree, under the existing SDK lock and exact wheel comparison.
 Original source bytes and grants were unchanged; the cache producer is unknown.
-The current Matrix native thread still retained its earlier failed MCP instance
-at the last observation. Direct catalog recovery does not prove that thread's
-refreshed tool uptake, peer installation or a Source publication.
+One supported native MCP refresh recovered the existing Matrix conversation:
+connected, all30 tools, matching server version and unchanged configuration.
+Actual native `source_status` then returned the two known Sources and the Skills
+publication/assessment state. No new model turn or peer message was started.
+Peer installation and a new Source publication are not claimed.
 
 Matrix545 intersects the signed input ceiling with existing request-byte limits;
 its exact CI and composed Core/App/Matrix test passed. This corrects text-only
