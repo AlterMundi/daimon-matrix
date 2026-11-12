@@ -4,6 +4,9 @@ Start here for architecture work. The [foundation](foundation/daimon-matrix.md)
 owns naming and scope; linked contracts own behavior.
 [CURRENT-STATE.md](../CURRENT-STATE.md) owns dated deployment evidence and gaps.
 Historical RC, Bridge and provisional records do not select a runtime.
+The current header and single linked #437 map supersede older dated SDK, common
+heartbeat-pause and unconfigured-resource assertions; retained acceptance is not
+a new live observation or proof of full foundation completion.
 
 ## DaimonGateway lifecycle direction — 9 November 2026
 
@@ -30,9 +33,11 @@ Continuity lives in the active bodies' history, memory, identity, working files
 and dependencies. See CURRENT-STATE.md and Shared Resources' maintained host and
 VM records for actual placement and remaining dependency closure.
 
-Keep the old physical daimonmatrix host powered on until Nicolas explicitly
-orders shutdown. Do not arm a shutdown timer, run a host-off drill or clean up
-that host. Only stop selected services whose operation is confirmed on ITACA;
+The former physical daimonmatrix host is now lordoftheflies and actively hosts
+Pixin, Calipso, C-137 and Noodles in their existing guests. This is living child
+infrastructure, not a retired-host cleanup target. Keep it powered on until
+Nicolas explicitly orders shutdown. Do not arm a shutdown timer, run a host-off
+drill or clean up that host. Only stop selected services whose operation is confirmed on ITACA;
 provider cancellation is not authorized.
 
 ## Identity and resource authority

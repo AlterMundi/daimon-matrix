@@ -4,9 +4,17 @@ For fleet maintenance, resolve each body's current physical placement from its
 maintained Shared Resources record and receiving binding. Eko is native on
 MEDUSA. The old Source containers and their local copies were deleted on the
 human's explicit request; never revive them or select them as rollback targets.
-See CURRENT-STATE.md for placement and source-retirement conditions. Historical
-signed origin labels do not select a physical host.
+The former Source host is now lordoftheflies and actively hosts Pixin, Calipso,
+C-137 and Noodles. Keep that host ON; no cleanup, shutdown, cancellation or
+retired-identity revival is implied. Historical signed origin labels do not
+select a physical host. See CURRENT-STATE.md for dated receiving evidence.
 
+
+CURRENT-STATE.md's top receiving header and the single linked #437 coverage map
+supersede historical SDK/common-pause/unconfigured-resource assertions. Seven
+members' signed/native admission and current-reader acceptance are complete;
+do not repeat them. Useful automatic action/reply, reciprocal group work and full
+foundation acceptance remain distinct. Preserve actual per-body lanes and pauses.
 
 For current architecture and receiving profiles, read
 [`docs/current-architecture.md`](docs/current-architecture.md); use
