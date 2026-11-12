@@ -68,26 +68,41 @@ Original SourceReview expired on10November with its counters/cursor retained;
 Messaging does not renew it or activate an optional successor.
 
 Root's retained 12 November receiving checkpoint selects complete
-[Core40](https://github.com/compaii/codex/pull/40) source `eef50af7`, native
-[App906](https://github.com/AlterMundi/DaimonApp/pull/906) source `180f3580`, and
-composed web [App904](https://github.com/AlterMundi/DaimonApp/pull/904) source
-`3ebad586`. This is Root-specific evidence, not a claim that every receiver has
-this composition. App906 settled the exact failed execution4247 without replay,
-refund or invented review, and a distinct execution4249 was subsequently admitted.
-Both failed before useful work under the experimental physical permission policy:
-first a symlinked-file restriction, then the packaged filesystem helper masked
-by the required private native-home denial. The second failure also reproduces
-in the actual-layout native regression; it is not an inferred diagnosis.
+[Core41](https://github.com/compaii/codex/pull/41) source `cc9cb6ed` (merge
+`8efed805`), native [App906](https://github.com/AlterMundi/DaimonApp/pull/906)
+source `180f3580`, and composed web
+[App904](https://github.com/AlterMundi/DaimonApp/pull/904) source `3ebad586`.
+This is Root-specific evidence, not a claim that every receiver has this
+composition. The one nonforcing handoff observed old-process exit, exact complete
+package selection and replacement in the persistent native service cgroup.
+All27 goal identities/budgets were preserved, accounting remained nondecreasing,
+and existing pauses were unchanged.
 
-The experimental host-restriction binding was explicitly unselected through its
-owned-field undo and scoped maintenance. The retained restoration readback verifies
-ordinary finite attempt/time/request-bounded Messaging,46routes, unchanged
-accounts/goals/lane controls/collectors and web access. The named physical profile
-remains prepared but **unselected**. [Core41](https://github.com/compaii/codex/pull/41)
-tracks the unfinished trusted-bootstrap correction; no corrected complete physical
-execution/action/return is claimed. Ordinary reservations are not measured cost,
-and synthetic signed usage or a qualified package does not establish a production
-monetary fence. Keep production availability distinct from that unfinished fence.
+Earlier experimental activations4247/4249 failed before useful work: a symlinked
+file restriction, then a packaged filesystem helper masked by the private-home
+deny. Their exact failed originals remain retained without replay, refund or
+invented review. Ordinary Messaging was restored while Core41 was prepared.
+The correction pins only trusted executable files through read-only mounts,
+keeping the private-home denial. Three actual owned-executor journeys and the
+complete-package handoff/recovery passed before production adoption.
+
+After Core41 adoption, the experimental physical profile was selected. Actual
+Reports execution4259 started and completed on12November,13:01UTC, but invoked
+no tools and did not complete the offered Bitacora work. Its tool ceiling omitted
+Drive and tool search. The model also reported controller unavailability; no
+attempted or rejected controller call establishes that separate claim.
+
+The experimental profile is now **unselected**: the retained field-only recovery
+completed successfully, restoring ordinary bounded Messaging/Reports with46routes,
+controls, accounts/goals and native collectors preserved, without restarting web.
+Core41 remains deployed. Next work is to correct the purpose-specific tool/path
+selection and observe a distinct authorized activation's useful tool/action/return;
+execution4259 and earlier failed originals are not to be replayed or refunded.
+Saved-thread restoration is asynchronous after listener readiness; the exact-thread
+observation correction is maintained in
+[App907](https://github.com/AlterMundi/DaimonApp/pull/907).
+Reservations are not measured spending, and these physical/runtime proofs do not
+establish a production monetary fence. Broader cohort acceptance remains separate.
 
 The selected Oliva Nexus artifact review and application are covered: four existing
 signed continuations were imported under the unchanged original request and five
