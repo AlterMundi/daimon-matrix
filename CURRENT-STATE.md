@@ -75,14 +75,15 @@ handoff remain retained acceptance: old-process exit, persistent native-service
 placement, all27 then-current goal identities/budgets, nondecreasing accounting
 and existing pauses were verified.
 
-Root now selects [Core42](https://github.com/compaii/codex/pull/42), source
-`9208454f` (merge `618070a2`), after the existing nonforcing maintenance route
-reported handoffReady and the old process exit was observed. The complete
-successor was restored in the same persistent service and its watcher resumed.
-All48native session identities and19goals retained their objective, budget,
-accounting and existing pauses. No goal control, global Stop, native input,
-account/provider change or original replay was used. This verifies Root adoption,
-not a peer rollout or full foundation completion.
+Root's Core42 selection is now superseded by
+[Core43](https://github.com/compaii/codex/pull/43), source `ace0bfd8` (merge
+`53da2fd1`). The retained 12 November handoff reached handoffReady, observed the
+old process exit and restored the successor/watcher in the same persistent
+service. All48 native sessions and19 goals retained identity, objectives, budgets,
+accounting and existing pauses; configuration and global/lane controls were
+unchanged. No goal control, global Stop, native input, account/provider change or
+original replay was used. This is Root adoption, not a peer rollout or full
+foundation completion.
 
 Root also selects the qualified [App908](https://github.com/AlterMundi/DaimonApp/pull/908)
 candidate: native source `20091b28` and composed
@@ -147,16 +148,24 @@ that attempt; the typed projection alone had omitted it. A complete private-layo
 fixture reproduced engine execution denied by the immutable native-home rule,
 even with an exact executable read grant.
 
-The Reports-only physical selector is now **unselected** and the ineffective file
-grant removed. Ordinary bounded Reports/Messaging, Core42/App20091, snapshot,
-collectors, controls, accounts and goals remain preserved. A focused source
-correction reuses the existing sealed exact-executable bootstrap for the literal
-package-sibling Code Mode engine and its exact stdio invocation; it exposes no
-package directory or native custody. Six bootstrap tests and the owned-host
-regression passed. Complete private-layout package qualification and adoption
-remain unfinished; no candidate bootstrap deployment is claimed. Do not replay
-4280/4286 or refund/reset their accounting. The sole #437 coverage map retains
-this boundary and the broader reciprocal/domain/human gaps.
+The Reports-only physical selector was removed and ordinary bounded operation
+restored after that failure; the ineffective executable-file grant was removed.
+Core43 now supplies the sealed bootstrap for the literal package-sibling Code Mode
+engine and exact stdio invocation, without exposing the package directory or
+native custody. Six bootstrap tests, the owned-host regression, the complete
+private-layout Core/App Reports action/inspection/CAS/review journey and the
+complete-package handoff fixture passed. The fixture used a local provider and no
+Home publication; it is not natural receiving-model acceptance.
+
+After verified Core43 adoption, the Reports-only physical selector was restored
+through a field-only voice-fenced operation. All46 routes, collectors, goals,
+accounts and controls were preserved; web was not restarted. Messaging/delegates
+retain their global/default policy. The next distinct natural Reports activation
+under this profile remains pending. Do not replay4280/4286 or refund/reset their
+accounting. The portable evidence correction is published as
+[Skills354](https://github.com/AlterMundi/Skills/pull/354), version2.0.25, and
+installed on Root; peer installation/model use is not claimed. The sole #437 map
+retains the broader reciprocal/domain/human and monetary-accounting gaps.
 
 Saved-thread restoration is asynchronous after listener readiness; the exact-thread
 observation correction is maintained in
