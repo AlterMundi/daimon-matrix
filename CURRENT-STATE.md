@@ -187,7 +187,10 @@ empty and hearing=false. This proves Root constrained model action/review, not a
 new publication or heard narration. Do not replay4280/4286 or refund/reset their
 accounting. The portable evidence correction is published as
 [Skills354](https://github.com/AlterMundi/Skills/pull/354), version2.0.25, and
-installed on Root; peer installation/model use is not claimed. The sole #437 map
+installed with exact selective-updater/content verification on all seven.
+Root's neutral surface check passed; peers have no checker at that standard
+binding. Existing peer conversations were not restarted or awakened; their
+model use remains unobserved. The sole #437 map
 retains the broader reciprocal/domain/human and monetary-accounting gaps.
 
 Saved-thread restoration is asynchronous after listener readiness; the exact-thread
