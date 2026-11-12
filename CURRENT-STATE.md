@@ -2,7 +2,7 @@
 ## Current foundation receiving — reconciled 12 November 2026
 
 This section supersedes the dated deployment assertions below using retained
-receiving evidence through 11 November, not a new live probe or deployment.
+receiving evidence through 12 November, not a new live probe or deployment.
 The original full #302/#437 goal remains **active and incomplete**. The
 [single current coverage map](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440)
 owns domain coverage, dated effect receipts and concrete next work. Migration,
@@ -67,14 +67,38 @@ behavior uptake, useful work across compaction and sustained consolidation remai
 Original SourceReview expired on10November with its counters/cursor retained;
 Messaging does not renew it or activate an optional successor.
 
-Current Core/App process-owner and accounting candidates, including
-[Core40](https://github.com/compaii/codex/pull/40) and
-[App896](https://github.com/AlterMundi/DaimonApp/pull/896), remain distinct from
-selected receiving evidence. Synthetic signed usage and a qualified package do
-not establish a production monetary fence. Full provider/resource accounting,
-remaining Field/Nexus shared participation and intended human/device/hearing
-acceptance remain in the single coverage map. Publication, installation, native
-execution, useful response, human projection and model uptake are distinct facts.
+Root's retained 12 November receiving checkpoint selects complete
+[Core40](https://github.com/compaii/codex/pull/40) source `eef50af7`, native
+[App906](https://github.com/AlterMundi/DaimonApp/pull/906) source `180f3580`, and
+composed web [App904](https://github.com/AlterMundi/DaimonApp/pull/904) source
+`3ebad586`. This is Root-specific evidence, not a claim that every receiver has
+this composition. App906 settled the exact failed execution4247 without replay,
+refund or invented review, and a distinct execution4249 was subsequently admitted.
+Both failed before useful work under the experimental physical permission policy:
+first a symlinked-file restriction, then the packaged filesystem helper masked
+by the required private native-home denial. The second failure also reproduces
+in the actual-layout native regression; it is not an inferred diagnosis.
+
+The experimental host-restriction binding was explicitly unselected through its
+owned-field undo and scoped maintenance. The retained restoration readback verifies
+ordinary finite attempt/time/request-bounded Messaging,46routes, unchanged
+accounts/goals/lane controls/collectors and web access. The named physical profile
+remains prepared but **unselected**. [Core41](https://github.com/compaii/codex/pull/41)
+tracks the unfinished trusted-bootstrap correction; no corrected complete physical
+execution/action/return is claimed. Ordinary reservations are not measured cost,
+and synthetic signed usage or a qualified package does not establish a production
+monetary fence. Keep production availability distinct from that unfinished fence.
+
+The selected Oliva Nexus artifact review and application are covered: four existing
+signed continuations were imported under the unchanged original request and five
+responses read back, without new sends, model input, grants or service reload.
+[The owning Nexus record](https://github.com/compaii/daimon-nexus/issues/7#issuecomment-6821898826)
+retains attribution and the corrected draft. Independent live HTTP access is
+optional application work, not a second Matrix acceptance gate for that review.
+Full provider/resource accounting, reciprocal seven-member shared work and
+learning, broader realm/device actions and intended human/device/hearing acceptance
+remain in the single coverage map. Publication, installation, native execution,
+useful response, human projection and model uptake are distinct facts.
 
 Use [the current architecture](docs/current-architecture.md) and
 [the owning update paths](docs/runbooks/tribe-updates.md). Reuse current receiving
