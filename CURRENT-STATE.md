@@ -72,8 +72,15 @@ returned an attributed selective defer: project closure did not justify another
 curated autobiographical memory. A separate actual Oliva resource request used
 its own SSH/key and unchanged sudo for a bounded Cuevanico status read, then
 returned a useful signed Matrix result. These are useful receiving outcomes,
-not only installation or ACKs. They do not prove full reciprocal seven-member
-shared work, every child's human/device acceptance or physical sensor validation.
+not only installation or ACKs. On12November Oliva also completed an authorized
+Cuevanico panel workflow through its own SSH/key and existing sudo: observed
+compact→expanded→compact, exactly two acknowledged controls and eight status
+reads in1.617seconds under a90second remote bound. The selected native command
+receipt and signed response match the original directed request; the prior view
+was restored and no capture, input, power, service, account or goal action occurred.
+This covers one useful cross-being actuator/return workflow. Full reciprocal
+seven-member work, children's human/device acceptance and physical sensor
+validation remain separate.
 Retained earlier uncertain sends keep their exact identities and outcomes.
 
 ### Remaining foundation work and candidate boundaries
