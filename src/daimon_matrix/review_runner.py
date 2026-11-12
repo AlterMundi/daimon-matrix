@@ -564,6 +564,11 @@ class NativeProviderOwner:
                 "maxRequestBytes": min(
                     parent_allowance["maxRequestBytes"],
                     registration["max_request_bytes"],
+                    # Match the existing text-only review gateway's conservative
+                    # byte ceiling. A transport-size grant cannot enlarge the
+                    # signed input exposure used to reserve this call's charge.
+                    # Media/reference expansion still needs route qualification.
+                    context.instruction.max_input_tokens,
                 ),
                 "deadlineUnixMs": min(
                     parent_allowance["deadlineUnixMs"],

@@ -610,6 +610,16 @@ is not proof those public tools or consuming harnesses are deployed.
 
 ### Explicit provider cost bound at the existing transport gates
 
+Native owner descriptors intersect the parent and registration request-byte
+ceilings with the signed instruction's `max_input_tokens`, matching the existing
+text-only review gateways' conservative byte bound. A larger transport-size
+registration cannot authorize input beyond the exposure used for reservation;
+a changed reservation descriptor is refused before charging or publishing.
+This is a necessary text/control bound, not qualification of media, remote file
+references, provider-added context or an actual billing rate. Those effects still
+need the selected route's complete exposure contract. Ordinary attempt-only
+Messaging/Reports allocations and existing account limits are unchanged.
+
 `ProviderCostBound.verify` accepts a separately signed closed
 `execution/provider-cost-bound/v1` declaration for one exact full existing
 adapter registration hash, journal/principal, route, charge unit, validity,
