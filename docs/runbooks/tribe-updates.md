@@ -14,6 +14,17 @@ as messaging, rather than redefining the whole social/resource scope around it.
 resources; that implemented view does not establish complete human endpoint,
 resource discovery, software rollout or autonomous coordination support.
 
+## Receiving baseline and historical guidance
+
+Use the [current receiving header](../../CURRENT-STATE.md) and its single #437
+coverage map before choosing an update target. Seven signed/native members and
+current readers are already accepted; neither child admission nor an old SDK
+selection is a prerequisite to repeat. Installation, useful automatic action/reply,
+reciprocal group work and intended human/device acceptance remain separate.
+The former Source host is active lordoftheflies with the four children; preserve
+that living placement and its ON/no-cleanup hold. Historical Source environments
+and expired SourceReview contracts never select a target or renew attention.
+
 ## Use the existing path that owns the effect
 
 | Need | Existing path | What remains separate |

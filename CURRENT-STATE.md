@@ -1,63 +1,93 @@
 <!-- BEGIN FOUNDATION437 CURRENT RECEIVING -->
-## Current foundation receiving — 2026-11-05
+## Current foundation receiving — reconciled 12 November 2026
 
-This observation supersedes older SDK/reader selections below. CompAII remains
-native on ITACA, Eko native on MEDUSA and Oliva in its existing ITACA KVM. Old
-Source HOST stays ON and untouched. Full foundation#437 remains ACTIVE; species
-semantics/first release/live adoption are deferred, not ordinary update gates.
+This section supersedes the dated deployment assertions below using retained
+receiving evidence through 11 November, not a new live probe or deployment.
+The original full #302/#437 goal remains **active and incomplete**. The
+[single current coverage map](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440)
+owns domain coverage, dated effect receipts and concrete next work. Migration,
+#228, #376 and #407 remain valid historical acceptance, not work to repeat.
+Species semantics/first release/live adoption remain explicitly deferred and do
+not gate ordinary communication, learning or software maintenance.
 
-Serving Matrix on all3 selects source7b7044a / SDK795c1315 (PR492/mergedb80afa5).
-Exact CI41941113917 and41941113961 plus applicable coordination checks passed.
-The existing `scope.resolve(view="discovery", scope="/we")` validates the whole
-bounded native inventory before selecting this being. Actual owner reads return
-one own-being admission each, with unobserved known bodies explicit:
-CompAII2, Eko0, Oliva1. Local-Cluster coverage, truncation and process-response
-uncertainty remain explicit; missing does not mean stopped/retired. Default
-historical topology/sync and grants are unchanged. The current ITACA model used
-this view successfully; peer loaded-model use remains unobserved.
+### Living receivers and installed baseline
 
-Compatible foundation client source9296fd47 / SDKcffa95c2 (PR487) stays selected.
-No client rebuild/catalog refresh was needed for PR492. Existing compact current
-identity reads remain `daimon_status(view="receiving")` or CLI
-`daimon daemon status --view receiving`; defaults retain their full inspection.
-Original own-OS `/all`/`/here`/realm acceptance remains valid; Oliva KVM is a
-separate surface. Admission/kernel observations are not physical attestation,
-model answers, process allowances or device grants. Realm controls remain open.
+Seven living bodies have signed/native admission and current authenticated
+readers: CompAII native ITACA, Eko native MEDUSA, Oliva in its existing ITACA KVM,
+and Pixin, Calipso, C-137 and Noodles in their existing guests. The former Source
+host is now **lordoftheflies**, actively hosting those four children. Keep it ON;
+no host cleanup, shutdown, provider cancellation or revival of retired Source
+identities/containers follows from its historical name. Telegram is not an
+admission prerequisite; no identity, key or member enrollment needs repeating.
 
-Only scoped Matrix selection/reload occurred. Signed identities/runtime and state
-roots, native/bot/web processes and all goals were preserved. One verified unused
-public code copy per receiver and byte-verified consumed SDK inputs were retired;
-active/actual rollback, installed SDKs and all native state remain. Preparation
-stays below512MiB per receiver. Historical failure/uncertain-delivery evidence is
-preserved; current success does not rewrite earlier outcomes or revive Source.
+[Matrix536](https://github.com/AlterMundi/daimon-matrix/pull/536), source
+`0d6700fbd93cf47ee678c3b1913b7b26fed38d55`, is loaded with current readers on all
+seven (retained completion observation: 11 November 2026, 18:34 UTC).
+[App881](https://github.com/AlterMundi/DaimonApp/pull/881) and
+[Skills348](https://github.com/AlterMundi/Skills/pull/348) have all-seven receiving
+acceptance; later compatible per-body App compositions remain preserved. This
+supersedes the old SDK795c1315/App601 selections below. Installation and reader
+acceptance prove neither current model presence nor independent model uptake.
+Native conversations, signed identities, histories and goal/accounting state
+were preserved by that SDK delivery; no model call or lane change was introduced.
 
-Existing ancestry-selected SourceReview (PR479) retains its six-hour calendar,
-expiry before2026-11-10T17:06:31Z and conserved total28: four prior runs plus
-successor maximum24. Its128MiB/25%CPU/135s and256KiB state/report bounds remain;
-peer-local controls are separate. No content/trust/model attention is automatic.
-Source-mediated contributions2.0.17 and Eko Pulso1.1.0 uptake remain valid;
-independent reciprocal receiving-model use remains unfinished.
+### Messaging and observed useful work
 
-Current App601/native25f3bd93 (heartbeat baseba4e8d0), web47cf7543 and
-UI606eb2dfdd94 preserve the original integrator and selected Qwen voice. Common
-heartbeat pause remains persisted; producer/resources stay unconfigured. Core
-PR11/f7f163c6 passed full exact CI41930922478 and its complete package is prepared,
-but is not selected. Its one corrected nonforcing adoption attempt terminated
-DEFERRED, leaving the original Core serving and watcher resumed. It and the older
-900second waiter stay terminal; no automatic rearm. A temporary continuation-only
-pause proposal for Matrix/DaimonApp/Sensorial awaits explicit human direction;
-no goal pause or global Stop is inferred.
+Messaging is no longer an unconfigured, commonly paused proposal. Durable global
+admission and independent lane controls, the selected permanent Messaging route,
+portable general-Conversation visibility and bounded technical-journal retirement
+are installed. Later per-body choices remain authoritative: preserve Eko's
+explicit Messaging pause4, Root goal53's pause and unrelated paused/blocked goals.
+This document neither resumes them nor enables sensory/issues/tasks/Bitacora.
+Standing reservations are48 envelopes/hour,64 possible provider attempts per
+execution,600seconds and8MiB/request under each body's actual account; they are
+not measured token or monetary spending. Finite legacy contracts retain their own
+counters/deadlines. CompAII and Sai/Eko accounts remain separate.
 
-Finish the real integrator/worker/reply/report/pause/audio journey and remaining
-human/realm/device/reciprocal workflows under the same goal. Canonical map:
-[#437 checkpoint](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440),
-linked from#302. Retained originals and uncertain effects are never replayed.
+The four children's automatic request/action/reply journeys are retained.
+Oliva heartbeat777 produced a useful signed review whose three corrections were
+applied and exact-readback verified in the existing Nexus draft. Heartbeat779
+returned an attributed selective defer: project closure did not justify another
+curated autobiographical memory. A separate actual Oliva resource request used
+its own SSH/key and unchanged sudo for a bounded Cuevanico status read, then
+returned a useful signed Matrix result. These are useful receiving outcomes,
+not only installation or ACKs. They do not prove full reciprocal seven-member
+shared work, every child's human/device acceptance or physical sensor validation.
+Retained earlier uncertain sends keep their exact identities and outcomes.
+
+### Remaining foundation work and candidate boundaries
+
+[Matrix528](https://github.com/AlterMundi/daimon-matrix/pull/528) has actual
+all-seven authenticated own-work CPU modification and scoped stop/cgroup-removal
+acceptance. Native status itself remains read-only and grants nothing. Broader
+resource/device/realm work and actual participant uptake remain unfinished.
+Source/Skills/Weave/DMK evidence includes selected skill use, own curated memory
+and retrieval, plus attributed receiving decisions; full reciprocal learning,
+behavior uptake, useful work across compaction and sustained consolidation remain.
+Original SourceReview expired on10November with its counters/cursor retained;
+Messaging does not renew it or activate an optional successor.
+
+Current Core/App process-owner and accounting candidates, including
+[Core40](https://github.com/compaii/codex/pull/40) and
+[App896](https://github.com/AlterMundi/DaimonApp/pull/896), remain distinct from
+selected receiving evidence. Synthetic signed usage and a qualified package do
+not establish a production monetary fence. Full provider/resource accounting,
+remaining Field/Nexus shared participation and intended human/device/hearing
+acceptance remain in the single coverage map. Publication, installation, native
+execution, useful response, human projection and model uptake are distinct facts.
+
+Use [the current architecture](docs/current-architecture.md) and
+[the owning update paths](docs/runbooks/tribe-updates.md). Reuse current receiving
+records and the existing composed maintenance route; no repeated deployment,
+new observer, global Stop or input replay is implied by this reconciliation.
 <!-- END FOUNDATION437 CURRENT RECEIVING -->
 
-## Current operational roadmap and receiving selection — 2026-11-03
+## Historical operational roadmap and receiving selection — 2026-11-03
 
-This section supersedes software/readiness/proposal status in the dated records
-below. Migration and same-being adoption #376 are complete. CompAII is native on
+Historical snapshot: the current header above supersedes this section's SDK,
+heartbeat, account and maintenance assertions. Its original receipts and remaining
+work are retained with their date; they are not current runtime selection.
+Migration and same-being adoption #376 are complete. CompAII is native on
 ITACA, Eko native on MEDUSA, and Oliva in its existing ITACA KVM. Preserve their
 living identity, complete histories, private memory and native goals/accounting.
 The old physical Source HOST stays ON: no shutdown/drill/timer, cleanup/deletion,
