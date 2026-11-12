@@ -20,9 +20,13 @@ no host cleanup, shutdown, provider cancellation or revival of retired Source
 identities/containers follows from its historical name. Telegram is not an
 admission prerequisite; no identity, key or member enrollment needs repeating.
 
-[Matrix536](https://github.com/AlterMundi/daimon-matrix/pull/536), source
-`0d6700fbd93cf47ee678c3b1913b7b26fed38d55`, is loaded with current readers on all
-seven (retained completion observation: 11 November 2026, 18:34 UTC).
+[Matrix545](https://github.com/AlterMundi/daimon-matrix/pull/545), source
+`a035bf4f2e379ff7a1e7f2de5cbaf4c7b6efcb61` (merge `2611b473`), is loaded with
+current authenticated readers on all seven (12 November 2026, 19:27 UTC).
+The final reader vector matches each selected receiving-code variant. The update
+preserved Root's native Core process and protected native services; it introduced
+no model input, message, goal/lane/account/provider choice or financial activation.
+SDK536 remains retained predecessor evidence, not the current selection.
 [App881](https://github.com/AlterMundi/DaimonApp/pull/881) and
 [Skills348](https://github.com/AlterMundi/Skills/pull/348) have all-seven receiving
 acceptance; later compatible per-body App compositions remain preserved. This
@@ -30,6 +34,20 @@ supersedes the old SDK795c1315/App601 selections below. Installation and reader
 acceptance prove neither current model presence nor independent model uptake.
 Native conversations, signed identities, histories and goal/accounting state
 were preserved by that SDK delivery; no model call or lane change was introduced.
+
+Root's configured Foundation client also recovered its actual 30-tool MCP
+catalog on12November after removal of three derived bytecode files from its
+qualified import tree, under the existing SDK lock and exact wheel comparison.
+Original source bytes and grants were unchanged; the cache producer is unknown.
+The current Matrix native thread still retained its earlier failed MCP instance
+at the last observation. Direct catalog recovery does not prove that thread's
+refreshed tool uptake, peer installation or a Source publication.
+
+Matrix545 intersects the signed input ceiling with existing request-byte limits;
+its exact CI and composed Core/App/Matrix test passed. This corrects text-only
+conservative exposure consistency. Media/reference/provider-added context and
+real monetary pricing/settlement remain unqualified; no amount or period was
+selected and no production financial binding was activated.
 
 ### Messaging and observed useful work
 
