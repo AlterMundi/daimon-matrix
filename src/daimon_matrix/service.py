@@ -1403,7 +1403,7 @@ class HostedWeave:
     def _receiving_roster_status(group: GroupMessaging) -> dict[str, Any]:
         """An unavailable roster never hides the independent revocation head."""
         try:
-            return group.receiving_roster()
+            return group.receiving_roster_observation()
         except RelationshipStoreError as exception:
             cause = exception.__cause__
             retryable = isinstance(cause, sqlite3.Error) and getattr(

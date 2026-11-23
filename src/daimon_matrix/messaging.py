@@ -2349,6 +2349,17 @@ class GroupMessaging:
             self._verify_loaded_stores()
             return roster
 
+    def receiving_roster_observation(self) -> dict[str, Any]:
+        """Verify committed authority for status without taking the writer slot."""
+        self._verify_loaded_stores()
+        now = self.lane.clock()
+        with self.lane.relationships.observation_view(
+            at_ms=now, card_verifier=self.lane.card_verifier
+        ) as view:
+            roster = self._receiving_roster(view, now)
+            self._verify_loaded_stores()
+            return roster
+
     @contextmanager
     def selection_authorization(
         self,

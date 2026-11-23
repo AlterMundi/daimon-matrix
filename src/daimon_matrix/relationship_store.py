@@ -576,23 +576,72 @@ class RelationshipStore:
         with self._database(busy_timeout_ms=busy_timeout_ms) as database:
             database.execute("BEGIN IMMEDIATE")
             try:
-                row = database.execute(
-                    "SELECT value FROM metadata WHERE key='schema_version'"
-                ).fetchone()
-                if row is None or row["value"] != str(SCHEMA_VERSION):
-                    raise RelationshipStoreError("relationship_schema_mismatch")
-                rows = database.execute(
-                    "SELECT event_json FROM events ORDER BY inserted_order"
-                ).fetchall()
-                events = [
-                    self._validated_event(json.loads(bytes(row["event_json"])))
-                    for row in rows
-                ]
-                yield RelationshipView(
-                    events, at_ms=at_ms, card_verifier=card_verifier, current=True
+                yield self._current_view(
+                    database, at_ms=at_ms, card_verifier=card_verifier
                 )
             finally:
                 database.rollback()
+
+    @staticmethod
+    def _read_current_events(database: sqlite3.Connection) -> list[object]:
+        row = database.execute(
+            "SELECT value FROM metadata WHERE key='schema_version'"
+        ).fetchone()
+        if row is None or row["value"] != str(SCHEMA_VERSION):
+            raise RelationshipStoreError("relationship_schema_mismatch")
+        return [
+            json.loads(bytes(row["event_json"]))
+            for row in database.execute(
+                "SELECT event_json FROM events ORDER BY inserted_order"
+            )
+        ]
+
+    def _current_view(
+        self,
+        database: sqlite3.Connection,
+        *,
+        at_ms: int,
+        card_verifier: CardVerifier | None,
+    ) -> RelationshipView:
+        events = [
+            self._validated_event(event)
+            for event in self._read_current_events(database)
+        ]
+        return RelationshipView(
+            events, at_ms=at_ms, card_verifier=card_verifier, current=True
+        )
+
+    @contextmanager
+    def observation_view(
+        self,
+        *,
+        at_ms: int,
+        card_verifier: CardVerifier | None,
+    ) -> Iterator[RelationshipView]:
+        """One committed snapshot for status, never a grant for a later effect."""
+        # Do not ask SQLite to change journal mode or acquire the writer slot.
+        # A queued writer can hold a RESERVED lock during this shared snapshot.
+        database = None
+        try:
+            database = sqlite3.connect(
+                self.path.as_uri() + "?mode=ro",
+                uri=True,
+                timeout=0.25,
+                isolation_level=None,
+            )
+            database.row_factory = sqlite3.Row
+            if (
+                str(database.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+                != "delete"
+            ):
+                raise RelationshipStoreError("unsupported_relationship_journal")
+            database.execute("BEGIN")
+            yield self._current_view(database, at_ms=at_ms, card_verifier=card_verifier)
+        except sqlite3.Error as exception:
+            raise RelationshipStoreError("relationship_store_corrupt") from exception
+        finally:
+            if database is not None:
+                database.close()
 
     def view(
         self, *, at_ms: int, card_verifier: CardVerifier | None
