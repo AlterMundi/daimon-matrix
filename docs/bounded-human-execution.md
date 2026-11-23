@@ -454,6 +454,11 @@ shell access and post-call usage do not provide these guarantees.
 
 Only a receipt authenticated by the store's separately configured operator-owned
 accounting/provider verifier settles the exact retained cycle/operation.
+Each new physical provider attempt under `execution/instruction-funding/v2`
+must name the charge unit of its reserved accounts before transport submission.
+A missing or mismatched unit leaves the attempt ID and funding available for a
+corrected submission. Previously admitted attempts retain their receipts.
+
 `execution/usage/v2` signs the existing receipt fields plus the original
 instruction digest, provider route and charge unit. The ledger verifies that
 binding against the immutable reservation and account even after expiry or pause.

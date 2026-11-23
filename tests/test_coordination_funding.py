@@ -180,7 +180,7 @@ class FundingTests(unittest.TestCase):
             identity,
             lambda: None,
             submit or (lambda: self.calls.append(identity)),
-            exposure=self.exposure(instruction),
+            exposure=self.exposure(instruction) | {"unit": "synthetic-charge"},
         )
         return identity
 
@@ -336,6 +336,34 @@ class FundingTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionDenied, "qualified exposure exceeded"):
             self.attempt(instruction, cycle)
         self.assertEqual(self.calls, [attempt])
+
+    def test_physical_attempt_requires_exposure_in_the_reserved_unit(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=1)
+        cycle = self.cycle(instruction)
+        attempt = str(uuid.uuid4())
+        exposure = self.exposure(instruction)
+
+        for invalid in (exposure, exposure | {"unit": "another-charge-unit"}):
+            with self.assertRaisesRegex(ExecutionDenied, "qualified adapter exposure"):
+                self.store.dispatch_provider_attempt(
+                    cycle,
+                    attempt,
+                    lambda: None,
+                    lambda: self.fail("unqualified exposure reached the provider"),
+                    exposure=invalid,
+                )
+            self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+
+        self.store.dispatch_provider_attempt(
+            cycle,
+            attempt,
+            lambda: None,
+            lambda: self.calls.append(attempt),
+            exposure=exposure | {"unit": "synthetic-charge"},
+        )
+        self.assertEqual(self.calls, [attempt])
+        self.assertEqual(self.store.funding_status("episode")["reserved"], 30)
 
     def test_usage_v2_binds_route_and_unit_after_funding_expiry(self):
         self.store.enable_provider_attempts()
@@ -1243,7 +1271,7 @@ class FundingTests(unittest.TestCase):
                 self.path,
                 verifier(self.human),
                 cycle,
-                self.exposure(instruction),
+                self.exposure(instruction) | {"unit": "synthetic-charge"},
                 identity,
             ),
         )
