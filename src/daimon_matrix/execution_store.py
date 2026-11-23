@@ -1137,13 +1137,20 @@ class ExecutionStore:
             self._cycle(db, cycle)
             if not self._funding_schema(db):
                 raise ExecutionDenied("funding unavailable")
+            instruction = self._instruction(
+                self._row(db, cycle.instruction_id, cycle.revision)
+            )
+            if payload["principal"] != instruction.principal:
+                raise ExecutionDenied(
+                    "usage principal differs from reserved instruction"
+                )
             row = db.execute(
                 "SELECT * FROM call_charges WHERE cycle_id=? AND operation_id=?",
                 (cycle.cycle_id, payload["operation_id"]),
             ).fetchone()
             if (
                 row is None
-                or payload["operation_id"] != row["operation_id"]
+                or row["instruction_sha256"] != instruction.sha256
                 or payload["actual"] > row["maximum"]
             ):
                 raise ExecutionDenied("usage exceeds or mismatches reservation")
