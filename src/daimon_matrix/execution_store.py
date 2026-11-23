@@ -977,9 +977,11 @@ class ExecutionStore:
             "max_input_tokens": instruction.max_input_tokens,
             "max_output_tokens": instruction.max_output_tokens,
         }
-        if exposure is not None and "unit" in exposure:
-            # Existing synthetic host-boundary callers use the original shape.
-            # Real cost-bound adapters always bind their signed pricing unit.
+        if funding["schema"] == "execution/instruction-funding/v2" or (
+            exposure is not None and "unit" in exposure
+        ):
+            # Physical-attempt funding requires a denominated exposure.
+            # Preserve the original unqualified shape for legacy funding only.
             account, _ = self._account(db, funding["accounts"][0])
             expected["unit"] = account["unit"]
         if (
