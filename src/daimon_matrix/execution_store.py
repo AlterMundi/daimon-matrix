@@ -911,12 +911,8 @@ class ExecutionStore:
             except sqlite3.IntegrityError as exc:
                 raise ExecutionDenied("instruction already funded") from exc
 
-    def _funding(
-        self,
-        db: sqlite3.Connection,
-        instruction: Instruction,
-        *,
-        required: bool = False,
+    def _funding_binding(
+        self, db: sqlite3.Connection, instruction: Instruction
     ) -> dict[str, Any] | None:
         row = None
         if self._funding_schema(db):
@@ -925,10 +921,6 @@ class ExecutionStore:
                 (instruction.sha256,),
             ).fetchone()
         if row is None:
-            if required:
-                raise ExecutionDenied(
-                    "coordination requires explicit conserved funding"
-                )
             return None
         payload = json.loads(row["payload"])
         self.verifier.verify("approve", payload, json.loads(row["proof"]))
@@ -937,12 +929,28 @@ class ExecutionStore:
             or payload["instruction_sha256"] != instruction.sha256
         ):
             raise ExecutionDenied("funding binding mismatch")
+        return cast(dict[str, Any], payload)
+
+    def _funding(
+        self,
+        db: sqlite3.Connection,
+        instruction: Instruction,
+        *,
+        required: bool = False,
+    ) -> dict[str, Any] | None:
+        payload = self._funding_binding(db, instruction)
+        if payload is None:
+            if required:
+                raise ExecutionDenied(
+                    "coordination requires explicit conserved funding"
+                )
+            return None
         now = self._now(db)
         for aid in payload["accounts"]:
             account, state = self._account(db, aid)
             if state["paused"] or not account["start"] <= now < account["end"]:
                 raise ExecutionDenied("funding paused or expired")
-        return cast(dict[str, Any], payload)
+        return payload
 
     def check_funding(self, instruction: Instruction) -> None:
         with self._transaction() as db:
@@ -1133,15 +1141,18 @@ class ExecutionStore:
         The store's usage verifier is operator-owned provider/accounting trust.
         Settlement does not imply delivery, completion or cancellation.
         """
-        if set(payload) != {
+        version = payload.get("schema")
+        bound_receipt = version == "execution/usage/v2"
+        fields = {
             "schema",
             "store_id",
             "principal",
             "cycle_id",
             "operation_id",
             "actual",
-        } or (
-            payload["schema"] != "execution/usage/v1"
+        } | ({"instruction_sha256", "route", "unit"} if bound_receipt else set())
+        if set(payload) != fields or (
+            version not in ("execution/usage/v1", "execution/usage/v2")
             or payload["store_id"] != self.store_id
             or payload["cycle_id"] != cycle.cycle_id
             or not self._positive(payload["actual"], zero=True)
@@ -1167,6 +1178,16 @@ class ExecutionStore:
             ).fetchone()
             if row is None or row["instruction_sha256"] != instruction.sha256:
                 raise ExecutionDenied("usage mismatches reservation")
+            if bound_receipt:
+                funding = self._funding_binding(db, instruction)
+                if (
+                    funding is None
+                    or payload["instruction_sha256"] != instruction.sha256
+                    or payload["route"] != funding["route"]
+                    or payload["unit"]
+                    != self._account(db, funding["accounts"][0])[0]["unit"]
+                ):
+                    raise ExecutionDenied("usage funding binding mismatch")
             receipt = canonical(
                 {"payload": dict(payload), "proof": dict(proof)}
             ).decode()
