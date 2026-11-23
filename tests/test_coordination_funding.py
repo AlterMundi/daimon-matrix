@@ -775,6 +775,38 @@ class FundingTests(unittest.TestCase):
                 )
             )
 
+    def test_automatic_receipt_requires_denomination_even_with_a_valid_signature(self):
+        owner, _, _, _ = self.native_owner()
+        packet = self.owner_request(owner)
+        owner.reserve(packet, lambda _: None)
+        observation = self.owner_usage(packet)
+        requests = []
+
+        def legacy_accountant(request):
+            requests.append(request)
+            usage = dict(
+                schema="execution/usage/v1",
+                store_id=request["store_id"],
+                principal=request["principal"],
+                cycle_id=request["cycle_id"],
+                operation_id=request["operation_id"],
+                actual=8,
+            )
+            return {"usage": usage, "proof": self.signed(usage, self.accountant)}
+
+        with self.assertRaisesRegex(ExecutionDenied, "usage receipt"):
+            owner.record_usage(observation, receipt_provider=legacy_accountant)
+        self.assertTrue(
+            owner.record_usage(observation, receipt_provider=legacy_accountant)[
+                "recorded"
+            ]
+        )
+        self.assertEqual(len(requests), 1)
+        status = self.store.funding_status("episode")
+        self.assertEqual(
+            (status["calls"], status["spent"], status["reserved"]), (1, 0, 30)
+        )
+
     def test_native_receipt_decline_is_not_zero_spending_or_permission_to_retry(self):
         owner, _, _, _ = self.native_owner()
         packet = self.owner_request(owner)
