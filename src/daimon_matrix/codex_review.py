@@ -152,6 +152,55 @@ def _json(raw: bytes | str) -> Any:
     return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid)
 
 
+def _qualify_funded_request(body: dict[str, Any]) -> None:
+    """Keep the qualified text bound independent of provider-side expansion."""
+    if set(body) - {
+        "client_metadata",
+        "include",
+        "input",
+        "instructions",
+        "max_output_tokens",
+        "model",
+        "parallel_tool_calls",
+        "prompt_cache_key",
+        "reasoning",
+        "store",
+        "stream",
+        "text",
+        "tool_choice",
+        "tools",
+    }:
+        raise ExecutionDenied("unqualified funded Responses request fields")
+    messages = body.get("input")
+    if not isinstance(messages, list) or not messages:
+        raise ExecutionDenied("funded Responses input requires inline text messages")
+    inline = []
+    for message in messages:
+        if (
+            not isinstance(message, dict)
+            or set(message) - {"type", "role", "content", "id"}
+            or message.get("type") != "message"
+            or message.get("role") not in ("system", "developer", "user", "assistant")
+            or not isinstance(message.get("content"), list)
+            or not message["content"]
+        ):
+            raise ExecutionDenied(
+                "funded Responses input requires inline text messages"
+            )
+        for part in message["content"]:
+            if (
+                not isinstance(part, dict)
+                or set(part) != {"type", "text"}
+                or part["type"] not in ("input_text", "output_text")
+                or not isinstance(part["text"], str)
+            ):
+                raise ExecutionDenied("unqualified funded Responses input content")
+        # Codex assigns local message IDs even on a fresh turn. Send the inline
+        # values only, so a server cannot interpret an ID as retained content.
+        inline.append({key: message[key] for key in ("type", "role", "content")})
+    body["input"] = inline
+
+
 class CodexReviewRunner:
     """One registered execution session, one ephemeral App Server per cycle.
 
@@ -494,6 +543,8 @@ class CodexReviewRunner:
                 body["tool_choice"] = "none"
                 body["max_output_tokens"] = request.instruction.max_output_tokens
                 body["store"] = False
+                if self._cost_bound is not None:
+                    _qualify_funded_request(body)
                 # Conservative byte ceiling for all text/control tokens. Requires
                 # a byte-BPE Responses model (the qualified pinned catalog).
                 if len(canonical(body)) > request.instruction.max_input_tokens:

@@ -454,9 +454,11 @@ shell access and post-call usage do not provide these guarantees.
 
 Only an `execution/usage/v1` receipt authenticated by the store's separately
 configured operator-owned accounting/provider verifier settles the exact retained
-cycle/operation. Settlement cannot exceed its reservation, erase call fuel, mark
-a runtime stopped or prove message delivery. Exact repeats inspect the same
-receipt; conflicting receipts fail. Unknown submission retains the full charge,
+cycle/operation. A verified charge above the reservation records the actual spend
+and fences new dispatch against its bound accounts. Funding status counts those
+overruns separately from operator pauses. Exact repeats inspect the same receipt;
+conflicting receipts fail. Settlement preserves call fuel and proves neither
+runtime termination nor message delivery. Unknown submission retains the full charge,
 call and slot and fences affected shared funding. Known process termination with
 missing authenticated usage still leaves a conservative reservation and stops
 further affected dispatch. A valid usage receipt can release only the unused
@@ -646,9 +648,14 @@ forced output cap and all three durable reservations. A controlled second attemp
 reaches no provider; wrong pricing unit and changed registration are rejected
 before any upstream request. These are actual transport-gate/SQlite checks with
 synthetic pricing and provider responses, not paid provider qualification or a
-new full native-worker/sandbox acceptance claim. Codex wiring shares this cost
-boundary but its optional exact pinned-native tests remain separately qualified.
-Authenticated usage settlement is still the separate accounting-authority path;
+new full native-worker/sandbox acceptance claim. The funded ephemeral Codex
+gateway validates the pinned Responses envelope before opening the provider
+connection. It forwards inline text messages without local message IDs and
+refuses external media, stored responses, and other unqualified fields before
+reservation. Its exact pinned-native loopback fixture is separate from the
+long-lived native owner path, whose complete provider-exposure qualification
+remains independent. Authenticated usage settlement is still the separate
+accounting-authority path;
 a successful response alone does not refund the conservative charge.
 
 For a continuing native execution, the existing host-only

@@ -684,12 +684,16 @@ class ExecutionStore:
                     # This exact prepared attempt is the one uncertainty this
                     # owned submission may cross. Other retained intents fence
                     # new work, including after a process dies before this point.
-                    if funding is not None and any(
-                        self._balance(db, aid)["uncertain"]
-                        > (1 if kind == "provider_attempt" else 0)
-                        for aid in funding["accounts"]
-                    ):
-                        raise ExecutionDenied("shared funding became uncertain")
+                    if funding is not None:
+                        own_intent = 1 if kind == "provider_attempt" else 0
+                        for aid in funding["accounts"]:
+                            balance = self._balance(db, aid)
+                            if balance["overruns"]:
+                                raise ExecutionDenied(
+                                    "qualified exposure exceeded on funding account"
+                                )
+                            if balance["uncertain"] > own_intent:
+                                raise ExecutionDenied("shared funding became uncertain")
                 checkpoint()
                 # Source/pricing reads may consume the selected parent horizon.
                 self._guard(db, cycle)
@@ -982,6 +986,8 @@ class ExecutionStore:
         for aid in funding["accounts"]:
             account, _ = self._account(db, aid)
             balance = self._balance(db, aid)
+            if balance["overruns"]:
+                raise ExecutionDenied("qualified exposure exceeded on funding account")
             if (
                 balance["uncertain"]
                 or balance["calls"] >= account["max_calls"]
@@ -1001,7 +1007,8 @@ class ExecutionStore:
         # Aggregate in SQLite; do not load complete paid-call history per admission.
         row = db.execute(
             "SELECT count(*) AS calls, "
-            "coalesce(sum(coalesce(c.actual,0)),0) AS spent, "
+            "coalesce(sum(min(coalesce(c.actual,0),c.maximum)),0) AS spent, "
+            "count(CASE WHEN c.actual>c.maximum THEN 1 END) AS overruns, "
             "coalesce(sum(CASE WHEN c.actual IS NULL THEN c.maximum ELSE 0 END),0) "
             "AS reserved, "
             "coalesce(sum(CASE WHEN o.kind='provider_attempt' "
@@ -1018,6 +1025,16 @@ class ExecutionStore:
             (account_id,),
         ).fetchone()
         result = {key: int(value) for key, value in dict(row).items()}
+        if result["overruns"]:
+            # The normal sum is bounded by admission. Verified excess can exceed
+            # SQLite's integer aggregate range, so add only excess rows exactly.
+            excess = db.execute(
+                "SELECT c.actual-c.maximum FROM call_charges c "
+                "JOIN funding_members m USING(instruction_sha256) "
+                "WHERE m.account_id=? AND c.actual>c.maximum",
+                (account_id,),
+            )
+            result["spent"] += sum(amount for (amount,) in excess)
         result["charged"] = result["spent"] + result["reserved"]
         return result
 
@@ -1111,7 +1128,7 @@ class ExecutionStore:
     def settle_charge(
         self, cycle: Cycle, payload: Mapping[str, Any], proof: Mapping[str, Any]
     ) -> None:
-        """Trusted authenticated usage only; unavailable usage keeps full exposure.
+        """Record authenticated actual usage, including a qualified-bound breach.
 
         The store's usage verifier is operator-owned provider/accounting trust.
         Settlement does not imply delivery, completion or cancellation.
@@ -1137,16 +1154,19 @@ class ExecutionStore:
             self._cycle(db, cycle)
             if not self._funding_schema(db):
                 raise ExecutionDenied("funding unavailable")
+            instruction = self._instruction(
+                self._row(db, cycle.instruction_id, cycle.revision)
+            )
+            if payload["principal"] != instruction.principal:
+                raise ExecutionDenied(
+                    "usage principal differs from reserved instruction"
+                )
             row = db.execute(
                 "SELECT * FROM call_charges WHERE cycle_id=? AND operation_id=?",
                 (cycle.cycle_id, payload["operation_id"]),
             ).fetchone()
-            if (
-                row is None
-                or payload["operation_id"] != row["operation_id"]
-                or payload["actual"] > row["maximum"]
-            ):
-                raise ExecutionDenied("usage exceeds or mismatches reservation")
+            if row is None or row["instruction_sha256"] != instruction.sha256:
+                raise ExecutionDenied("usage mismatches reservation")
             receipt = canonical(
                 {"payload": dict(payload), "proof": dict(proof)}
             ).decode()
@@ -1447,6 +1467,8 @@ class ExecutionStore:
                     local_reasons.add("concurrency_full")
                 if account["uncertain"]:
                     local_reasons.add("uncertain_exposure")
+                if account["overruns"]:
+                    local_reasons.add("qualified_exposure_exceeded")
             instructions[-1]["funding_constraints"] = sorted(local_reasons)
             reasons.update(local_reasons)
         counts = {
@@ -1544,7 +1566,11 @@ class ExecutionStore:
         ).fetchone()["notice"]
         if previous is not None:
             return cast(dict[str, Any], json.loads(previous))
-        unavailable = {"call_fuel_exhausted", "charge_exposure_unavailable"}
+        unavailable = {
+            "call_fuel_exhausted",
+            "charge_exposure_unavailable",
+            "qualified_exposure_exceeded",
+        }
         routes = snapshot["instructions"]
         if not all(
             unavailable.intersection(row["funding_constraints"]) for row in routes

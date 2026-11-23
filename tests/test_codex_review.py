@@ -13,6 +13,7 @@ from contextlib import closing, suppress
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -77,6 +78,30 @@ class RegistrationTests(unittest.TestCase):
             Registration.verify(
                 bad, proof(key, "approve", bad), verifier(key), lambda _: True
             )
+
+
+class FundedRequestTests(unittest.TestCase):
+    def test_funded_text_envelope_refuses_unpriced_request_fields(self):
+        from daimon_matrix.codex_review import _qualify_funded_request
+
+        message = {
+            "type": "message",
+            "role": "user",
+            "id": "msg_synthetic",
+            "content": [{"type": "input_text", "text": "bounded"}],
+        }
+        body = {"model": "synthetic", "input": [message]}
+        for field, value in (
+            ("previous_response_id", "resp_synthetic"),
+            ("conversation", "conv_synthetic"),
+            ("service_tier", "priority"),
+        ):
+            with self.subTest(field=field), self.assertRaises(ExecutionDenied):
+                _qualify_funded_request({**body, field: value})
+        _qualify_funded_request(body)
+        self.assertEqual(
+            body["input"], [{k: v for k, v in message.items() if k != "id"}]
+        )
 
 
 BINARY = os.environ.get("CODEX_REVIEW_BINARY")
@@ -704,6 +729,12 @@ class PinnedRunnerTests(unittest.TestCase):
         self.assertEqual(len(self.broker.calls), 1)
 
     def test_actual_pinned_worker_consumes_only_selected_funded_native_original(self):
+        self.check_pinned_funded_original()
+
+    def test_provider_file_reference_is_refused_before_funded_request(self):
+        self.check_pinned_funded_original(file_reference=True)
+
+    def check_pinned_funded_original(self, *, file_reference=False):
         from dataclasses import asdict
 
         from daimon_matrix.codex_review import CodexReviewRunner
@@ -878,6 +909,36 @@ class PinnedRunnerTests(unittest.TestCase):
         )
         operator.confirm(human("resume-confirm"), resume["challenge_id"], resume)
         self.assertEqual(self.calls, [])  # Resume alone never dispatches/replays.
+        if file_reference:
+            from daimon_matrix import codex_review
+
+            decode = codex_review._json
+            injected = threading.Event()
+
+            def request_with_reference(raw):
+                value = decode(raw)
+                if isinstance(value, dict) and {"model", "input"} <= value.keys():
+                    value["input"].append(
+                        {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_file", "file_id": "file-synthetic"}
+                            ],
+                        }
+                    )
+                    injected.set()
+                return value
+
+            with patch.object(codex_review, "_json", request_with_reference):
+                context = controller.run_due_once(
+                    "review-1", 1, self.task, work_id=work
+                )
+                self.assertTrue(runner.wait(context.cycle.cycle_id, 35))
+            self.assertTrue(injected.is_set())
+            self.assertEqual(self.calls, [])
+            self.assertEqual(self.store.funding_status("episode")["calls"], 0)
+            return
         context = controller.run_due_once("review-1", 1, self.task, work_id=work)
         self.assertTrue(runner.wait(context.cycle.cycle_id, 35))
         status = runner.status(context.cycle.cycle_id)

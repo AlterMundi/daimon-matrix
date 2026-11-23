@@ -47,7 +47,7 @@ jobs:
     name: GitHub coordination tooling
     needs: scope
     if: needs.scope.outputs.profile == 'coordination'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -63,7 +63,7 @@ jobs:
     name: installed receiving release contract (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'release-compatibility'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -111,7 +111,7 @@ jobs:
     name: installed agent-chat installer (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'agent-chat-installer'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -134,7 +134,7 @@ jobs:
     name: native peer tools (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'peer'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -155,7 +155,7 @@ jobs:
     name: installed native messaging (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'messaging'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -195,7 +195,7 @@ jobs:
     name: installed readable native egress (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'visibility'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -260,7 +260,7 @@ jobs:
     name: installed authority adoption (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'authority-adoption'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -305,7 +305,7 @@ jobs:
     name: installed membership group (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'tribe-group'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -410,7 +410,7 @@ jobs:
     name: installed passive human Tribu (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'human-tribu'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -498,7 +498,7 @@ jobs:
     name: portable archive tools (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'archive' || needs.scope.outputs.profile == 'protected-archive'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -522,7 +522,7 @@ jobs:
     name: memory preservation and HMK compatibility (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'archive' || needs.scope.outputs.profile == 'protected-archive' || needs.scope.outputs.profile == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -552,7 +552,8 @@ jobs:
     name: installed bounded execution operator (3.13.5)
     needs: scope
     if: needs.scope.outputs.profile == 'execution-operator'
-    runs-on: ubuntu-latest
+    # The exact receiving Python build is published for Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -594,7 +595,7 @@ jobs:
   test-shards:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Keep every discovered test and its module fixtures; independent runners
     # reduce the serial suite's 35+ minute deployment delay.
     strategy:
@@ -674,7 +675,7 @@ jobs:
   static:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -743,7 +744,7 @@ jobs:
   hermes-contract:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -773,7 +774,7 @@ jobs:
   package:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -871,7 +872,7 @@ jobs:
   conformance:
     needs: scope
     if: needs.scope.outputs.profile == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
