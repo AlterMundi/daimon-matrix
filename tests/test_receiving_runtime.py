@@ -1013,6 +1013,14 @@ class ReceivingOwnerApiTests(ReceivingOwnerApiFixture):
             status = self.service.handle(status_request)
             self.assertTrue(status["ok"], status)
             self.assertEqual(
+                status["result"]["receiving"]["rosters"]["tribe"]["roster_sha256"],
+                roster["roster_sha256"],
+            )
+            writer.rollback()
+            writer.execute("BEGIN EXCLUSIVE")
+            status = self.service.handle(status_request)
+            self.assertTrue(status["ok"], status)
+            self.assertEqual(
                 status["result"]["receiving"]["rosters"]["tribe"]["schema"],
                 "dm.runtime.tribe-roster-unavailable/v1",
             )
