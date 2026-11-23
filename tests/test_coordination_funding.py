@@ -305,6 +305,38 @@ class FundingTests(unittest.TestCase):
         with self.assertRaises(ExecutionDenied):
             self.settle_attempt(cycle, first, 7)  # conflicting usage still refused
 
+    def test_signed_usage_overrun_is_retained_and_fences_funded_dispatch(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=2)
+        cycle = self.cycle(instruction)
+        attempt = self.attempt(instruction, cycle)
+
+        payload, receipt = self.settle_attempt(cycle, attempt, 31)
+        self.store = ExecutionStore(
+            self.path,
+            verifier(self.human),
+            clock=self.clock,
+            usage_verifier=verifier(self.accountant),
+        )
+        self.store.settle_charge(cycle, payload, receipt)
+        for account in ("tribe", "being", "episode"):
+            status = self.store.funding_status(account)
+            self.assertEqual(
+                (
+                    status["calls"],
+                    status["spent"],
+                    status["reserved"],
+                    status["overruns"],
+                ),
+                (1, 31, 0, 1),
+            )
+            self.assertEqual(status["available_charge"], 69)
+            self.assertFalse(status["paused"])
+
+        with self.assertRaisesRegex(ExecutionDenied, "qualified exposure exceeded"):
+            self.attempt(instruction, cycle)
+        self.assertEqual(self.calls, [attempt])
+
     def native_context(
         self, instruction, cycle, source_check=None, registration_extra=None
     ):
@@ -1230,9 +1262,9 @@ class FundingTests(unittest.TestCase):
             )
         with self.assertRaises(ExecutionDenied):
             self.usage(cycle, 3, self.human)  # human key is not usage authority
-        with self.assertRaises(ExecutionDenied):
-            self.usage(cycle, 31)
         payload, receipt = self.usage(cycle, 8)
+        with self.assertRaises(ExecutionDenied):
+            self.store.settle_charge(cycle, payload | {"actual": 31}, receipt)
         self.store.settle_charge(cycle, payload, receipt)
         with self.assertRaises(ExecutionDenied):
             self.usage(cycle, 7)
