@@ -720,9 +720,11 @@ route/unit, original deadline and observation. It receives no capability, prompt
 or signing key. Only the first persisted observation requests a receipt; duplicates
 and crash recovery never request it again automatically. `None`, an unavailable
 provider or an invalid signature leaves maximum exposure reserved. A returned
-`{usage, proof}` must match the attempt, cycle and principal and pass the existing
-signed settlement verifier. A lost receipt can be reconciled through the existing
-settlement API; unsigned token telemetry alone never releases exposure. This hook
+`{usage, proof}` must use `execution/usage/v2` and match the attempt, cycle,
+principal, instruction digest, route and charge unit. The existing signed
+settlement verifier establishes accounting authority. A lost receipt can be
+reconciled through the existing settlement API, which still accepts historical
+v1 receipts. Unsigned token telemetry alone never releases exposure. This hook
 selects no real signer, accounting service, prices or account funding.
 
 This is a host library consumer, not a service installer or executable account

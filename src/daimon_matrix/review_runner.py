@@ -816,6 +816,7 @@ class NativeProviderOwner:
                         not isinstance(receipt, Mapping)
                         or set(receipt) != {"usage", "proof"}
                         or not isinstance(receipt["usage"], Mapping)
+                        or receipt["usage"].get("schema") != "execution/usage/v2"
                         or receipt["usage"].get("principal")
                         != self._context.instruction.principal
                         or receipt["usage"].get("operation_id") != request["attemptId"]
