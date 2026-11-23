@@ -17,7 +17,13 @@ from threading import Barrier
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from daimon_matrix.execution_instruction import ExecutionDenied, Instruction, digest
+from daimon_matrix.canonical import canonical_bytes
+from daimon_matrix.execution_instruction import (
+    ApprovalVerifier,
+    ExecutionDenied,
+    Instruction,
+    digest,
+)
 from daimon_matrix.execution_store import ExecutionStore
 from daimon_matrix.review_runner import (
     CycleContext,
@@ -226,6 +232,41 @@ class FundingTests(unittest.TestCase):
         self.assertEqual(self.store.funding_status("tribe")["active"], 1)
         self.store.finish(cycle, "completed")
         self.assertEqual(self.store.funding_status("tribe")["active"], 0)
+
+    def test_signed_usage_with_wrong_principal_cannot_release_reservation(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=2)
+        cycle = self.cycle(instruction)
+        attempt = self.attempt(instruction, cycle)
+        payload = dict(
+            schema="execution/usage/v1",
+            store_id=self.store.store_id,
+            principal="human:different-account",
+            cycle_id=cycle.cycle_id,
+            operation_id=attempt,
+            actual=0,
+        )
+        other_accountant = Ed25519PrivateKey.generate()
+        self.store.usage_verifier = ApprovalVerifier(
+            {
+                instruction.principal: self.accountant.public_key(),
+                payload["principal"]: other_accountant.public_key(),
+            }
+        )
+        wrong_receipt = self.signed(payload, other_accountant)
+        wrong_receipt.pop("signature")
+        wrong_receipt["principal"] = payload["principal"]
+        wrong_receipt["signature"] = other_accountant.sign(
+            canonical_bytes(wrong_receipt)
+        ).hex()
+        self.store.usage_verifier.verify("approve", payload, wrong_receipt)
+        with self.assertRaisesRegex(ExecutionDenied, "usage principal"):
+            self.store.settle_charge(cycle, payload, wrong_receipt)
+        held = self.store.funding_status("episode")
+        self.assertEqual((held["spent"], held["reserved"]), (0, 30))
+        self.settle_attempt(cycle, attempt, 8)
+        settled = self.store.funding_status("episode")
+        self.assertEqual((settled["spent"], settled["reserved"]), (8, 0))
 
     def test_native_attempts_share_work_and_settle_only_exact_charge(self):
         self.store.enable_provider_attempts()
