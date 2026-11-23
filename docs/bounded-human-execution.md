@@ -646,9 +646,14 @@ forced output cap and all three durable reservations. A controlled second attemp
 reaches no provider; wrong pricing unit and changed registration are rejected
 before any upstream request. These are actual transport-gate/SQlite checks with
 synthetic pricing and provider responses, not paid provider qualification or a
-new full native-worker/sandbox acceptance claim. Codex wiring shares this cost
-boundary but its optional exact pinned-native tests remain separately qualified.
-Authenticated usage settlement is still the separate accounting-authority path;
+new full native-worker/sandbox acceptance claim. The funded ephemeral Codex
+gateway validates the pinned Responses envelope before opening the provider
+connection. It forwards inline text messages without local message IDs and
+refuses external media, stored responses, and other unqualified fields before
+reservation. Its exact pinned-native loopback fixture is separate from the
+long-lived native owner path, whose complete provider-exposure qualification
+remains independent. Authenticated usage settlement is still the separate
+accounting-authority path;
 a successful response alone does not refund the conservative charge.
 
 For a continuing native execution, the existing host-only
