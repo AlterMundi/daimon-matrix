@@ -337,6 +337,45 @@ class FundingTests(unittest.TestCase):
             self.attempt(instruction, cycle)
         self.assertEqual(self.calls, [attempt])
 
+    def test_usage_v2_binds_route_and_unit_after_funding_expiry(self):
+        self.store.enable_provider_attempts()
+        instruction = self.instruction(attempts=2)
+        cycle = self.cycle(instruction)
+        attempt = self.attempt(instruction, cycle)
+        self.pause()
+        self.clock.now = 201
+        payload = dict(
+            schema="execution/usage/v2",
+            store_id=self.store.store_id,
+            principal=instruction.principal,
+            cycle_id=cycle.cycle_id,
+            operation_id=attempt,
+            instruction_sha256=instruction.sha256,
+            route="isolated-fake",
+            unit="synthetic-charge",
+            actual=8,
+        )
+        for changed in (
+            {"route": "another-provider-route"},
+            {"unit": "another-charge-unit"},
+            {"instruction_sha256": "a" * 64},
+        ):
+            wrong = payload | changed
+            signed = self.signed(wrong, self.accountant)
+            with self.assertRaisesRegex(ExecutionDenied, "usage funding binding"):
+                self.store.settle_charge(cycle, wrong, signed)
+        held = self.store.funding_status("episode")
+        self.assertEqual((held["spent"], held["reserved"]), (0, 30))
+
+        signed = self.signed(payload, self.accountant)
+        self.store.settle_charge(cycle, payload, signed)
+        self.store.settle_charge(cycle, payload, signed)
+        settled = self.store.funding_status("episode")
+        self.assertEqual(
+            (settled["spent"], settled["reserved"], settled["calls"]), (8, 0, 1)
+        )
+        self.assertTrue(settled["paused"])
+
     def native_context(
         self, instruction, cycle, source_check=None, registration_extra=None
     ):
@@ -607,11 +646,14 @@ class FundingTests(unittest.TestCase):
 
     def receipt_for(self, request, *, key=None, operation=None):
         payload = dict(
-            schema="execution/usage/v1",
+            schema="execution/usage/v2",
             store_id=request["store_id"],
             principal=request["principal"],
             cycle_id=request["cycle_id"],
             operation_id=operation or request["operation_id"],
+            instruction_sha256=request["instruction_sha256"],
+            route=request["route"],
+            unit=request["unit"],
             actual=8,
         )
         return {"usage": payload, "proof": self.signed(payload, key or self.accountant)}

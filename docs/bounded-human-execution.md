@@ -452,9 +452,17 @@ isolation, all retries/helper calls and the exclusive provider route. No real
 provider is qualified, configured or invoked by this increment. Ordinary full
 shell access and post-call usage do not provide these guarantees.
 
-Only an `execution/usage/v1` receipt authenticated by the store's separately
-configured operator-owned accounting/provider verifier settles the exact retained
-cycle/operation. A verified charge above the reservation records the actual spend
+Only a receipt authenticated by the store's separately configured operator-owned
+accounting/provider verifier settles the exact retained cycle/operation.
+`execution/usage/v2` signs the existing receipt fields plus the original
+instruction digest, provider route and charge unit. The ledger verifies that
+binding against the immutable reservation and account even after expiry or pause.
+The existing `execution/usage/v1` format remains readable and settleable for
+legacy authority integrations. A verifier and a matching unit can establish
+receipt authenticity and denomination; the accounting authority still needs
+independent evidence of the actual charge.
+
+A verified charge above the reservation records the actual spend
 and fences new dispatch against its bound accounts. Funding status counts those
 overruns separately from operator pauses. Exact repeats inspect the same receipt;
 conflicting receipts fail. Settlement preserves call fuel and proves neither
@@ -933,7 +941,7 @@ submission may cross only its own exact intent; any other unconfirmed intent
 fences affected funding. Process death before acknowledgment leaves that original
 reservation intact and blocks replacement work after reopen. No timeout, restart,
 pause/resume or migration refunds fuel or renews an account. Authenticated
-`execution/usage/v1` settlement selects the exact cycle **and operation**, never
+`execution/usage/v1` or `execution/usage/v2` settlement selects the exact cycle **and operation**, never
 another charge in the same work. A settled returned physical attempt releases its
 active-call slot while the continuing native cycle remains active. Unsettled or
 ambiguous attempts keep exposure, and normal signed pause/expiry checks apply
@@ -962,7 +970,7 @@ The native owner can record a closed, at-most32KiB
 ordinal it already reserved. It retains exact optional model/token/metadata
 fields in that operation's existing `scope`, without another row or charge.
 Identical duplicates are idempotent; conflicting reports refuse. Accounting for
-admitted exposure remains available after funding pause or expiry. This evidence
-is not `execution/usage/v1`: only the configured accounting authority's verified
-receipt can settle actual spending or release reserved maximum exposure. Missing
-or uncertain observation never refunds a reservation or resets counters.
+admitted exposure remains available after funding pause or expiry. Only the
+configured accounting authority's verified receipt can settle actual spending or
+release reserved maximum exposure. Missing or uncertain observation retains the
+reservation and counters.
