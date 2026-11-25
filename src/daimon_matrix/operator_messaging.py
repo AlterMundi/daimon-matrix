@@ -1508,7 +1508,9 @@ def _group_authority_successor(
     if ref == _runtime_epoch(runtime).manifest.being_ref or relationships is None:
         raise MessagingConfigError("messaging_republish_peer_untrusted")
     pinned = _application_authorities(application).get(ref)
-    resolver = relationships.authority_resolver
+    resolver = (
+        relationships.store.authority_resolver or relationships.authority_resolver
+    )
     if resolver is None:
         raise MessagingConfigError("messaging_republish_peer_untrusted")
     approved = resolver(ref)
