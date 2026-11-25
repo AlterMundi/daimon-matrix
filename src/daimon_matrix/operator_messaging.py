@@ -35,6 +35,7 @@ from .canonical import canonical_bytes
 from .local_api import create_messaging_capability
 from .messaging_config import (
     APPLICATION_SCHEMA,
+    APPLICATION_SCHEMA_V3,
     MessagingConfigError,
     _capability_journal_names,
     _capability_state_chain,
@@ -1492,6 +1493,41 @@ def _reissue_installation(
     }
 
 
+def _group_authority_successor(
+    runtime: HostedRuntime,
+    application: Mapping[str, Any],
+    document: Mapping[str, Any],
+    history: Sequence[Mapping[str, Any]],
+) -> tuple[str, RootHistoryAuthority]:
+    """Anchor a successor to the signed group and its approved trust history."""
+    if application["schema"] != APPLICATION_SCHEMA_V3:
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    verified = public_authority_history(document, history)
+    ref = verified.active.manifest.being_ref
+    relationships = runtime.service.relationships
+    if ref == _runtime_epoch(runtime).manifest.being_ref or relationships is None:
+        raise MessagingConfigError("messaging_republish_peer_untrusted")
+    pinned = _application_authorities(application).get(ref)
+    resolver = (
+        relationships.store.authority_resolver or relationships.authority_resolver
+    )
+    if resolver is None:
+        raise MessagingConfigError("messaging_republish_peer_untrusted")
+    approved = resolver(ref)
+    epochs = (*verified.historical, verified.active)
+    if pinned not in epochs or not isinstance(
+        approved, (RootAuthority, RootHistoryAuthority)
+    ):
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    if isinstance(approved, RootHistoryAuthority):
+        accepted = (*approved.historical, approved.active)
+        if epochs[: len(accepted)] != accepted:
+            raise MessagingConfigError("messaging_republish_peer_conflict")
+    elif approved not in epochs:
+        raise MessagingConfigError("messaging_republish_peer_conflict")
+    return ref, verified
+
+
 def republish(
     runtime: HostedRuntime,
     app_directory: Path | str,
@@ -1499,6 +1535,8 @@ def republish(
     installation: Path | None = None,
     bundle_name: str = "runtime.json",
     peer_being_refs: Sequence[str] = (),
+    group_peer_successor: tuple[Mapping[str, Any], Sequence[Mapping[str, Any]]]
+    | None = None,
 ) -> dict[str, Any]:
     """Re-publish the current application against the runtime's present epoch.
 
@@ -1511,11 +1549,11 @@ def republish(
     the very document that needs repairing.
 
     This derives one successor changing the local being's authority and only
-    explicitly selected ``peer_being_refs``. Foreign successors must already be
-    trusted, anchored descendants in the loaded runtime; caller documents never
-    authorize republication. Routes, stores, ``relationship_mode``, the
-    client descriptor and every secret reference are carried over untouched, and no
-    capability is re-minted and no key is rotated -- that is ``renew``, not this.
+    explicitly selected foreign authority. A group-only peer can carry its
+    public successor chain without bilateral enrollment. Its predecessor must
+    match the signed application and the loaded approved group history.
+    Existing routes, stores, client and custody are retained. A route to a
+    body that the successor retires is omitted from the new roster.
 
     The previous publication is first proved authentic with
     ``verify_binding_within_history``, so the successor is derived from a document
@@ -1565,6 +1603,23 @@ def republish(
         ):
             raise MessagingConfigError("messaging_republish_conflict")
         trusted = _runtime_authorities(runtime)
+        if group_peer_successor is not None:
+            if peer_being_refs:
+                raise MessagingConfigError("messaging_republish_peer_conflict")
+            document, history = group_peer_successor
+            ref, verified = _group_authority_successor(
+                runtime, previous, document, history
+            )
+            # Direct-peer trust must still be updated through native adoption.
+            if ref in trusted and _current_epoch(trusted[ref]) != verified.active:
+                raise MessagingConfigError("messaging_republish_peer_untrusted")
+            index = next(
+                i
+                for i, row in enumerate(previous["authorities"])
+                if row["manifest"]["being_ref"] == ref
+            )
+            successor["authorities"][index] = copy.deepcopy(dict(document))
+            trusted[ref] = verified
         from .runtime import _read_bundle, _safe_file
 
         bundle = _read_bundle(
@@ -1639,10 +1694,23 @@ def republish(
                         binding,
                         at_ms=runtime.service.clock(),
                     )
-        # Exactly one authority entry may differ, and nothing else at all. A
-        # re-publication is not a way to smuggle in a route, a store or a client.
+        allowed = {"authorities"}
+        if previous["schema"] == APPLICATION_SCHEMA_V3:
+            allowed.add("roster")
+            retired = {
+                (row["manifest"]["being_ref"], body["embodiment_id"], body["body_ref"])
+                for row in successor["authorities"]
+                for body in row["manifest"]["embodiments"]
+                if body["status"] == "retired"
+            }
+            successor["roster"] = [
+                row
+                for row in previous["roster"]
+                if (row["being_ref"], row["embodiment_id"], row["body_ref"])
+                not in retired
+            ]
         if any(
-            key != "authorities" and previous[key] != successor[key] for key in previous
+            key not in allowed and previous[key] != successor[key] for key in previous
         ):
             raise MessagingConfigError("messaging_republish_conflict")
         if successor == previous:
