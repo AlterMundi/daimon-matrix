@@ -2,8 +2,9 @@
 
 import hashlib
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from daimon_matrix import mandatory_echo as echo
 from daimon_matrix.canonical import b64url
+from daimon_matrix.native_egress import (
+    _private_sibling_visibility,
+    _PrivateSiblingVisibility,
+)
 
 
 class JournalPublisher:
@@ -64,3 +69,37 @@ class JournalPublisher:
 
     def confirm_publications(self, values: list[dict[str, str]]) -> None:
         self.confirmations.extend(values)
+
+
+def private_sibling_document(
+    path: Path, key: Ed25519PrivateKey, pair: tuple[str, str]
+) -> dict[str, Any]:
+    return {
+        "schema": "dm.messaging.private-sibling-visibility/v1",
+        "embodiments": sorted(pair),
+        "destination": {
+            "representation": "compact-text/v1",
+            "publication": {
+                "kind": "conversation-journal/v1",
+                "surface_ref": "conversation:private-fixture",
+                "audience": ["human:fixture"],
+                "receipt_key": b64url(key.public_key().public_bytes_raw()),
+            },
+        },
+        "publication_backend": {
+            "kind": "owner-unix/v1",
+            "socket_path": str(path.with_suffix(".sock")),
+        },
+    }
+
+
+def private_sibling_fixture(
+    path: Path, base_policy: Mapping[str, Any], pair: tuple[str, str]
+) -> tuple[_PrivateSiblingVisibility, JournalPublisher]:
+    key = Ed25519PrivateKey.generate()
+    publication = private_sibling_document(path, key, pair)
+    selection = _private_sibling_visibility(
+        publication, owner_embodiment=pair[0], base_policy=base_policy
+    )
+    publisher = JournalPublisher(path, key)
+    return replace(selection, transport=publisher), publisher

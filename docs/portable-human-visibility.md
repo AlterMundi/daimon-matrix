@@ -190,6 +190,30 @@ and an actual signed Conversation receipt and authorized human readback. Keep
 the existing Telegram installation/material available for its obligations until
 they can be settled through their original route.
 
+## Selected private sibling pair
+
+An owner-signed native installation can carry one `private_sibling_visibility`
+descriptor when the current scope includes sibling conversations and the
+installing being is its sole participating being. The descriptor pins the two
+embodiment IDs, a `compact-text/v1` Conversation destination and the existing
+owner socket. The native sender and receiver identify the pair from verified
+sealed endpoints. Other sibling pairs and other native paths use the base
+destination.
+
+For this pair the existing catalog retains the private policy and proof with
+each obligation. The technical carrier receipt stays in the signed native
+exchange without adding a second human publication of the original text. The
+actual reply is a separate signed message that uses the same private policy and
+can use the same thread. A known or ambiguous old Telegram obligation continues
+to use its original policy. An unavailable private publisher does not select
+Telegram. A private send can reuse its retained carrier within its lifetime.
+After expiry, it cannot generate a fresh carrier and a second publication of
+the same signed speech.
+
+The full-policy replacement documented above is for changes approved for the
+whole base audience. Use the selected-pair mechanism for the private Claude
+demo while the base policy remains bound to a Telegram group.
+
 ## Prepared native installation and App connection
 
 The existing `group_visibility_disclosure`, `accept_group_visibility` and

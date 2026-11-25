@@ -1200,6 +1200,11 @@ class PeerTransportTests(PeerTransportFixture):
     ) -> None:
         self._exercise_conversation(mirror=True)
 
+    def test_private_sibling_pair_crosses_signed_transport_without_telegram(
+        self,
+    ) -> None:
+        self._exercise_conversation(mirror=True, private=True)
+
     def test_cold_conversation_retry_recovers_an_expired_outer_carrier(self) -> None:
         self._exercise_conversation(mirror=False, renewed_carrier=True)
 
@@ -1217,17 +1222,29 @@ class PeerTransportTests(PeerTransportFixture):
         mirror: bool,
         renewed_carrier: bool = False,
         storage_failure: bool = False,
+        private: bool = False,
     ) -> None:
         """One sibling message crosses the native carrier and comes back signed."""
         sender_private = self.append(self.ledger_a, "legion", "private sender history")
         receiver_private = self.append(
             self.ledger_b, "daimonmatrix", "private receiver history"
         )
+        from tests.visibility_fixtures import JournalPublisher, private_sibling_fixture
+
         transports: list[SyntheticEchoTransport] = []
+        publishers: list[JournalPublisher] = []
         if mirror:
             controllers = []
-            for _side in range(2):
+            for side in range(2):
                 transport = SyntheticEchoTransport()
+                private_selection = None
+                if private:
+                    private_selection, publisher = private_sibling_fixture(
+                        self.root_path / f"private-publisher-{side}.sqlite",
+                        self.egress._policy,
+                        ("embodiment:legion", "embodiment:daimonmatrix"),
+                    )
+                    publishers.append(publisher)
                 transports.append(transport)
                 controllers.append(
                     MandatoryEgressController(
@@ -1240,6 +1257,7 @@ class PeerTransportTests(PeerTransportFixture):
                         owner_actor=self.authority.state.being_ref,
                         verify_owner_binding=lambda _document, _binding: None,
                         mirror_sibling_conversations=True,
+                        private_sibling_visibility=private_selection,
                     )
                 )
             self.egress, self.receiver_egress = controllers
@@ -1455,7 +1473,105 @@ class PeerTransportTests(PeerTransportFixture):
         self.assertEqual(retried["message_id"], result["message_id"])
         self.assertEqual(retried["deliveries"], result["deliveries"])
 
-        if mirror:
+        if private:
+            self.assertEqual([transport.requests for transport in transports], [[], []])
+            self.assertEqual([publisher.calls for publisher in publishers], [1, 0])
+            with closing(sqlite3.connect(publishers[0].path)) as database:
+                rows = database.execute("SELECT request FROM publications").fetchall()
+            self.assertEqual(len(rows), 1)
+            published = json.loads(rows[0][0])
+            self.assertEqual(published["audience"], ["human:fixture"])
+            self.assertIn("hola hermano", published["text"])
+
+            self.now += 31_000
+            with self.assertRaises(PeerTransportConflict):
+                reopened.converse(
+                    text="hola hermano",
+                    addressees=[sibling],
+                    request_id=request_id,
+                    targets=cast(list[Mapping[str, Any]], resolved["targets"]),
+                    ttl_ms=60_000,
+                    deliver=deliver,
+                )
+            self.assertEqual([publisher.calls for publisher in publishers], [1, 0])
+
+            scope_store_a = ScopeExchangeStore(self.ledger_a)
+            scope_store_a.initialize()
+            reverse_dispatcher = PeerDispatcher(
+                authority=self.authority,
+                local_origin=self.origins["legion"],
+                local_target=self.targets["legion"],
+                custody=self.custodies["legion"],
+                store=PeerExchangeStore(
+                    client_state / "reply-exchange.sqlite", clock=lambda: self.now
+                ),
+                handlers=protocol_handlers(
+                    resolver=ScopeResolver(self.ledger_a, clock=lambda: self.now),
+                    signer=self.signers["legion"],
+                    scope_store=scope_store_a,
+                    sync_engine=SyncEngine(self.ledger_a),
+                    we_lane=sender,
+                ),
+                clock=lambda: self.now,
+                egress=self.egress,
+                egress_catalog_id="test-private-reply-response",
+            )
+            reverse_client = PeerClient(
+                authority=self.authority,
+                local_origin=self.origins["daimonmatrix"],
+                local_target=self.targets["daimonmatrix"],
+                custody=self.custodies["daimonmatrix"],
+                outbox=PeerOutbox(server_state / "reply-outbox.sqlite"),
+                round_trip=reverse_dispatcher.dispatch,
+                clock=lambda: self.now,
+                egress=self.receiver_egress,
+                egress_catalog_id="test-private-reply-request",
+            )
+            reply_id = "05500000-0000-4000-8000-000000000031"
+            reply_targets = ScopeResolver(
+                self.ledger_b, clock=lambda: self.now
+            ).resolution(scope="/we", request_id=reply_id)["targets"]
+
+            def deliver_reply(
+                embodiment_id: str, payload: Mapping[str, Any]
+            ) -> Mapping[str, Any]:
+                self.assertEqual(embodiment_id, "embodiment:legion")
+                return reverse_client.call(
+                    payload,
+                    recipient_target=self.targets["legion"],
+                    request_content_type=WE_MESSAGE_CONTENT_TYPE,
+                    response_content_type=WE_RECEIPT_CONTENT_TYPE,
+                    correlation_id=reply_id,
+                    deadline_ms=self.now + 30_000,
+                )
+
+            reply = receiver.converse(
+                text="recibí tu mensaje privado",
+                addressees=["embodiment:legion"],
+                request_id=reply_id,
+                targets=cast(list[Mapping[str, Any]], reply_targets),
+                thread_id=result["thread_id"],
+                ttl_ms=60_000,
+                deliver=deliver_reply,
+            )
+            self.assertEqual(reply["deliveries"][0]["state"], "delivered")
+            self.assertEqual(reply["thread_id"], result["thread_id"])
+            accepted_reply = next(
+                row
+                for row in self.ledger_a.conversation_evidence()
+                if row["event_id"] == reply["message_id"]
+            )
+            self.assertEqual(accepted_reply["origin"]["embodiment_id"], sibling)
+            self.assertEqual([transport.requests for transport in transports], [[], []])
+            self.assertEqual([publisher.calls for publisher in publishers], [1, 1])
+            with closing(sqlite3.connect(publishers[1].path)) as database:
+                reply_json = database.execute(
+                    "SELECT request FROM publications"
+                ).fetchone()[0]
+            publication = json.loads(reply_json)
+            self.assertEqual(publication["audience"], ["human:fixture"])
+            self.assertIn("recibí tu mensaje privado", publication["text"])
+        elif mirror:
             for transport in transports:
                 self.assertEqual(len(transport.requests), 2 if renewed_carrier else 1)
                 posted = transport.requests[0]["text"]
