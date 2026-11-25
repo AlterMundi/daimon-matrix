@@ -624,9 +624,9 @@ class GroupRuntimeTests(unittest.TestCase):
                     original_send_id=args["send_id"],
                     recovery_id=recovery_id,
                 )
-                for server in [*self.servers, self.servers[0]]:
-                    server._threads.join()
-                recovered = sender.inspect(client_id="test", send_id=args["send_id"])
+                recovered = self.recovered_copy(
+                    sender, receiver, args["send_id"], original["message_id"]
+                )
                 self.assertEqual(recovered["message_id"], original["message_id"])
                 self.assertEqual(recovered["thread_id"], original["thread_id"])
                 self.assertEqual(recovered["audience"], original["audience"])
@@ -643,6 +643,23 @@ class GroupRuntimeTests(unittest.TestCase):
                     [original["message_id"]],
                 )
 
+    def recovered_copy(self, sender, receiver, send_id, message_id):
+        # A callback may already have accepted its socket but not yet started
+        # the handler thread. Wait for the actual retained result and copy.
+        deadline = time.monotonic() + 5
+        while True:
+            recovered = sender.inspect(client_id="test", send_id=send_id)
+            if recovered["semantic"]["terminal"] and any(
+                row["message"]["event_id"] == message_id
+                for row in receiver.page(after=0, limit=100)
+            ):
+                return recovered
+            if time.monotonic() >= deadline:
+                self.fail(
+                    "recovery did not retain its terminal result and receiving copy"
+                )
+            time.sleep(0.01)
+
     def test_explicit_recovery_delivers_original_once_with_new_bounded_authorization(
         self,
     ):
@@ -650,12 +667,12 @@ class GroupRuntimeTests(unittest.TestCase):
         args, original = self._expired_unattempted()
         before_echo = len(sender.egress._transport.requests)
         recovery_id = str(uuid.uuid4())
-        recovered = sender.recover(
+        sender.recover(
             client_id="test", original_send_id=args["send_id"], recovery_id=recovery_id
         )
-        for server in [*self.servers, self.servers[0]]:
-            server._threads.join()
-        recovered = sender.inspect(client_id="test", send_id=args["send_id"])
+        recovered = self.recovered_copy(
+            sender, receiver, args["send_id"], original["message_id"]
+        )
         self.assertEqual(recovered["message_id"], original["message_id"])
         self.assertEqual(recovered["thread_id"], original["thread_id"])
         self.assertEqual(recovered["audience"], original["audience"])
