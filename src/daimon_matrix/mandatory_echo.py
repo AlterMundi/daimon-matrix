@@ -1057,6 +1057,15 @@ class EchoJournal:
                 (raw, op),
             )
 
+    def retained_policy(
+        self, operation_id: str, expected_binding_digest: str
+    ) -> dict[str, Any]:
+        """Read the authenticated policy bound when the original was admitted."""
+        return cast(
+            dict[str, Any],
+            self._load(operation_id, expected_binding_digest)["binding"]["policy"],
+        )
+
     def _load(self, operation_id: str, expected_binding_digest: str) -> dict[str, Any]:
         self._check_catalog()
         try:
@@ -1342,12 +1351,21 @@ class MandatoryEcho:
         | None = None,
         execution_guard: Callable[[], AbstractContextManager[None]] | None = None,
         storage_guard: Callable[[], AbstractContextManager[Any]] | None = None,
+        transport_matches: Callable[[dict[str, Any]], bool] | None = None,
     ) -> None:
         self._journal, self._transport = journal, transport
+        self._transport_matches = transport_matches
         self._resolve, self._authorize = resolve, authorize
         self._clock = clock
         self._verify_retry, self._execution_guard = verify_retry, execution_guard
         self._storage_guard = storage_guard or nullcontext
+
+    def _transport_for(self, record: dict[str, Any]) -> EchoTransport | None:
+        if self._transport_matches is not None and not self._transport_matches(
+            record["binding"]["policy"]
+        ):
+            return None
+        return self._transport
 
     def _current(self, record: dict[str, Any]) -> None:
         try:
@@ -1418,7 +1436,6 @@ class MandatoryEcho:
         The composing carrier recovery owns and freezes this control. No original
         request/deadline/attempt is rewritten and no native permit is issued here.
         """
-        completer = getattr(self._transport, "complete_publication", None)
         try:
             _fields(control, {"schema", "recovery_id", "issued_at_ms", "expires_at_ms"})
             if control["schema"] != "dm.visibility.publication-completion/v1":
@@ -1431,8 +1448,6 @@ class MandatoryEcho:
                 raise ValueError
         except Exception:
             raise EchoError("echo_publication_completion_invalid") from None
-        if completer is None:
-            raise EchoError("echo_publication_completion_unavailable")
         journal = self._journal
         # Existing presentation has at most32 parts; one fresh intent per missing
         # part. An ambiguous attempt never enters this loop as a retry.
@@ -1440,6 +1455,11 @@ class MandatoryEcho:
             with self._storage_guard(), journal._transaction():
                 record = journal._load(operation_id, expected_binding_digest)
                 self._current(record)
+                completer = getattr(
+                    self._transport_for(record), "complete_publication", None
+                )
+                if completer is None:
+                    raise EchoError("echo_publication_completion_unavailable")
                 state = _status(record)
                 if state["state"] == "confirmed":
                     break
@@ -1581,11 +1601,12 @@ class MandatoryEcho:
         """Private fault-injection seam; no runtime configuration or model API."""
 
     def _publish_reference(self, record: dict[str, Any]) -> None:
+        transport = self._transport_for(record)
         if (
             record["binding"]["policy"]["schema"] == "daimon-visibility-policy/v3"
             and _status(record)["state"] == "confirmed"
         ):
-            confirm = getattr(self._transport, "confirm_publications", None)
+            confirm = getattr(transport, "confirm_publications", None)
             if confirm is not None:
                 # Invoked after durable native confirmation. Repetition only
                 # acknowledges the same proof; it never republishes content.
@@ -1604,7 +1625,7 @@ class MandatoryEcho:
             record["binding"]["policy"]["representation"] == READABLE_REPRESENTATION
             and _status(record)["state"] == "confirmed"
         ):
-            publish = getattr(self._transport, "publish_reference", None)
+            publish = getattr(transport, "publish_reference", None)
             if publish is not None:
                 publish(_copy(record))
 
@@ -1685,7 +1706,8 @@ class MandatoryEcho:
                 for a in p["attempts"]
             ):
                 return state  # Lost-return retry of an already admitted decision.
-            if state["state"] in {"confirmed", "suppressed"} or self._transport is None:
+            transport = self._transport_for(record)
+            if state["state"] in {"confirmed", "suppressed"} or transport is None:
                 return state
             if state["state"] == "ambiguous" and authorization is None:
                 return state
@@ -1745,7 +1767,7 @@ class MandatoryEcho:
         with self._storage_guard():
             self._current(record)
         try:
-            raw = self._transport.send(_copy(request))
+            raw = transport.send(_copy(request))
             _classify_response(raw, request, policy)
         except Exception as exception:
             reason = getattr(exception, "reason", None)
@@ -1789,7 +1811,7 @@ class MandatoryEcho:
         self, record: dict[str, Any], *, allow_expired: bool = False
     ) -> dict[str, Any]:
         """One durable, bounded read attempt; never a second publication call."""
-        inspector = getattr(self._transport, "inspect_publication", None)
+        inspector = getattr(self._transport_for(record), "inspect_publication", None)
         if (
             record["binding"]["policy"]["schema"] != "daimon-visibility-policy/v3"
             or inspector is None

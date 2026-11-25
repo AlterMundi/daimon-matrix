@@ -2711,6 +2711,18 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_operation_invalid")
         return value
 
+    def _publication_transport_matches(self, retained: Mapping[str, Any]) -> bool:
+        # A policy successor can retain another transport's obligations. Use
+        # the selected backend only for the exact published destination.
+        if retained["schema"] != self._policy["schema"]:
+            return False
+        if retained["schema"] == "daimon-visibility-policy/v3":
+            return bool(retained["publication"] == self._policy["publication"])
+        return all(
+            retained.get(field) == self._policy.get(field)
+            for field in ("bot_id", "chat_id", "topic_id")
+        )
+
     def _mandatory(
         self,
         binding: OperationBinding,
@@ -2727,6 +2739,7 @@ class MandatoryEgressController:
         return MandatoryEcho(
             journal,
             transport=self._transport,
+            transport_matches=self._publication_transport_matches,
             resolve=lambda _operation: self._load_projection(binding),
             authorize=lambda _record: (
                 self._authorize_retained(binding, catalog)
@@ -2790,6 +2803,7 @@ class MandatoryEgressController:
         return MandatoryEcho(
             journal,
             transport=self._transport,
+            transport_matches=self._publication_transport_matches,
             resolve=lambda _operation: self._load_projection(binding),
             # Only the separately authenticated owner retry may finish an
             # old human-publication obligation. It never issues a native permit.
@@ -3091,6 +3105,17 @@ class MandatoryEgressController:
         if prepare is None:
             raise NativeEgressError("echo_publication_completion_unavailable")
         try:
+            with self._database(catalog) as database:
+                journal = EchoJournal(
+                    database,
+                    catalog_id=binding.catalog_id,
+                    authentication_key=self._proof_key,
+                )
+                policy = journal.retained_policy(
+                    binding.echo_operation_id, binding.echo_binding_digest
+                )
+            if not self._publication_transport_matches(policy):
+                raise NativeEgressError("echo_publication_completion_unavailable")
             prepare()
         except EchoError as exception:
             raise NativeEgressError(str(exception)) from None

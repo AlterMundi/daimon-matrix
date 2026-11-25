@@ -80,6 +80,13 @@ documents stay in an operation-private directory; secrets stay at their existing
 owner paths. No network probe, speech, model, membership or positive egress gate
 is started by these SDK functions.
 
+Publication work follows the destination recorded with each original. When a
+successor selects a different Telegram route or Conversation audience, entries
+bound to the predecessor remain readable and keep their original receipt state.
+If the selected backend cannot serve their exact destination, Matrix does not
+reserve an attempt or send their bytes through the replacement. Existing
+authenticated proofs keep their original meaning.
+
 ## Recoverable first communication schema
 
 A first group application requires the current communication schema. Prepare it
