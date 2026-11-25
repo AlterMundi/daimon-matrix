@@ -2695,23 +2695,19 @@ def replace_native_visibility_destination(
     *,
     expected_installation_sha256: str,
     bundle_name: str = "runtime.json",
+    select_private_sibling: bool = False,
 ) -> dict[str, Any]:
-    """Select portable publication for an existing native sibling installation.
+    """Select whole-scope or exact-pair native publication.
 
     The caller holds the native runtime lock. The approved destination and
     backend are owner-local inputs. The selected bundle and exact predecessor
     pin the scope, sole participating being and retained journal proof key.
     """
-    from .native_egress import PORTABLE_VISIBILITY_SCOPE_RISKS
-
     conflict = "messaging_native_visibility_destination_conflict"
     if (
         Path(bundle_name).name != bundle_name
         or re.fullmatch(r"[0-9a-f]{64}", expected_installation_sha256) is None
         or not isinstance(configuration, Mapping)
-        or set(configuration) != {"destination", "publication_backend"}
-        or not isinstance(configuration["destination"], Mapping)
-        or set(configuration["destination"]) != {"publication", "representation"}
     ):
         raise MessagingConfigError(conflict)
 
@@ -2739,27 +2735,130 @@ def replace_native_visibility_destination(
     selected = read_document(installation)
     current = selected["document"]
     validate(installation, current)
-    backup = installation.name + ".pre-portable-" + expected_installation_sha256
+    backup_kind = (
+        ".pre-private-sibling-" if select_private_sibling else ".pre-portable-"
+    )
+    backup = installation.name + backup_kind + expected_installation_sha256
     already_selected = config_digest(current) != expected_installation_sha256
-    if (
-        already_selected
-        and current["policy"]["schema"] != "daimon-visibility-policy/v3"
-    ):
-        raise MessagingConfigError(conflict)
     predecessor = read_document(root / backup) if already_selected else selected
     previous = predecessor["document"]
     if (
         config_digest(previous) != expected_installation_sha256
-        or previous["policy"]["schema"] != "daimon-visibility-policy/v2"
         or previous["disclosure"]["participants"] != [owner]
         or previous["disclosure"]["scope"]["mode"]
         != "all-inter-daimon-and-sibling-conversations"
     ):
         raise MessagingConfigError(conflict)
 
+    if already_selected:
+        # The selected installation was independently validated. Authenticate
+        # the exact predecessor without reopening retired Telegram custody.
+        verify_binding(runtime, previous, predecessor["binding"])
+    if select_private_sibling:
+        document = _private_sibling_visibility_successor(
+            runtime, authority, previous, configuration
+        )
+    else:
+        document = _native_visibility_destination_successor(
+            runtime, previous, configuration, current if already_selected else None
+        )
+    result = {
+        "status": (
+            "private-sibling-visibility-selected"
+            if select_private_sibling
+            else "native-visibility-selected"
+        ),
+        "installation_sha256": config_digest(document),
+        "generation": document["generation"],
+        "previous_installation_backup": backup,
+    }
+    if already_selected:
+        if current != document:
+            raise MessagingConfigError(conflict)
+        _sync(root)
+        return {**result, "status": "unchanged"}
+
+    envelope = {"document": document, "binding": create_binding(runtime, document)}
+    candidate = root / (installation.name + ".portable-candidate")
+    try:
+        # A crash before rename can leave only this unselected candidate.
+        candidate.unlink(missing_ok=True)
+        _write(root, candidate.name, canonical_bytes(envelope))
+        validate(candidate, document)
+        _publish_retained_entry(
+            root, backup, canonical_bytes(predecessor), error_code=conflict
+        )
+        if read_document(installation) != selected:
+            raise MessagingConfigError(conflict)
+        os.replace(candidate, installation)
+        try:
+            _sync(root)
+        except OSError:
+            raise MessagingConfigError(
+                "messaging_published_durability_uncertain"
+            ) from None
+    finally:
+        candidate.unlink(missing_ok=True)
+    return result
+
+
+def _private_sibling_visibility_successor(
+    runtime: HostedRuntime,
+    authority: RootAuthority,
+    previous: dict[str, Any],
+    configuration: Mapping[str, Any],
+) -> dict[str, Any]:
+    from .identity import verify_embodiment_credential, verify_incarnation_authorization
+    from .native_egress import _private_sibling_visibility
+
+    conflict = "messaging_native_visibility_destination_conflict"
+    if "private_sibling_visibility" in previous:
+        raise MessagingConfigError(conflict)
+    route = copy.deepcopy(dict(configuration))
+    selection = _private_sibling_visibility(
+        route,
+        owner_embodiment=runtime.service.origin["embodiment_id"],
+        base_policy=previous["policy"],
+    )
+    now = runtime.service.clock()
+    for embodiment in sorted(selection.embodiments):
+        member = authority.manifest.member(embodiment)
+        if member["status"] != "active":
+            raise MessagingConfigError(conflict)
+        credential = authority.credentials[member["embodiment_credential_id"]]
+        body = verify_embodiment_credential(credential, authority.state, at_ms=now)
+        verify_incarnation_authorization(
+            authority.incarnations[member["incarnation_authorization_id"]],
+            credential,
+            authority.state,
+            at_ms=now,
+        )
+        if not {"dm.we", "messages"} <= set(body["purposes"]):
+            raise MessagingConfigError(conflict)
+    # Selecting a pair leaves the original generation, disclosure, proof key,
+    # and acceptance bytes intact. The outer owner signature covers both.
+    return {**previous, "private_sibling_visibility": route}
+
+
+def _native_visibility_destination_successor(
+    runtime: HostedRuntime,
+    previous: dict[str, Any],
+    configuration: Mapping[str, Any],
+    current: dict[str, Any] | None,
+) -> dict[str, Any]:
+    from .native_egress import PORTABLE_VISIBILITY_SCOPE_RISKS
+
+    conflict = "messaging_native_visibility_destination_conflict"
+    if (
+        previous["policy"]["schema"] != "daimon-visibility-policy/v2"
+        or set(configuration) != {"destination", "publication_backend"}
+        or not isinstance(configuration["destination"], Mapping)
+        or set(configuration["destination"]) != {"publication", "representation"}
+    ):
+        raise MessagingConfigError(conflict)
     old_disclosure = previous["disclosure"]
     now = runtime.service.clock()
-    issued_at_ms = current["disclosure"]["issued_at_ms"] if already_selected else now
+    issued_at_ms = current["disclosure"]["issued_at_ms"] if current is not None else now
     if not old_disclosure["issued_at_ms"] <= issued_at_ms <= now:
         raise MessagingConfigError(conflict)
     destination = copy.deepcopy(dict(configuration["destination"]))
@@ -2771,11 +2870,7 @@ def replace_native_visibility_destination(
         "risk": PORTABLE_VISIBILITY_SCOPE_RISKS[old_disclosure["scope"]["mode"]],
     }
     generation = previous["generation"] + 1
-    if already_selected:
-        # Verify the retained predecessor signature without depending on the
-        # retired Telegram token. The selected v3 installation was authenticated
-        # above and its complete signed preimage is compared below.
-        verify_binding(runtime, previous, predecessor["binding"])
+    if current is not None:
         acceptance = current["acceptance_set"]
     else:
         acceptance = {
@@ -2801,40 +2896,7 @@ def replace_native_visibility_destination(
         "publication_backend": copy.deepcopy(configuration["publication_backend"]),
     }
     del document["telegram_qualification"]
-    result = {
-        "status": "unchanged" if already_selected else "native-visibility-selected",
-        "installation_sha256": config_digest(document),
-        "generation": generation,
-        "previous_installation_backup": backup,
-    }
-    if already_selected:
-        if current != document:
-            raise MessagingConfigError(conflict)
-        _sync(root)
-        return result
-
-    envelope = {"document": document, "binding": create_binding(runtime, document)}
-    candidate = root / (installation.name + ".portable-candidate")
-    try:
-        # A crash before rename can leave only this unselected candidate.
-        candidate.unlink(missing_ok=True)
-        _write(root, candidate.name, canonical_bytes(envelope))
-        validate(candidate, document)
-        _publish_retained_entry(
-            root, backup, canonical_bytes(predecessor), error_code=conflict
-        )
-        if read_document(installation) != selected:
-            raise MessagingConfigError(conflict)
-        os.replace(candidate, installation)
-        try:
-            _sync(root)
-        except OSError:
-            raise MessagingConfigError(
-                "messaging_published_durability_uncertain"
-            ) from None
-    finally:
-        candidate.unlink(missing_ok=True)
-    return result
+    return document
 
 
 def visibility_presentation(
@@ -3080,6 +3142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "visibility-accept",
             "visibility-apply",
             "replace-native-visibility",
+            "select-private-sibling-visibility",
             "migrate-visibility",
             "renew",
             "republish",
@@ -3143,7 +3206,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.peer_being_ref and args.command != "republish":
             raise ValueError()
         presentation_command = args.command.startswith("visibility-")
-        native_replacement = args.command == "replace-native-visibility"
+        select_private_sibling = args.command == "select-private-sibling-visibility"
+        native_replacement = (
+            select_private_sibling or args.command == "replace-native-visibility"
+        )
         if native_replacement:
             if (
                 args.app_dir is not None
@@ -3302,6 +3368,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 read_document(args.native_visibility_configuration),
                 expected_installation_sha256=args.expected_installation_sha256,
                 bundle_name=args.bundle,
+                select_private_sibling=select_private_sibling,
             )
         elif presentation_command:
             assert args.visibility_installation is not None

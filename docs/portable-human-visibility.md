@@ -200,6 +200,19 @@ owner socket. The native sender and receiver identify the pair from verified
 sealed endpoints. Other sibling pairs and other native paths use the base
 destination.
 
+Select the pair with `python -m daimon_matrix.operator_messaging
+select-private-sibling-visibility`, using the same native owner flags and exact
+`--expected-installation-sha256` as above. The protected
+`--native-visibility-configuration` contains
+`schema: dm.messaging.private-sibling-visibility/v1`, two sorted
+`embodiments`, `destination` and `publication_backend`. Use the paired-human
+App's selected publication descriptor and existing owner socket. Both bodies
+must be active in the signed manifest, with valid credentials and current
+incarnations permitting `dm.we` and `messages`. The writer validates the
+candidate before selection, preserves the base document and saves its exact
+authenticated predecessor. Repeat the original digest and identical
+configuration to read back a selection after lost confirmation.
+
 For this pair the existing catalog retains the private policy and proof with
 each obligation. The technical carrier receipt stays in the signed native
 exchange without adding a second human publication of the original text. The

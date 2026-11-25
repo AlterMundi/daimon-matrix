@@ -294,6 +294,114 @@ class ProvisioningTests(unittest.TestCase):
         self.assertTrue(stderr)
         self.assertFalse(refused_output.exists())
 
+    def test_install_private_sibling_from_signed_runtime_and_recover_selection(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.daemon import acquire_lock
+        from daimon_matrix.messaging_config import verify_binding
+        from tests.test_dm024_runtime import (
+            PASSWORD,
+            signed_runtime_visibility_installation,
+        )
+        from tests.test_messaging_runtime import loaded
+        from tests.visibility_fixtures import private_sibling_document
+
+        fixture, runtime, _ = loaded(self)
+        root = runtime.state_root
+        bundle = json.loads((root / "runtime.json").read_bytes())
+        installation = signed_runtime_visibility_installation(
+            fixture, root, bundle, runtime.service.clock(), mirror_siblings=True
+        )
+        config_path = root / "approved-private-sibling.json"
+        predecessor = installation.read_bytes()
+        old = json.loads(predecessor)["document"]
+        digest = config_digest(old)
+        pair = (
+            fixture.origins["legion"]["embodiment_id"],
+            fixture.origins["daimonmatrix"]["embodiment_id"],
+        )
+        configuration = private_sibling_document(
+            root / "private.sqlite", Ed25519PrivateKey.generate(), pair
+        )
+
+        def invoke(route, expected=digest):
+            config_path.write_bytes(canonical_bytes(route))
+            config_path.chmod(0o600)
+            reader, writer = os.pipe()
+            os.write(writer, PASSWORD)
+            os.close(writer)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            try:
+                with (
+                    patch(
+                        "time.time_ns", return_value=runtime.service.clock() * 1_000_000
+                    ),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    code = operator.main(
+                        [
+                            "select-private-sibling-visibility",
+                            "--state-root",
+                            str(root),
+                            "--password-fd",
+                            str(reader),
+                            "--visibility-installation",
+                            str(installation),
+                            "--expected-installation-sha256",
+                            expected,
+                            "--native-visibility-configuration",
+                            str(config_path),
+                        ]
+                    )
+                return code, stdout.getvalue(), stderr.getvalue()
+            finally:
+                with contextlib.suppress(OSError):
+                    os.close(reader)
+
+        unknown = {
+            **configuration,
+            "embodiments": ["embodiment:legion", "embodiment:unknown"],
+        }
+        self.assertEqual(invoke(unknown)[0], 1)
+        self.assertEqual(invoke(configuration, "a" * 64)[0], 1)
+        descriptor = acquire_lock(root)
+        try:
+            self.assertEqual(invoke(configuration)[0], 1)
+        finally:
+            os.close(descriptor)
+        self.assertEqual(installation.read_bytes(), predecessor)
+        original_sync = operator._sync
+
+        def lose_confirmation(directory):
+            if installation.read_bytes() != predecessor:
+                raise OSError("simulated loss after selection")
+            original_sync(directory)
+
+        with patch.object(operator, "_sync", side_effect=lose_confirmation):
+            code, _, stderr = invoke(configuration)
+        self.assertEqual(code, 1)
+        self.assertIn("messaging_published_durability_uncertain", stderr)
+
+        selected_bytes = installation.read_bytes()
+        envelope = json.loads(selected_bytes)
+        selected = envelope["document"]
+        self.assertEqual(selected, {**old, "private_sibling_visibility": configuration})
+        verify_binding(runtime, selected, envelope["binding"])
+        code, stdout, stderr = invoke(configuration)
+        self.assertEqual(code, 0, stderr)
+        result = json.loads(stdout)
+        self.assertEqual(result["status"], "unchanged")
+        self.assertEqual(result["installation_sha256"], config_digest(selected))
+        self.assertEqual(
+            (root / result["previous_installation_backup"]).read_bytes(),
+            predecessor,
+        )
+        modified = copy.deepcopy(configuration)
+        modified["destination"]["publication"]["audience"] = ["human:other"]
+        self.assertEqual(invoke(modified)[0], 1)
+        self.assertEqual(invoke(configuration, config_digest(selected))[0], 1)
+        self.assertEqual(installation.read_bytes(), selected_bytes)
+
     def test_native_sibling_destination_replacement_retains_signed_scope(self):
         from daimon_matrix import operator_messaging as operator
         from daimon_matrix.messaging_config import verify_binding
