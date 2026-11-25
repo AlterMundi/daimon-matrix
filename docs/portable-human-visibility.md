@@ -229,6 +229,34 @@ The full-policy replacement documented above is for changes approved for the
 whole base audience. Use the selected-pair mechanism for the private Claude
 demo while the base policy remains bound to a Telegram group.
 
+## First installation for a private sibling pair
+
+A fresh body with receive-only visibility can install the same approved pair
+without configuring a Telegram destination or authorizing a base publisher.
+Use the existing owner-protected pair configuration and an unused installation
+path under the selected body's owner-private visibility directory:
+
+```sh
+python -m daimon_matrix.operator_messaging install-private-sibling-visibility \
+  --state-root "$runtime_root" --visibility-installation "$visibility_file" \
+  --native-visibility-configuration "$approved_pair" --password-fd 3
+```
+
+Supply the native custody descriptor through the existing owner route. Both
+signed embodiments must already be active and authorized for sibling
+conversation. The command signs the exact pair and destination, verifies the
+normal loader, and records one proof key. An exact repeat reuses the signed
+installation. An existing broad installation or a changed audience is refused.
+Only the selected pair has a publisher. Other targets cannot use that
+publication backend.
+
+Before serving, provision the runtime's normal receive-only visibility
+catalogs if necessary. Use the existing `daimon-matrixd --adopt-owner-visibility`
+operation with the verified installation and native writer stopped. This
+re-authenticates the existing catalogs with the installation's proof key.
+Start the same body with that installation and verify the actual signed
+request and reply through the selected audience.
+
 ## Prepared native installation and App connection
 
 The existing `group_visibility_disclosure`, `accept_group_visibility` and

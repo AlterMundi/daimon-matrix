@@ -1399,7 +1399,11 @@ def _reissue_installation(
         "policy",
         "secrets",
         "publication_backend" if portable else "telegram_qualification",
-    }:
+    } | (
+        {"private_sibling_visibility"}
+        if "private_sibling_visibility" in previous
+        else set()
+    ):
         raise MessagingConfigError("messaging_visibility_installation_rejected")
     if previous["application_sha256"] == application_sha256:
         return {
@@ -2802,6 +2806,120 @@ def replace_native_visibility_destination(
     return result
 
 
+def install_private_sibling_visibility(
+    runtime: HostedRuntime,
+    installation: Path,
+    configuration: Mapping[str, Any],
+    *,
+    bundle_name: str = "runtime.json",
+) -> dict[str, Any]:
+    """Install the first owner-signed visibility for one exact sibling pair."""
+    from .native_egress import PORTABLE_VISIBILITY_SCOPE_RISKS, PRIVATE_SIBLING_SCOPE
+
+    conflict = "messaging_native_visibility_destination_conflict"
+    if Path(bundle_name).name != bundle_name or not isinstance(configuration, Mapping):
+        raise MessagingConfigError(conflict)
+    root = _directory(installation.parent)
+    authority = _runtime_epoch(runtime)
+    owner = authority.manifest.being_ref
+    bundle_digest = config_digest(read_document(runtime.state_root / bundle_name))
+    # Verify the requested pair and both current credentials before writing.
+    route = _private_sibling_visibility_successor(
+        runtime, authority, {"policy": {"proof_key_id": "unselected"}}, configuration
+    )["private_sibling_visibility"]
+    scope = {
+        "mode": PRIVATE_SIBLING_SCOPE,
+        "channels": [],
+        "projected_content": "complete-plaintext-content-and-metadata",
+    }
+    proof_name = installation.name + ".proof-key"
+    current = None
+    if installation.exists() or installation.is_symlink():
+        current = read_document(installation)
+        previous = current["document"]
+        if (
+            previous.get("private_sibling_visibility") != route
+            or previous.get("disclosure", {}).get("scope") != scope
+        ):
+            raise MessagingConfigError(conflict)
+    proof = root / proof_name
+    if not proof.exists() and current is None:
+        _publish_retained_entry(
+            root, proof_name, secrets.token_bytes(32), error_code=conflict
+        )
+    proof_key = protected_read(proof, size=32)
+    if len(proof_key) != 32:
+        raise MessagingConfigError(conflict)
+    disclosure = {
+        "schema": "dm.messaging.visibility-disclosure/v2",
+        "issued_at_ms": runtime.service.clock(),
+        "destination": route["destination"],
+        "scope": scope,
+        "scope_sha256": config_digest(scope),
+        "participants": [owner],
+        "risk": PORTABLE_VISIBILITY_SCOPE_RISKS[PRIVATE_SIBLING_SCOPE],
+    }
+    acceptance = {
+        "schema": "dm.messaging.visibility-acceptance-set/v1",
+        "disclosure_sha256": config_digest(disclosure),
+        "bindings": [create_binding(runtime, disclosure)],
+    }
+    document = {
+        "schema": "dm.messaging.visibility-installation/v2",
+        "generation": 1,
+        "runtime_id": runtime.service.runtime_id,
+        "application_sha256": bundle_digest,
+        "disclosure": disclosure,
+        "acceptance_set": acceptance,
+        "policy": {
+            **route["destination"],
+            "schema": "daimon-visibility-policy/v3",
+            "generation": 1,
+            "origin": "owner-signed-installation",
+            "acceptance_digest": config_digest(acceptance),
+            "proof_key_id": "sha256:" + hashlib.sha256(proof_key).hexdigest(),
+        },
+        "secrets": {"proof_key_file": proof_name},
+        "publication_backend": route["publication_backend"],
+        "private_sibling_visibility": route,
+    }
+
+    def verify(path: Path, expected: Mapping[str, Any]) -> None:
+        controller = _owner_visibility_controller(
+            authorities={owner: authority},
+            application_sha256=bundle_digest,
+            installation_path=path,
+            authority=_runtime_authority(runtime),
+            origin=runtime.service.origin,
+            runtime_id=runtime.service.runtime_id,
+            runtime_label=runtime.service.runtime_label,
+            signer_public_key=runtime.service.signer.public_key,
+            clock=runtime.service.clock,
+            catalog_mode="validate",
+        )
+        if controller.installation_digest != config_digest(expected):
+            raise MessagingConfigError(conflict)
+
+    if current is not None:
+        verify(installation, previous)
+        return {"status": "unchanged", "installation_sha256": config_digest(previous)}
+    raw = canonical_bytes(
+        {"document": document, "binding": create_binding(runtime, document)}
+    )
+    candidate = root / (installation.name + ".initial-candidate")
+    try:
+        candidate.unlink(missing_ok=True)
+        _write(root, candidate.name, raw)
+        verify(candidate, document)
+        _publish_retained_entry(root, installation.name, raw, error_code=conflict)
+    finally:
+        candidate.unlink(missing_ok=True)
+    return {
+        "status": "private-sibling-visibility-installed",
+        "installation_sha256": config_digest(document),
+    }
+
+
 def _private_sibling_visibility_successor(
     runtime: HostedRuntime,
     authority: RootAuthority,
@@ -3143,6 +3261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "visibility-apply",
             "replace-native-visibility",
             "select-private-sibling-visibility",
+            "install-private-sibling-visibility",
             "migrate-visibility",
             "renew",
             "republish",
@@ -3207,6 +3326,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError()
         presentation_command = args.command.startswith("visibility-")
         select_private_sibling = args.command == "select-private-sibling-visibility"
+        initial_private_sibling = args.command == "install-private-sibling-visibility"
         native_replacement = (
             select_private_sibling or args.command == "replace-native-visibility"
         )
@@ -3222,6 +3342,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 is None
             ):
                 raise ValueError()
+        elif initial_private_sibling:
+            if (
+                args.app_dir is not None
+                or args.visibility_installation is None
+                or args.native_visibility_configuration is None
+                or args.ready_fd is not None
+                or args.expected_installation_sha256 is not None
+            ):
+                raise ValueError()
         elif (
             args.native_visibility_configuration is not None
             or args.expected_installation_sha256 is not None
@@ -3230,6 +3359,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if (
             not presentation_command
             and not native_replacement
+            and not initial_private_sibling
             and args.command != "adopt-peer"
             and args.app_dir is None
         ):
@@ -3306,11 +3436,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             visibility_factory = daemon._visibility_factory(
                 args.visibility_installation, clock=clock
             )
-        elif presentation_command or args.command in {
-            "prepare",
-            "republish",
-            "adopt-peer",
-        }:
+        elif (
+            initial_private_sibling
+            or presentation_command
+            or args.command
+            in {
+                "prepare",
+                "republish",
+                "adopt-peer",
+            }
+        ):
             # Signing an app presentation must not authenticate the base native
             # catalogs with that app's different proof key. The closed bootstrap
             # cannot send and leaves catalogs intact; visibility_presentation
@@ -3356,6 +3491,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 runtime,
                 read_document(args.peer_authority),
                 read_document(args.peer_history),
+                bundle_name=args.bundle,
+            )
+        elif initial_private_sibling:
+            assert args.visibility_installation is not None
+            assert args.native_visibility_configuration is not None
+            result = install_private_sibling_visibility(
+                runtime,
+                args.visibility_installation,
+                read_document(args.native_visibility_configuration),
                 bundle_name=args.bundle,
             )
         elif native_replacement:

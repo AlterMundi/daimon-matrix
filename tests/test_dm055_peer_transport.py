@@ -1269,6 +1269,13 @@ class PeerTransportTests(PeerTransportFixture):
     ) -> None:
         self._exercise_conversation(mirror=True, private=True)
 
+    def test_private_sibling_pair_crosses_with_receive_only_base_on_target(
+        self,
+    ) -> None:
+        self._exercise_conversation(
+            mirror=True, private=True, private_only_receiver=True
+        )
+
     def test_cold_conversation_retry_recovers_an_expired_outer_carrier(self) -> None:
         self._exercise_conversation(mirror=False, renewed_carrier=True)
 
@@ -1287,6 +1294,7 @@ class PeerTransportTests(PeerTransportFixture):
         renewed_carrier: bool = False,
         storage_failure: bool = False,
         private: bool = False,
+        private_only_receiver: bool = False,
     ) -> None:
         """One sibling message crosses the native carrier and comes back signed."""
         sender_private = self.append(self.ledger_a, "legion", "private sender history")
@@ -1314,7 +1322,9 @@ class PeerTransportTests(PeerTransportFixture):
                     MandatoryEgressController(
                         policy=self.egress._policy,
                         proof_key=b"\x89" * 32,
-                        transport=transport,
+                        transport=None
+                        if private_only_receiver and side == 1
+                        else transport,
                         clock=lambda: self.now,
                         catalog_mode="synthetic",
                         installation_digest="1" * 64,
