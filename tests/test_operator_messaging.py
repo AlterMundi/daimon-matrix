@@ -294,6 +294,92 @@ class ProvisioningTests(unittest.TestCase):
         self.assertTrue(stderr)
         self.assertFalse(refused_output.exists())
 
+    def test_first_private_sibling_installation_leaves_all_other_paths_closed(self):
+        from daimon_matrix import operator_messaging as operator
+        from daimon_matrix.daemon import _visibility_factory
+        from daimon_matrix.native_egress import VISIBILITY_SCHEMA_VERSION
+        from daimon_matrix.runtime import load_runtime
+        from tests.test_closed_visibility_provisioning import (
+            ClosedVisibilityProvisioningTests,
+        )
+        from tests.test_dm024_runtime import PASSWORD
+        from tests.visibility_fixtures import private_sibling_document
+
+        fixture = ClosedVisibilityProvisioningTests()
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        root, runtime = fixture.body()
+        runtime.egress.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
+        installation = root / "first-visibility.json"
+        pair = (
+            fixture.origins["legion"]["embodiment_id"],
+            fixture.origins["daimonmatrix"]["embodiment_id"],
+        )
+        route = private_sibling_document(
+            root / "approved.sock", Ed25519PrivateKey.generate(), pair
+        )
+        wrong = {**route, "embodiments": sorted((pair[0], "embodiment:unknown"))}
+        with self.assertRaises((ValueError, operator.MessagingConfigError)):
+            operator.install_private_sibling_visibility(runtime, installation, wrong)
+        self.assertFalse(installation.exists())
+        proof = root / (installation.name + ".proof-key")
+        self.assertFalse(proof.exists())
+
+        result = operator.install_private_sibling_visibility(
+            runtime, installation, route
+        )
+        self.assertEqual(result["status"], "private-sibling-visibility-installed")
+        old_proof = proof.read_bytes()
+        old_installation = installation.read_bytes()
+        migration = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=runtime.service.clock,
+            egress_factory=_visibility_factory(
+                installation, clock=runtime.service.clock, catalog_mode="migrate"
+            ),
+        )
+        migration.egress.adopt_closed_visibility_catalogs(
+            version=VISIBILITY_SCHEMA_VERSION
+        )
+        service = load_runtime(
+            root,
+            "runtime.json",
+            lambda: bytearray(PASSWORD),
+            clock=runtime.service.clock,
+            egress_factory=_visibility_factory(
+                installation, clock=runtime.service.clock
+            ),
+        )
+        egress = service.egress
+        self.assertFalse(egress.release_enabled)
+        self.assertTrue(egress.selects_private_sibling("peer-converse-request", pair))
+        self.assertTrue(egress.selects_private_sibling("peer-converse-response", pair))
+        self.assertFalse(
+            egress.selects_private_sibling(
+                "peer-converse-request", tuple(wrong["embodiments"])
+            )
+        )
+        self.assertFalse(egress.selects_private_sibling("peer-scope-request", pair))
+        self.assertEqual(
+            operator.install_private_sibling_visibility(runtime, installation, route)[
+                "status"
+            ],
+            "unchanged",
+        )
+        changed = {
+            **route,
+            "publication_backend": {
+                **route["publication_backend"],
+                "socket_path": str(root / "unapproved.sock"),
+            },
+        }
+        with self.assertRaises(operator.MessagingConfigError):
+            operator.install_private_sibling_visibility(runtime, installation, changed)
+        self.assertEqual(proof.read_bytes(), old_proof)
+        self.assertEqual(installation.read_bytes(), old_installation)
+
     def test_install_private_sibling_from_signed_runtime_and_recover_selection(self):
         from daimon_matrix import operator_messaging as operator
         from daimon_matrix.daemon import acquire_lock

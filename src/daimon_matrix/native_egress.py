@@ -359,6 +359,8 @@ def load_owner_visibility(
         scope = _closed(disclosure["scope"], {"mode", "channels", "projected_content"})
         channels = scope["channels"]
         participants = disclosure["participants"]
+        pair_only = portable and scope["mode"] == PRIVATE_SIBLING_SCOPE
+        risks = PORTABLE_VISIBILITY_SCOPE_RISKS if portable else VISIBILITY_SCOPE_RISKS
         if (
             disclosure["schema"]
             != (
@@ -369,17 +371,14 @@ def load_owner_visibility(
             or type(disclosure["issued_at_ms"]) is not int
             or not 0 <= disclosure["issued_at_ms"] < 2**52
             or disclosure["scope_sha256"] != _digest(canonical_bytes(scope))
-            or scope["mode"] not in VISIBILITY_SCOPE_RISKS
+            or scope["mode"] not in risks
             or scope["projected_content"] != "complete-plaintext-content-and-metadata"
             or not isinstance(channels, list)
-            or not channels
+            or (bool(channels) == pair_only)
             or not isinstance(participants, list)
             or participants != sorted(set(participants))
             or owner_actor not in participants
-            or disclosure["risk"]
-            != (
-                PORTABLE_VISIBILITY_SCOPE_RISKS if portable else VISIBILITY_SCOPE_RISKS
-            ).get(scope["mode"])
+            or disclosure["risk"] != risks[scope["mode"]]
         ):
             raise ValueError
         disclosed_participants: set[str] = set()
@@ -432,7 +431,13 @@ def load_owner_visibility(
                 if not isinstance(channel[name], str) or not channel[name]:
                     raise ValueError
                 disclosed_participants.add(channel[name])
-        if disclosed_participants != set(participants):
+        if pair_only:
+            if (
+                participants != [owner_actor]
+                or "private_sibling_visibility" not in document
+            ):
+                raise ValueError
+        elif disclosed_participants != set(participants):
             raise ValueError
 
         acceptance_set = _closed(
@@ -485,7 +490,7 @@ def load_owner_visibility(
         ):
             raise ValueError
 
-        transport: EchoTransport
+        transport: EchoTransport | None
         if portable:
             if policy["schema"] != "daimon-visibility-policy/v3":
                 raise ValueError
@@ -505,7 +510,11 @@ def load_owner_visibility(
                 backend["socket_path"], str
             ):
                 raise ValueError
-            transport = ConversationJournalTransport(Path(backend["socket_path"]))
+            transport = (
+                None
+                if pair_only
+                else ConversationJournalTransport(Path(backend["socket_path"]))
+            )
         else:
             secrets = _closed(
                 document["secrets"],
@@ -569,13 +578,22 @@ def load_owner_visibility(
                     else None
                 ),
             )
-        mirror_siblings = scope["mode"] == "all-inter-daimon-and-sibling-conversations"
+        mirror_siblings = (
+            pair_only or scope["mode"] == "all-inter-daimon-and-sibling-conversations"
+        )
         private_sibling = None
         if "private_sibling_visibility" in document:
             if not mirror_siblings or participants != [owner_actor]:
                 raise ValueError
+            selection = document["private_sibling_visibility"]
+            if pair_only and (
+                selection.get("destination") != disclosure["destination"]
+                or selection.get("publication_backend")
+                != document["publication_backend"]
+            ):
+                raise ValueError
             private_sibling = _private_sibling_visibility(
-                document["private_sibling_visibility"],
+                selection,
                 owner_embodiment=envelope["binding"]["body"]["origin"]["embodiment_id"],
                 base_policy=policy,
             )
@@ -651,7 +669,12 @@ VISIBILITY_SCOPE_RISKS: Final[dict[str, str]] = {
         "as-plaintext-to-the-fixed-telegram-destination"
     ),
 }
+PRIVATE_SIBLING_SCOPE: Final[str] = "private-sibling-pair"
 PORTABLE_VISIBILITY_SCOPE_RISKS: Final[dict[str, str]] = {
+    PRIVATE_SIBLING_SCOPE: (
+        "only-the-selected-sibling-pair-will-be-published-as-plaintext-"
+        "to-the-fixed-conversation-audience"
+    ),
     "all-inter-daimon-communications": (
         "all-inter-daimon-communication-will-be-published-as-plaintext-"
         "to-the-fixed-conversation-audience"
@@ -995,7 +1018,10 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_installation_invalid")
         if type(mirror_sibling_conversations) is not bool or (
             mirror_sibling_conversations
-            and (transport is None or installation_digest is None)
+            and (
+                (transport is None and private_sibling_visibility is None)
+                or installation_digest is None
+            )
         ):
             raise NativeEgressError("egress_installation_invalid")
         if private_sibling_visibility is not None and not mirror_sibling_conversations:
@@ -1838,7 +1864,7 @@ class MandatoryEgressController:
             or self._installation_digest is None
             or self._owner_actor is None
             or self._verify_owner_binding is None
-            or self._transport is None
+            or (self._transport is None and self._private_sibling_visibility is None)
             or self._proof_key == b"\0" * 32
         ):
             raise NativeEgressError("egress_migration_not_authorized")
