@@ -3153,6 +3153,127 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.assertEqual((self.app / "publication.json").read_bytes(), publication)
         self.assertEqual(metadata.name, first["generation"])
 
+    def test_group_peer_retirement_preserves_membership_and_exact_retry(self):
+        from daimon_matrix.authority_epochs import create_embodiment_retirement
+        from daimon_matrix.identity import create_revocation, verify_successor
+        from daimon_matrix.messaging_config import MessagingConfigError
+        from daimon_matrix.native_egress import closed_visibility
+        from daimon_matrix.operator_messaging import public_authority_history, republish
+        from daimon_matrix.synthetic_relationships import _seed
+        from daimon_matrix.weave import BeingManifest
+        from tests.test_group_messaging_runtime import DirectLaneTests
+        from tests.test_messaging_runtime import public_document
+
+        incumbent, retiring = DirectLaneTests.enroll_second_member_body(self)
+        self.fixture.member = replace(self.fixture.member, authority=incumbent)
+        self._prepare_application()
+        earlier = self.fixture.journey.authorities[incumbent.manifest.being_ref]
+        earlier_document = self.candidate["authorities"][-1]
+        key = self.app.parent / "retiring-body.key"
+        key.write_bytes(b"r" * 32)
+        key.chmod(0o600)
+        self.sources[key.name] = key
+        retained_route = copy.deepcopy(self.candidate["roster"][-1])
+        self.candidate["roster"].append(
+            {
+                **retained_route,
+                "embodiment_id": retiring["embodiment_id"],
+                "body_ref": retiring["body_ref"],
+                "route": {
+                    **retained_route["route"],
+                    "provider_ref": "retiring-body",
+                    "route_ref": "retiring-body",
+                    "key_ref": "retiring-body",
+                    "endpoint": "http://127.0.0.1:48767/dm-messaging/v1/message",
+                    "secret_file": key.name,
+                    "secret_sha256": hashlib.sha256(key.read_bytes()).hexdigest(),
+                },
+            }
+        )
+        self.accept()
+        self.publish()
+        roots = tuple(_seed(f"member:root:{index}") for index in range(3))
+        control = create_revocation(
+            incumbent.state,
+            roots,
+            embodiment_id=retiring["embodiment_id"],
+            revocation_generation=1,
+            cutoff_incarnation_sequence=0,
+        )
+        state = verify_successor(control, incumbent.state)
+        manifest = copy.deepcopy(incumbent.manifest.value)
+        manifest.update(revision=manifest["revision"] + 1, control_head=state.head)
+        for row in manifest["embodiments"]:
+            if row["embodiment_id"] == retiring["embodiment_id"]:
+                row["status"] = "retired"
+        transition = create_embodiment_retirement(
+            incumbent.manifest,
+            BeingManifest.from_value(manifest),
+            revocations=[control],
+            root_seeds=roots,
+            issued_at_ms=self.fixture.now + 1,
+        )
+        public = {
+            **earlier_document,
+            "manifest": manifest,
+            "control_head": state.head,
+            "control_artifacts": [*earlier_document["control_artifacts"], control],
+        }
+        original = public_document(
+            replace(self.fixture.member, authority=earlier.historical[0]), "member"
+        )
+        history = [
+            {
+                **{k: v for k, v in original.items() if k != "schema"},
+                "successor": earlier.successors[0],
+            },
+            {
+                **{k: v for k, v in earlier_document.items() if k != "schema"},
+                "successor": transition,
+            },
+        ]
+        before = (self.app / "publication.json").read_bytes()
+        with self.assertRaises(MessagingConfigError):
+            republish(
+                self.runtime, self.app, group_peer_successor=(public, history[1:])
+            )
+        self.assertEqual((self.app / "publication.json").read_bytes(), before)
+        first = republish(
+            self.runtime, self.app, group_peer_successor=(public, history)
+        )
+        selected, metadata = read_publication(self.runtime, self.app)
+        self.assertEqual(first["status"], "republished")
+        self.assertEqual(selected["authorities"][-1], public)
+        self.assertEqual(selected["roster"], self.candidate["roster"][:-1])
+        for field in {"client", "intake", "stores", "relationship_events", "tribe"}:
+            self.assertEqual(selected[field], self.candidate[field])
+        self.assertEqual((self.app / key.name).read_bytes(), b"r" * 32)
+        self.assertEqual(
+            republish(self.runtime, self.app, group_peer_successor=(public, history))[
+                "generation"
+            ],
+            metadata.name,
+        )
+        self.fixture.journey.authorities[incumbent.manifest.being_ref] = (
+            public_authority_history(public, history)
+        )
+        restarted = replace(
+            self.runtime,
+            egress=closed_visibility(
+                clock=lambda: self.fixture.now, catalog_mode="migrate"
+            ),
+        )
+        loaded = load_application(restarted, self.app)
+        audience = loaded.service.messaging.channels["tribe"].receiving_roster()
+        self.assertIn(
+            retained_route["embodiment_id"],
+            {row["embodiment_id"] for row in audience["audience"]},
+        )
+        self.assertNotIn(
+            retiring["embodiment_id"],
+            {row["embodiment_id"] for row in audience["audience"]},
+        )
+
     def test_admission_preserves_an_existing_members_unrouted_signed_body(self):
         from tests.test_group_messaging_runtime import DirectLaneTests
         from tests.test_messaging_runtime import load_runtime

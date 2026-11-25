@@ -41,6 +41,16 @@ and receiving observers must agree before a rollout is complete.
    marking the cohort current. Neither publication, preflight nor authoring
    proves delivery. Explicit offline exclusions remain pending, never healthy.
 
+For a peer trusted only through an existing group, use the selected group's
+verified authority history as the anchor. The owner-level `republish` operation
+accepts the exact public successor and its history through `group_peer_successor`.
+It verifies the existing application and the loaded group history before
+publishing. The new group roster drops routes to bodies the successor retired.
+It preserves membership, surviving routes, intake, client, stores and historical
+files. The owning group selector must then retain the updated public history and
+pin the newly published application before startup. Resume that selection
+forward if an interruption leaves the application published first.
+
 ## Restart and failure
 
 Stages are prepared, accepted-awaiting-republication, and current. An interrupted
