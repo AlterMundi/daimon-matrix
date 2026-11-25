@@ -27,6 +27,7 @@ from daimon_matrix.native_egress import (
     NativeEgressError,
     OperationBinding,
     _owner_file,
+    _PrivateSiblingVisibility,
     load_owner_visibility_file,
 )
 
@@ -250,7 +251,7 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
         document["policy"]["acceptance_digest"] = self._digest(acceptance)
         return document
 
-    def _portable_document(self) -> dict[str, Any]:
+    def _portable_document(self, *, mirror_siblings: bool = False) -> dict[str, Any]:
         document = copy.deepcopy(self.document)
         document["schema"] = "dm.messaging.visibility-installation/v2"
         publication = {
@@ -265,9 +266,14 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
             "publication": publication,
             "representation": "plain-json/v2",
         }
-        disclosure["risk"] = (
-            "all-inter-daimon-communication-will-be-published-as-plaintext-to-the-fixed-conversation-audience"
-        )
+        from daimon_matrix.native_egress import PORTABLE_VISIBILITY_SCOPE_RISKS
+
+        if mirror_siblings:
+            disclosure["scope"]["mode"] = "all-inter-daimon-and-sibling-conversations"
+            disclosure["scope_sha256"] = self._digest(disclosure["scope"])
+        disclosure["risk"] = PORTABLE_VISIBILITY_SCOPE_RISKS[
+            disclosure["scope"]["mode"]
+        ]
         acceptance = document["acceptance_set"]
         acceptance["disclosure_sha256"] = self._digest(disclosure)
         acceptance["bindings"] = [
@@ -297,6 +303,12 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
             controller = self._load(self._portable_document())
         self.assertIsInstance(controller._transport, ConversationJournalTransport)
         self.assertFalse(controller.mirror_sibling_conversations)
+
+    def test_portable_sibling_scope_loads_with_native_visibility_enabled(self) -> None:
+        (self.root / "telegram.token").unlink()
+        controller = self._load(self._portable_document(mirror_siblings=True))
+        self.assertIsInstance(controller._transport, ConversationJournalTransport)
+        self.assertTrue(controller.mirror_sibling_conversations)
 
     def test_portable_installation_refuses_changed_scope_secret_or_backend(
         self,
@@ -339,6 +351,72 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
                 )
             with self.subTest(change=change), self.assertRaises(NativeEgressError):
                 self._load(document)
+
+    def test_private_sibling_requires_exact_owner_signed_pair_and_base_scope(
+        self,
+    ) -> None:
+        from tests.visibility_fixtures import private_sibling_document
+
+        owner = "dm:being:owner"
+        own_body = "embodiment:owner-fixture"
+        pair = ("embodiment:claude-fixture", own_body)
+        self.identities[owner]["origin"] = {
+            "body_ref": "body",
+            "embodiment_id": own_body,
+            "incarnation_id": "incarnation",
+            "principal_id": "principal",
+        }
+        document = self._sibling_document()
+        disclosure = document["disclosure"]
+        disclosure["scope"]["channels"][0]["peer_being_ref"] = owner
+        disclosure["scope_sha256"] = self._digest(disclosure["scope"])
+        disclosure["participants"] = [owner]
+        acceptance = document["acceptance_set"]
+        acceptance["disclosure_sha256"] = self._digest(disclosure)
+        acceptance["bindings"] = [self._binding(owner, disclosure)]
+        document["policy"]["acceptance_digest"] = self._digest(acceptance)
+        route = private_sibling_document(
+            self.root / "private.sqlite", self.owner_key, pair
+        )
+        document["private_sibling_visibility"] = route
+        controller = self._load(document)
+        self.assertTrue(
+            controller.selects_private_sibling("peer-converse-request", pair)
+        )
+        self.assertTrue(
+            controller.selects_private_sibling("peer-converse-response", pair[::-1])
+        )
+        self.assertFalse(controller.selects_private_sibling("peer-scope-request", pair))
+        self.assertFalse(
+            controller.selects_private_sibling(
+                "peer-converse-request", (own_body, "embodiment:other-fixture")
+            )
+        )
+
+        foreign = copy.deepcopy(document)
+        foreign["private_sibling_visibility"]["embodiments"] = [
+            "embodiment:alternate",
+            "embodiment:claude-fixture",
+        ]
+        with self.assertRaises(NativeEgressError):
+            self._load(foreign)
+        wrong_scope = {**self.document, "private_sibling_visibility": route}
+        with self.assertRaises(NativeEgressError):
+            self._load(wrong_scope)
+
+        signed = self._write_envelope(document)
+        envelope = json.loads(signed.read_bytes())
+        envelope["document"]["private_sibling_visibility"]["destination"][
+            "publication"
+        ]["audience"] = ["human:other"]
+        signed.write_bytes(canonical_bytes(envelope))
+        with self.assertRaises(NativeEgressError):
+            load_owner_visibility_file(
+                signed,
+                expected_application_sha256=self.application_sha256,
+                verify_owner_binding=self._verify_owner,
+                verify_participant_binding=self._verify_participant,
+            )
 
     def test_owner_signed_installation_loads_offline_and_binds_all_inputs(self) -> None:
         controller = self._load(self.document)
@@ -503,7 +581,9 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         )
         self.controller.register_path("peer-scope-request", "integration-native")
 
-    def _enable_sibling_mirror(self) -> None:
+    def _enable_sibling_mirror(
+        self, *, private_sibling_visibility: _PrivateSiblingVisibility | None = None
+    ) -> None:
         self.controller = MandatoryEgressController(
             policy=POLICY,
             proof_key=b"k" * 32,
@@ -514,6 +594,7 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
             owner_actor="dm:being:owner",
             verify_owner_binding=self._verify_owner,
             mirror_sibling_conversations=True,
+            private_sibling_visibility=private_sibling_visibility,
         )
         self.controller.register_catalog(
             catalog_id="integration-native",
@@ -565,6 +646,154 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         with self.assertRaises(NativeEgressError):
             self.controller.release(binding, b"native-request", native_calls.append)
         self.assertEqual(native_calls, [])
+
+    def test_private_sibling_and_legacy_visibility_share_the_existing_catalog(
+        self,
+    ) -> None:
+        from tests.visibility_fixtures import private_sibling_fixture
+
+        local = "embodiment:local"
+        pair = (local, "embodiment:claude")
+        ordinary = (local, "embodiment:ordinary")
+        self._enable_sibling_mirror()
+        old = self._admit("old", path_id="peer-converse-request")
+        with patch.object(self.transport, "send", side_effect=TimeoutError()):
+            self.assertEqual(self.controller.advance_one(old)["state"], "ambiguous")
+        old_state = self.controller.inspect_retained(old)
+
+        private, publisher = private_sibling_fixture(
+            self.path.with_name("private.sqlite"), POLICY, pair
+        )
+        self._enable_sibling_mirror(private_sibling_visibility=private)
+        regular = self._admit(
+            "ordinary", path_id="peer-converse-request", sibling_embodiments=ordinary
+        )
+        private_message = control_projection("private")
+        private_message.update(kind="message", content={"text": "fixture private text"})
+        selected = self._admit(
+            "private",
+            path_id="peer-converse-request",
+            sibling_embodiments=pair,
+            projection=private_message,
+        )
+        self.assertEqual(self.controller.advance_one(regular)["state"], "confirmed")
+        publisher.lose_ack = True
+        self.assertEqual(self.controller.advance_one(selected)["state"], "ambiguous")
+        self.assertEqual(len(self.transport.calls), 1)
+        self.assertEqual(publisher.calls, 1)
+        self.assertEqual(self.controller.inspect_retained(old), old_state)
+
+        # Startup and reconciliation use each exact retained obligation. The
+        # private ambiguous send never falls back to the functioning Telegram route.
+        self._enable_sibling_mirror(private_sibling_visibility=private)
+        self.assertEqual(self.controller.advance_one(selected)["state"], "ambiguous")
+        retry = self._signed_retry(selected)
+        with self.assertRaisesRegex(NativeEgressError, "egress_retry_unauthorized"):
+            self.controller.retry_ambiguous(selected, retry)
+        self.assertEqual(self.controller.inspect_retained(old), old_state)
+        self.assertEqual(publisher.calls, 1)
+        self.assertEqual(len(self.transport.calls), 1)
+
+    def test_portable_sibling_transport_holds_older_telegram_obligations(self) -> None:
+        from tests.visibility_fixtures import JournalPublisher
+
+        self._enable_sibling_mirror()
+        old_pending = self._admit("telegram-pending", path_id="peer-converse-request")
+        old_ambiguous = self._admit(
+            "telegram-ambiguous", path_id="peer-converse-response"
+        )
+        with patch.object(
+            self.transport, "send", side_effect=TimeoutError("Fixture lost ACK")
+        ):
+            self.assertEqual(
+                self.controller.advance_one(old_ambiguous)["state"], "ambiguous"
+            )
+        original_pending = self.controller.inspect_retained(old_pending)
+        original_ambiguous = self.controller.inspect_retained(old_ambiguous)
+        legacy_controller = self.controller
+
+        key = Ed25519PrivateKey.generate()
+        publisher = JournalPublisher(
+            self.path.with_name("portable-fixture.sqlite"), key
+        )
+        policy = {
+            name: value
+            for name, value in POLICY.items()
+            if name not in {"bot_id", "chat_id", "topic_id"}
+        }
+        policy.update(
+            schema="daimon-visibility-policy/v3",
+            generation=2,
+            publication={
+                "kind": "conversation-journal/v1",
+                "surface_ref": "fixture:private-conversation",
+                "audience": ["human:fixture"],
+                "receipt_key": b64url(key.public_key().public_bytes_raw()),
+            },
+        )
+        self.controller = MandatoryEgressController(
+            policy=policy,
+            proof_key=b"k" * 32,
+            transport=publisher,
+            clock=lambda: self.now,
+            catalog_mode="synthetic",
+            installation_digest="2" * 64,
+            owner_actor="dm:being:owner",
+            verify_owner_binding=self._verify_owner,
+            mirror_sibling_conversations=True,
+        )
+        self.controller.register_catalog(
+            catalog_id="integration-native",
+            path=self.path,
+            resolve=self._resolve,
+            authorize=lambda _binding: self.current,
+        )
+        for path in ("peer-converse-request", "peer-converse-response"):
+            self.controller.register_path(path, "integration-native")
+
+        for retained in (old_pending, old_ambiguous):
+            with self.assertRaisesRegex(NativeEgressError, "egress_echo_not_confirmed"):
+                self.controller.release(
+                    retained, b"native-request", lambda _: self.fail("native effect")
+                )
+        self.assertEqual(publisher.calls, 0)
+        with (
+            patch.object(
+                publisher, "prepare_publication_completion", create=True
+            ) as prepare,
+            self.assertRaisesRegex(
+                NativeEgressError, "echo_publication_completion_unavailable"
+            ),
+        ):
+            self.controller.prepare_publication_completion(old_pending)
+        prepare.assert_not_called()
+        self.assertEqual(
+            self.controller.inspect_retained(old_pending), original_pending
+        )
+        self.assertEqual(
+            self.controller.inspect_retained(old_ambiguous), original_ambiguous
+        )
+
+        for index, path in enumerate(
+            ("peer-converse-request", "peer-converse-response"), start=1
+        ):
+            current = self._admit(f"portable-{path}", path_id=path)
+            self.controller.release(current, b"native-request", lambda _: None)
+            self.assertEqual(publisher.calls, index)
+            self.assertEqual(
+                self.controller.inspect_retained(current)["echo_state"], "confirmed"
+            )
+
+        # Explicitly restoring the selected predecessor can finish only the
+        # original it still owns. The earlier ambiguous send remains ambiguous.
+        self.assertEqual(
+            legacy_controller.advance_one(old_pending)["state"], "confirmed"
+        )
+        self.assertEqual(len(self.transport.calls), 1)
+        self.assertEqual(
+            legacy_controller.advance_one(old_ambiguous)["state"], "ambiguous"
+        )
+        self.assertEqual(len(self.transport.calls), 1)
 
     def _resolve(self, locator: str) -> bytes:
         with closing(sqlite3.connect(self.path)) as database:
@@ -636,6 +865,9 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         operation_id: str,
         payload: bytes = b"native-request",
         path_id: str = "peer-scope-request",
+        *,
+        sibling_embodiments: tuple[str, str] | None = None,
+        projection: dict[str, object] | None = None,
     ) -> OperationBinding:
         with closing(sqlite3.connect(self.path)) as database:
             database.execute("PRAGMA journal_mode=DELETE")
@@ -651,7 +883,12 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
                 operation_id=operation_id,
                 locator=operation_id,
                 native_bytes=payload,
-                projection=control_projection(operation_id),
+                projection=(
+                    control_projection(operation_id)
+                    if projection is None
+                    else projection
+                ),
+                sibling_embodiments=sibling_embodiments,
                 deadline_ms=self.now + 600_000,
                 authority_head="authority-head-1",
             )

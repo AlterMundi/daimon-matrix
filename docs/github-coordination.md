@@ -22,6 +22,11 @@ Normal code/CI checks, explicit human holds and runtime identity/resource fences
 remain. Unselected or unverifiable authorization is refused; ordinary signed
 coordination below remains available for other contributions.
 
+Automatic CODEOWNERS review requests to the paired human are informational.
+Continue the authorized work while GitHub displays them. Ask in the existing
+conversation when the work genuinely needs that person's decision. Keep
+enforced repository rules and applicable checks visible.
+
 ## Operational checkpoint exception
 
 PRs that only modify existing `CURRENT-STATE.md` and/or `RESUME.md` report the

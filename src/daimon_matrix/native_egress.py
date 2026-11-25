@@ -305,7 +305,13 @@ def load_owner_visibility(
                 "policy",
                 "secrets",
                 "publication_backend" if portable else "telegram_qualification",
-            },
+            }
+            | (
+                {"private_sibling_visibility"}
+                if isinstance(envelope["document"], dict)
+                and "private_sibling_visibility" in envelope["document"]
+                else set()
+            ),
         )
         if (
             document["schema"]
@@ -563,6 +569,16 @@ def load_owner_visibility(
                     else None
                 ),
             )
+        mirror_siblings = scope["mode"] == "all-inter-daimon-and-sibling-conversations"
+        private_sibling = None
+        if "private_sibling_visibility" in document:
+            if not mirror_siblings or participants != [owner_actor]:
+                raise ValueError
+            private_sibling = _private_sibling_visibility(
+                document["private_sibling_visibility"],
+                owner_embodiment=envelope["binding"]["body"]["origin"]["embodiment_id"],
+                base_policy=policy,
+            )
         return MandatoryEgressController(
             policy=policy,
             proof_key=proof_key,
@@ -573,9 +589,8 @@ def load_owner_visibility(
             owner_actor=owner_actor,
             verify_owner_binding=verify_owner_binding,
             presentation_resolver=presentation_resolver,
-            mirror_sibling_conversations=(
-                scope["mode"] == "all-inter-daimon-and-sibling-conversations"
-            ),
+            mirror_sibling_conversations=mirror_siblings,
+            private_sibling_visibility=private_sibling,
         )
     except NativeEgressError:
         raise
@@ -869,6 +884,61 @@ def _valid_text(value: str, *, maximum: int = 256) -> bool:
 
 
 @dataclass(frozen=True)
+class _PrivateSiblingVisibility:
+    embodiments: frozenset[str]
+    policy: dict[str, Any]
+    transport: EchoTransport
+
+
+PRIVATE_SIBLING_POLICY_ORIGIN: Final = "owner-signed-private-sibling"
+
+
+def _private_sibling_visibility(
+    value: object, *, owner_embodiment: str, base_policy: Mapping[str, Any]
+) -> _PrivateSiblingVisibility:
+    """Accept the single pair and destination covered by the installation signature."""
+    row = _closed(
+        value,
+        {"schema", "embodiments", "destination", "publication_backend"},
+    )
+    pair = row["embodiments"]
+    if (
+        row["schema"] != "dm.messaging.private-sibling-visibility/v1"
+        or not isinstance(pair, list)
+        or len(pair) != 2
+        or any(
+            not _valid_text(body, maximum=240) or not body.startswith("embodiment:")
+            for body in pair
+        )
+        or sorted(set(pair)) != pair
+        or owner_embodiment not in pair
+    ):
+        raise ValueError
+    destination = _closed(row["destination"], {"publication", "representation"})
+    if destination["representation"] != "compact-text/v1":
+        raise ValueError
+    policy = {
+        **destination,
+        "schema": "daimon-visibility-policy/v3",
+        "generation": 1,
+        "origin": PRIVATE_SIBLING_POLICY_ORIGIN,
+        "proof_key_id": base_policy["proof_key_id"],
+        "acceptance_digest": _digest(canonical_bytes(row)),
+    }
+    validate_policy(policy)
+    backend = _closed(row["publication_backend"], {"kind", "socket_path"})
+    if backend["kind"] != "owner-unix/v1" or not isinstance(
+        backend["socket_path"], str
+    ):
+        raise ValueError
+    return _PrivateSiblingVisibility(
+        frozenset(pair),
+        policy,
+        ConversationJournalTransport(Path(backend["socket_path"])),
+    )
+
+
+@dataclass(frozen=True)
 class _ReaderSelection:
     context_sha256: str
     head: str
@@ -903,6 +973,7 @@ class MandatoryEgressController:
         verify_owner_binding: OwnerBindingVerifier | None = None,
         mirror_sibling_conversations: bool = False,
         presentation_resolver: Callable[[str], str] | None = None,
+        private_sibling_visibility: _PrivateSiblingVisibility | None = None,
     ) -> None:
         if not isinstance(proof_key, bytes) or len(proof_key) != 32:
             raise NativeEgressError("egress_proof_key_invalid")
@@ -927,6 +998,9 @@ class MandatoryEgressController:
             and (transport is None or installation_digest is None)
         ):
             raise NativeEgressError("egress_installation_invalid")
+        if private_sibling_visibility is not None and not mirror_sibling_conversations:
+            raise NativeEgressError("egress_installation_invalid")
+        self._private_sibling_visibility = private_sibling_visibility
         self._mirror_sibling_conversations = mirror_sibling_conversations
         self._installation_digest = installation_digest
         self._owner_actor = owner_actor
@@ -1602,6 +1676,27 @@ class MandatoryEgressController:
     def mirror_sibling_conversations(self) -> bool:
         """Derived from the verified owner disclosure, never from an RPC flag."""
         return self._mirror_sibling_conversations
+
+    def selects_private_sibling(
+        self, path_id: str, embodiments: tuple[str, str]
+    ) -> bool:
+        private = self._private_sibling_visibility
+        return (
+            private is not None
+            and path_id in SIBLING_CONVERSATION_PATHS
+            and frozenset(embodiments) == private.embodiments
+        )
+
+    def mixed_private_sibling_audience(
+        self, sender: str, addressees: list[str]
+    ) -> bool:
+        private = self._private_sibling_visibility
+        return (
+            private is not None
+            and len(addressees) > 1
+            and sender in private.embodiments
+            and bool((private.embodiments - {sender}).intersection(addressees))
+        )
 
     @property
     def release_enabled(self) -> bool:
@@ -2483,6 +2578,7 @@ class MandatoryEgressController:
         projection: Mapping[str, Any],
         deadline_ms: int,
         authority_head: str,
+        sibling_embodiments: tuple[str, str] | None = None,
     ) -> OperationBinding:
         """Atomically join one obligation to caller-owned authoritative state."""
 
@@ -2534,17 +2630,24 @@ class MandatoryEgressController:
             catalog_id=catalog_id,
             authentication_key=self._proof_key,
         )
+        policy, transport = self._policy, self._transport
+        private = self._private_sibling_visibility
+        if private is not None and path_id in SIBLING_CONVERSATION_PATHS:
+            if sibling_embodiments is None:
+                raise NativeEgressError("egress_operation_invalid")
+            if self.selects_private_sibling(path_id, sibling_embodiments):
+                policy, transport = private.policy, private.transport
         try:
             reference = None
-            lookup = getattr(self._transport, "lookup_reference", None)
+            lookup = getattr(transport, "lookup_reference", None)
             if (
-                self._policy["representation"] == "compact-text/v1"
+                policy["representation"] == "compact-text/v1"
                 and projection["reply_to"] is not None
                 and lookup is not None
             ):
                 reference = lookup(projection["reply_to"])
             presentation = None
-            if self._policy["representation"] == "compact-text/v1":
+            if policy["representation"] == "compact-text/v1":
                 resolve = self._presentation_resolver or (lambda value: value)
                 presentation = {
                     "sender": resolve(projection["sender"]),
@@ -2560,12 +2663,12 @@ class MandatoryEgressController:
                 return journal.admit(
                     echo_operation_id,
                     dict(projection),
-                    self._policy,
+                    policy,
                     telegram_reference=reference,
                     presentation=presentation,
                     publication_not_after_ms=(
                         deadline_ms
-                        if self._policy["schema"] == "daimon-visibility-policy/v3"
+                        if policy["schema"] == "daimon-visibility-policy/v3"
                         else None
                     ),
                 )
@@ -2711,6 +2814,40 @@ class MandatoryEgressController:
             raise NativeEgressError("egress_operation_invalid")
         return value
 
+    def _publication_transport_matches(self, retained: Mapping[str, Any]) -> bool:
+        return self._publication_transport(retained) is not None
+
+    def _publication_transport(
+        self, retained: Mapping[str, Any]
+    ) -> EchoTransport | None:
+        private = self._private_sibling_visibility
+        if retained["origin"] == PRIVATE_SIBLING_POLICY_ORIGIN:
+            return (
+                private.transport
+                if private is not None and retained == private.policy
+                else None
+            )
+        # Use an adapter only for the original authenticated destination.
+        if retained["schema"] != self._policy["schema"]:
+            return None
+        if retained["schema"] == "daimon-visibility-policy/v3":
+            matches = retained["publication"] == self._policy["publication"]
+        else:
+            matches = all(
+                retained.get(field) == self._policy.get(field)
+                for field in ("bot_id", "chat_id", "topic_id")
+            )
+        return self._transport if matches else None
+
+    def _retained_publication_transport(
+        self, journal: EchoJournal, binding: OperationBinding
+    ) -> EchoTransport | None:
+        return self._publication_transport(
+            journal.retained_policy(
+                binding.echo_operation_id, binding.echo_binding_digest
+            )
+        )
+
     def _mandatory(
         self,
         binding: OperationBinding,
@@ -2726,7 +2863,12 @@ class MandatoryEgressController:
         )
         return MandatoryEcho(
             journal,
-            transport=self._transport,
+            transport=(
+                self._transport
+                if self._private_sibling_visibility is None
+                else self._retained_publication_transport(journal, binding)
+            ),
+            transport_matches=self._publication_transport_matches,
             resolve=lambda _operation: self._load_projection(binding),
             authorize=lambda _record: (
                 self._authorize_retained(binding, catalog)
@@ -2774,7 +2916,10 @@ class MandatoryEgressController:
         def verify_retry(
             raw: bytes, echo_binding: dict[str, Any], latest_attempt_id: str
         ) -> RetryDecision:
-            if _digest(canonical_bytes(echo_binding)) != binding.echo_binding_digest:
+            if (
+                _digest(canonical_bytes(echo_binding)) != binding.echo_binding_digest
+                or echo_binding["policy"]["origin"] == PRIVATE_SIBLING_POLICY_ORIGIN
+            ):
                 raise NativeEgressError("egress_retry_unauthorized")
             return verify_echo_retry_command(
                 raw,
@@ -2789,7 +2934,12 @@ class MandatoryEgressController:
 
         return MandatoryEcho(
             journal,
-            transport=self._transport,
+            transport=(
+                self._transport
+                if self._private_sibling_visibility is None
+                else self._retained_publication_transport(journal, binding)
+            ),
+            transport_matches=self._publication_transport_matches,
             resolve=lambda _operation: self._load_projection(binding),
             # Only the separately authenticated owner retry may finish an
             # old human-publication obligation. It never issues a native permit.
@@ -3087,10 +3237,17 @@ class MandatoryEgressController:
         catalog = self._catalogs.get(binding.catalog_id)
         if catalog is None or not self._authorize_retained(binding, catalog):
             raise NativeEgressError("egress_authority_blocked")
-        prepare = getattr(self._transport, "prepare_publication_completion", None)
-        if prepare is None:
-            raise NativeEgressError("echo_publication_completion_unavailable")
         try:
+            with self._database(catalog) as database:
+                journal = EchoJournal(
+                    database,
+                    catalog_id=binding.catalog_id,
+                    authentication_key=self._proof_key,
+                )
+                transport = self._retained_publication_transport(journal, binding)
+            prepare = getattr(transport, "prepare_publication_completion", None)
+            if prepare is None:
+                raise NativeEgressError("echo_publication_completion_unavailable")
             prepare()
         except EchoError as exception:
             raise NativeEgressError(str(exception)) from None

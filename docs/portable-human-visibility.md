@@ -161,6 +161,74 @@ another reasoning session. Keep the signing key in the backend's existing
 custody, separate from the Matrix caller. A generic model-callable publication
 signer is not the receiving adapter.
 
+## Base native sibling destination
+
+For a base native runtime already using the owner-signed Telegram policy with
+`all-inter-daimon-and-sibling-conversations`, use
+`python -m daimon_matrix.operator_messaging replace-native-visibility`. Use
+the native runtime's usual `--state-root`, `--bundle`, `--password-fd`, and
+`--visibility-installation` with its writer lock available. Supply the exact
+current installation document digest as `--expected-installation-sha256`. Pass
+`--native-visibility-configuration` as an owner-protected canonical JSON file
+with `destination` (the approved `publication` and `representation`) and
+`publication_backend` (the existing `owner-unix/v1` writer). Use the App's
+approved resource and audience for the full retained scope, including existing
+inter-daimon communication. A publisher grant for a different resource or a
+group reader checkpoint does not establish private receiving access.
+
+The operator authenticates the existing bundle and sole participating being,
+signs acceptance of the exact portable disclosure, and preserves all existing
+channels, scope and the original journal proof key. The same native production
+loader verifies the complete successor before atomic selection. After an uncertain
+operator response, repeat the same installation digest and configuration to
+read back the exact selected successor. The original authenticated installation
+is retained. Selecting portable publication does not attempt or settle existing
+Telegram obligations.
+
+The command is offline. After scoped activation, verify the selected receiver
+and an actual signed Conversation receipt and authorized human readback. Keep
+the existing Telegram installation/material available for its obligations until
+they can be settled through their original route.
+
+## Selected private sibling pair
+
+An owner-signed native installation can carry one `private_sibling_visibility`
+descriptor when the current scope includes sibling conversations and the
+installing being is its sole participating being. The descriptor pins the two
+embodiment IDs, a `compact-text/v1` Conversation destination and the existing
+owner socket. The native sender and receiver identify the pair from verified
+sealed endpoints. Other sibling pairs and other native paths use the base
+destination.
+
+Select the pair with `python -m daimon_matrix.operator_messaging
+select-private-sibling-visibility`, using the same native owner flags and exact
+`--expected-installation-sha256` as above. The protected
+`--native-visibility-configuration` contains
+`schema: dm.messaging.private-sibling-visibility/v1`, two sorted
+`embodiments`, `destination` and `publication_backend`. Use the paired-human
+App's selected publication descriptor and existing owner socket. Both bodies
+must be active in the signed manifest, with valid credentials and current
+incarnations permitting `dm.we` and `messages`. The writer validates the
+candidate before selection, preserves the base document and saves its exact
+authenticated predecessor. Repeat the original digest and identical
+configuration to read back a selection after lost confirmation.
+
+For this pair the existing catalog retains the private policy and proof with
+each obligation. The technical carrier receipt stays in the signed native
+exchange without adding a second human publication of the original text. The
+actual reply is a separate signed message that uses the same private policy and
+can use the same thread. A known or ambiguous old Telegram obligation continues
+to use its original policy. An unavailable private publisher does not select
+Telegram. A private send can reuse its retained carrier within its lifetime.
+After expiry, it cannot generate a fresh carrier and a second publication of
+the same signed speech. An original addressed to the selected partner and
+another body is rejected before carrier publication. This keeps the same
+signed text from entering both the private and base publication audiences.
+
+The full-policy replacement documented above is for changes approved for the
+whole base audience. Use the selected-pair mechanism for the private Claude
+demo while the base policy remains bound to a Telegram group.
+
 ## Prepared native installation and App connection
 
 The existing `group_visibility_disclosure`, `accept_group_visibility` and

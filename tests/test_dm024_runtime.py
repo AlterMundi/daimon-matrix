@@ -77,7 +77,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def signed_runtime_visibility_installation(
-    fixture: Any, root: Path, bundle: Mapping[str, Any], now_ms: int
+    fixture: Any,
+    root: Path,
+    bundle: Mapping[str, Any],
+    now_ms: int,
+    *,
+    mirror_siblings: bool = False,
 ) -> Path:
     authority = RootAuthority(
         fixture.manifest,
@@ -104,9 +109,16 @@ def signed_runtime_visibility_installation(
             "signature": b64url(signature),
         }
 
+    from daimon_matrix.native_egress import VISIBILITY_SCOPE_RISKS
+
     being_ref = authority.manifest.being_ref
+    scope_mode = (
+        "all-inter-daimon-and-sibling-conversations"
+        if mirror_siblings
+        else "all-inter-daimon-communications"
+    )
     scope = {
-        "mode": "all-inter-daimon-communications",
+        "mode": scope_mode,
         "channels": [
             {
                 "channel_id": "runtime-control-only",
@@ -131,10 +143,7 @@ def signed_runtime_visibility_installation(
         "scope": scope,
         "scope_sha256": config_digest(scope),
         "participants": [being_ref],
-        "risk": (
-            "all-inter-daimon-communication-will-be-posted-as-plaintext-"
-            "to-the-fixed-telegram-destination"
-        ),
+        "risk": VISIBILITY_SCOPE_RISKS[scope_mode],
     }
     acceptance_set = {
         "schema": "dm.messaging.visibility-acceptance-set/v1",

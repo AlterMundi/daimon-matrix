@@ -119,6 +119,8 @@ def _conversation_projection(
     thread_id: str,
     stage: str,
     mirror_recipient: str | None = None,
+    private_receipt: bool = False,
+    outgoing_request: bool = False,
 ) -> Mapping[str, Any]:
     projection = native_projection(
         operation_id=operation_id,
@@ -129,7 +131,11 @@ def _conversation_projection(
         kind="authorization-control",
         stage=stage,
     )
-    if stage != "converse" or not controller.mirror_sibling_conversations:
+    if (
+        stage != "converse"
+        or not controller.mirror_sibling_conversations
+        or private_receipt
+    ):
         return projection
     # Reuse the sealed lane's complete authority/evidence/carrier checks. The
     # private unwrap operation is shared; no signing operation is used here.
@@ -141,13 +147,20 @@ def _conversation_projection(
         at_ms=at_ms,
     )
     message = opened["message"]
+    body = message["payload"]["body"]
+    if outgoing_request and controller.mixed_private_sibling_audience(
+        message["origin"]["embodiment_id"], body["addressee"]
+    ):
+        # Every carrier verifies the same signed addressee set before it can
+        # publish. A mixed send would expose the private text on the base lane.
+        raise PeerTransportError()
     projection.update(
         event_id=message["event_id"],
         sender=message["being_ref"] + "/" + message["origin"]["embodiment_id"],
         recipients=[mirror_recipient or recipient],
         thread_id=message["payload"]["intent"]["thread_id"],
         kind="message",
-        content={"text": message["payload"]["body"]["text"]},
+        content={"text": body["text"]},
     )
     return projection
 
@@ -209,6 +222,7 @@ class PeerEgressSpec:
     target_credential_id: str = ""
     target_embodiment_id: str = ""
     endpoint_identity: str = ""
+    sibling_embodiments: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -507,6 +521,7 @@ class PeerExchangeStore:
                     projection=egress.projection(response),
                     deadline_ms=egress.deadline_ms,
                     authority_head=egress.authority_head,
+                    sibling_embodiments=egress.sibling_embodiments,
                 )
             if logical_request is not None:
                 (
@@ -827,6 +842,16 @@ class PeerOutbox:
                     raise PeerTransportConflict()
                 database.commit()
                 return self._carrier_from_row(latest)
+            if (
+                latest is not None
+                and egress.sibling_embodiments is not None
+                and egress.controller.selects_private_sibling(
+                    egress.path_id, egress.sibling_embodiments
+                )
+            ):
+                # The private lane retains its single admitted carrier. A new
+                # carrier would give the same signed speech a new human publication.
+                raise PeerTransportConflict()
             generation = 1 if latest is None else int(latest["generation"]) + 1
             envelope_id = (
                 request_id
@@ -908,6 +933,7 @@ class PeerOutbox:
             projection=spec.projection(request),
             deadline_ms=spec.deadline_ms,
             authority_head=spec.authority_head,
+            sibling_embodiments=spec.sibling_embodiments,
         )
 
 
@@ -1388,15 +1414,21 @@ class PeerDispatcher:
                 correlation_id=opened.correlation_id,
                 reply_to=opened.envelope_id,
             )
+            response_path, response_stage = RESPONSE_EGRESS[response_type]
+            sibling_embodiments = (
+                opened.sender["embodiment_id"],
+                opened.recipient["embodiment_id"],
+            )
             persisted = self.store.finish(
                 claim,
                 response,
                 egress=PeerEgressSpec(
                     controller=self.egress,
                     catalog_id=self.egress_catalog_id,
-                    path_id=RESPONSE_EGRESS[response_type][0],
+                    path_id=response_path,
                     deadline_ms=opened.expires_at_ms,
                     authority_head=self.authority.state.head,
+                    sibling_embodiments=sibling_embodiments,
                     projection=lambda native: _conversation_projection(
                         controller=self.egress,
                         payload=opened.payload,
@@ -1410,7 +1442,10 @@ class PeerDispatcher:
                         recipient=opened.sender["credential_id"],
                         mirror_recipient=self.local_target.credential_id,
                         thread_id=opened.correlation_id,
-                        stage=RESPONSE_EGRESS[response_type][1],
+                        stage=response_stage,
+                        private_receipt=self.egress.selects_private_sibling(
+                            response_path, sibling_embodiments
+                        ),
                     ),
                 ),
                 logical_request=(
@@ -1597,10 +1632,15 @@ class PeerClient:
                 mirror_recipient=current_recipient["credential_id"],
                 thread_id=correlation_id,
                 stage=REQUEST_EGRESS[request_content_type][1],
+                outgoing_request=True,
             ),
             target_credential_id=current_recipient["credential_id"],
             target_embodiment_id=current_recipient["embodiment_id"],
             endpoint_identity=self.endpoint_identity,
+            sibling_embodiments=(
+                self.local_origin["embodiment_id"],
+                current_recipient["embodiment_id"],
+            ),
         )
         carrier = self.outbox.get_or_create_carrier(
             logical_request_id,
