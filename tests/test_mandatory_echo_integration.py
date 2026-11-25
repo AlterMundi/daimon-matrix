@@ -578,7 +578,7 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         self.assertEqual(native_calls, [])
 
     def test_portable_sibling_transport_holds_older_telegram_obligations(self) -> None:
-        from tests.test_portable_visibility import JournalPublisher
+        from tests.visibility_fixtures import JournalPublisher
 
         self._enable_sibling_mirror()
         old_pending = self._admit("telegram-pending", path_id="peer-converse-request")
