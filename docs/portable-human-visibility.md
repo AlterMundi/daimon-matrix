@@ -221,7 +221,9 @@ can use the same thread. A known or ambiguous old Telegram obligation continues
 to use its original policy. An unavailable private publisher does not select
 Telegram. A private send can reuse its retained carrier within its lifetime.
 After expiry, it cannot generate a fresh carrier and a second publication of
-the same signed speech.
+the same signed speech. An original addressed to the selected partner and
+another body is rejected before carrier publication. This keeps the same
+signed text from entering both the private and base publication audiences.
 
 The full-policy replacement documented above is for changes approved for the
 whole base audience. Use the selected-pair mechanism for the private Claude

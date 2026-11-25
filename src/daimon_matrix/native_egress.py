@@ -1687,6 +1687,17 @@ class MandatoryEgressController:
             and frozenset(embodiments) == private.embodiments
         )
 
+    def mixed_private_sibling_audience(
+        self, sender: str, addressees: list[str]
+    ) -> bool:
+        private = self._private_sibling_visibility
+        return (
+            private is not None
+            and len(addressees) > 1
+            and sender in private.embodiments
+            and bool((private.embodiments - {sender}).intersection(addressees))
+        )
+
     @property
     def release_enabled(self) -> bool:
         """True only for an owner-installed or explicit synthetic transport."""

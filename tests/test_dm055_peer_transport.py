@@ -1200,6 +1200,70 @@ class PeerTransportTests(PeerTransportFixture):
     ) -> None:
         self._exercise_conversation(mirror=True)
 
+    def test_mixed_private_audience_refuses_both_carrier_projections(self) -> None:
+        from daimon_matrix.peer_transport import _conversation_projection
+        from tests.visibility_fixtures import private_sibling_fixture
+
+        local, private, ordinary = (
+            "embodiment:legion",
+            "embodiment:daimonmatrix",
+            "embodiment:other-fixture",
+        )
+        selection, publisher = private_sibling_fixture(
+            self.root_path / "projection.sqlite", self.egress._policy, (local, private)
+        )
+        transport = SyntheticEchoTransport()
+        controller = MandatoryEgressController(
+            policy=self.egress._policy,
+            proof_key=b"\x89" * 32,
+            transport=transport,
+            clock=lambda: self.now,
+            installation_digest="1" * 64,
+            owner_actor=self.authority.state.being_ref,
+            verify_owner_binding=lambda _document, _binding: None,
+            mirror_sibling_conversations=True,
+            private_sibling_visibility=selection,
+        )
+        message = {
+            "event_id": "fixture-original",
+            "being_ref": self.authority.state.being_ref,
+            "origin": self.origins["legion"],
+            "payload": {
+                "body": {"text": "fixture text", "addressee": [private, ordinary]},
+                "intent": {"thread_id": "fixture-thread"},
+            },
+        }
+
+        def project(recipient: str) -> Mapping[str, Any]:
+            return _conversation_projection(
+                b"fixture-native",
+                controller=controller,
+                payload={},
+                authority=self.authority,
+                local_target=self.targets["legion"],
+                custody=self.custodies["legion"],
+                at_ms=self.now,
+                operation_id="fixture-original",
+                sender=local,
+                recipient=recipient,
+                thread_id="fixture-thread",
+                stage="converse",
+                outgoing_request=True,
+            )
+
+        with patch(
+            "daimon_matrix.peer_transport.open_we_conversation_for_projection",
+            return_value={"message": message},
+        ):
+            for recipient in (ordinary, private):
+                with (
+                    self.subTest(recipient=recipient),
+                    self.assertRaises(PeerTransportError),
+                ):
+                    project(recipient)
+        self.assertEqual(transport.requests, [])
+        self.assertEqual(publisher.calls, 0)
+
     def test_private_sibling_pair_crosses_signed_transport_without_telegram(
         self,
     ) -> None:

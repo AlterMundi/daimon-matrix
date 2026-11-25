@@ -120,6 +120,7 @@ def _conversation_projection(
     stage: str,
     mirror_recipient: str | None = None,
     private_receipt: bool = False,
+    outgoing_request: bool = False,
 ) -> Mapping[str, Any]:
     projection = native_projection(
         operation_id=operation_id,
@@ -146,13 +147,20 @@ def _conversation_projection(
         at_ms=at_ms,
     )
     message = opened["message"]
+    body = message["payload"]["body"]
+    if outgoing_request and controller.mixed_private_sibling_audience(
+        message["origin"]["embodiment_id"], body["addressee"]
+    ):
+        # Every carrier verifies the same signed addressee set before it can
+        # publish. A mixed send would expose the private text on the base lane.
+        raise PeerTransportError()
     projection.update(
         event_id=message["event_id"],
         sender=message["being_ref"] + "/" + message["origin"]["embodiment_id"],
         recipients=[mirror_recipient or recipient],
         thread_id=message["payload"]["intent"]["thread_id"],
         kind="message",
-        content={"text": message["payload"]["body"]["text"]},
+        content={"text": body["text"]},
     )
     return projection
 
@@ -1624,6 +1632,7 @@ class PeerClient:
                 mirror_recipient=current_recipient["credential_id"],
                 thread_id=correlation_id,
                 stage=REQUEST_EGRESS[request_content_type][1],
+                outgoing_request=True,
             ),
             target_credential_id=current_recipient["credential_id"],
             target_embodiment_id=current_recipient["embodiment_id"],
