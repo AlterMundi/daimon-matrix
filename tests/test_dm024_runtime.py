@@ -112,12 +112,13 @@ def signed_runtime_visibility_installation(
     from daimon_matrix.native_egress import VISIBILITY_SCOPE_RISKS
 
     being_ref = authority.manifest.being_ref
+    scope_mode = (
+        "all-inter-daimon-and-sibling-conversations"
+        if mirror_siblings
+        else "all-inter-daimon-communications"
+    )
     scope = {
-        "mode": (
-            "all-inter-daimon-and-sibling-conversations"
-            if mirror_siblings
-            else "all-inter-daimon-communications"
-        ),
+        "mode": scope_mode,
         "channels": [
             {
                 "channel_id": "runtime-control-only",
@@ -142,7 +143,7 @@ def signed_runtime_visibility_installation(
         "scope": scope,
         "scope_sha256": config_digest(scope),
         "participants": [being_ref],
-        "risk": VISIBILITY_SCOPE_RISKS[scope["mode"]],
+        "risk": VISIBILITY_SCOPE_RISKS[scope_mode],
     }
     acceptance_set = {
         "schema": "dm.messaging.visibility-acceptance-set/v1",
