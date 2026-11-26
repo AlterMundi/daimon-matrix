@@ -14,7 +14,7 @@ import re
 import signal
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,7 @@ from typing import Any
 from . import daemon
 from .authority_epochs import RootHistoryAuthority
 from .messaging_config import (
+    APPLICATION_SCHEMA_V3,
     _directory,
     load_application,
     protected_read,
@@ -40,13 +41,28 @@ from .service import MESSAGING_METHODS
 from .weave import RootAuthority
 
 
-def visibility_context(runtime: HostedRuntime) -> VisibilityFactoryContext:
+def visibility_context(
+    runtime: HostedRuntime, *, group_participants: Iterable[str] = ()
+) -> VisibilityFactoryContext:
     """Reuse verified authority; never reopen or copy private custody."""
     from .messaging_config import config_digest
 
     authority = runtime.service.ledger.authority
     if not isinstance(authority, (RootAuthority, RootHistoryAuthority)):
         raise ValueError("chat_host_authority_invalid")
+    authorities = _runtime_authorities(runtime)
+    relationships = runtime.service.relationships
+    if relationships is not None:
+        for participant in group_participants:
+            if participant not in authorities:
+                try:
+                    resolved = relationships.store.authority_resolver(participant)
+                except KeyError:
+                    # Keep the application pin when no host history is approved.
+                    continue
+                if not isinstance(resolved, (RootAuthority, RootHistoryAuthority)):
+                    raise ValueError("chat_host_authority_invalid")
+                authorities[participant] = resolved
     return VisibilityFactoryContext(
         authority=authority,
         origin=runtime.service.origin,
@@ -58,7 +74,7 @@ def visibility_context(runtime: HostedRuntime) -> VisibilityFactoryContext:
         ]
         if runtime.service.loaded_runtime is not None
         else config_digest(read_document(runtime.state_root / "runtime.json")),
-        authorities=_runtime_authorities(runtime),
+        authorities=authorities,
         labels=runtime.service.labels,
     )
 
@@ -73,9 +89,14 @@ def application_view(
     """Additional link with independent visibility, no duplicate native transport."""
     selected = read_verified_publication(base, app)
     document = json.loads(selected.application)
+    group_participants = (
+        [item["manifest"]["being_ref"] for item in document["authorities"]]
+        if document["schema"] == APPLICATION_SCHEMA_V3
+        else ()
+    )
     controller = _visibility_factory(
         document, visibility, clock=base.service.clock, catalog_mode=catalog_mode
-    )(visibility_context(base))
+    )(visibility_context(base, group_participants=group_participants))
     view = load_application(
         replace(base, egress=controller), app, verified_publication=selected
     )
