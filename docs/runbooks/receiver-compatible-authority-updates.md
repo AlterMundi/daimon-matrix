@@ -48,6 +48,15 @@ and receiving observers must agree before a rollout is complete.
    marking the cohort current. Neither publication, preflight nor authoring
    proves delivery. Explicit offline exclusions remain pending, never healthy.
 
+For a Gateway worker with an owner-selected manifest pin, compare that pin to
+the authenticated receiving manifest before enabling new turns. Once the body
+and application have adopted the verified successor, advance the pin in the
+selected worker profile while no turn is using that profile. Preserve its
+incarnation, native session selection, provider account and tool grants. Verify
+the installed worker through its ordinary pre-submission boundary with the
+commit denied. This exercises the native tool catalog and identity checks
+without submitting user content to a provider or replaying an earlier turn.
+
 For a peer trusted only through an existing group, use the selected group's
 verified authority history as the anchor. The owner-level `republish` operation
 accepts the exact public successor and its history through `group_peer_successor`.
