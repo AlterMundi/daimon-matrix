@@ -56,12 +56,13 @@ def visibility_context(
         for participant in group_participants:
             if participant not in authorities:
                 try:
-                    authorities[participant] = relationships.store.authority_resolver(
-                        participant
-                    )
+                    resolved = relationships.store.authority_resolver(participant)
                 except KeyError:
                     # Keep the application pin when no host history is approved.
                     continue
+                if not isinstance(resolved, (RootAuthority, RootHistoryAuthority)):
+                    raise ValueError("chat_host_authority_invalid")
+                authorities[participant] = resolved
     return VisibilityFactoryContext(
         authority=authority,
         origin=runtime.service.origin,
