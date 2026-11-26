@@ -488,6 +488,33 @@ class ProvisioningTests(unittest.TestCase):
         self.assertEqual(invoke(configuration, config_digest(selected))[0], 1)
         self.assertEqual(installation.read_bytes(), selected_bytes)
 
+        # A retained owner-signed route can outlive the old peer's admission.
+        # A new active pair can be added without rewriting that descriptor.
+        prior_route = private_sibling_document(
+            root / "prior-private.sqlite",
+            Ed25519PrivateKey.generate(),
+            (pair[0], "embodiment:retired-private-peer"),
+        )
+        prior = {**old, "private_sibling_visibility": prior_route}
+        prior_bytes = canonical_bytes(
+            {"document": prior, "binding": operator.create_binding(runtime, prior)}
+        )
+        installation.write_bytes(prior_bytes)
+        prior_digest = config_digest(prior)
+        code, stdout, stderr = invoke(configuration, prior_digest)
+        self.assertEqual(code, 0, stderr)
+        result = json.loads(stdout)
+        current = json.loads(installation.read_bytes())
+        expected = {**prior, "additional_private_sibling_visibility": [configuration]}
+        self.assertEqual(current["document"], expected)
+        verify_binding(runtime, expected, current["binding"])
+        self.assertEqual(
+            (root / result["previous_installation_backup"]).read_bytes(), prior_bytes
+        )
+        code, stdout, stderr = invoke(configuration, prior_digest)
+        self.assertEqual(code, 0, stderr)
+        self.assertEqual(json.loads(stdout)["status"], "unchanged")
+
     def test_native_sibling_destination_replacement_retains_signed_scope(self):
         from daimon_matrix import operator_messaging as operator
         from daimon_matrix.messaging_config import verify_binding

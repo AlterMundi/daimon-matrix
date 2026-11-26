@@ -307,9 +307,9 @@ def load_owner_visibility(
                 "publication_backend" if portable else "telegram_qualification",
             }
             | (
-                {"private_sibling_visibility"}
+                {"private_sibling_visibility", "additional_private_sibling_visibility"}
+                & envelope["document"].keys()
                 if isinstance(envelope["document"], dict)
-                and "private_sibling_visibility" in envelope["document"]
                 else set()
             ),
         )
@@ -582,6 +582,14 @@ def load_owner_visibility(
             pair_only or scope["mode"] == "all-inter-daimon-and-sibling-conversations"
         )
         private_sibling = None
+        additional_siblings: tuple[_PrivateSiblingVisibility, ...] = ()
+        if "additional_private_sibling_visibility" in document and (
+            pair_only
+            or "private_sibling_visibility" not in document
+            or not isinstance(document["additional_private_sibling_visibility"], list)
+            or not document["additional_private_sibling_visibility"]
+        ):
+            raise ValueError
         if "private_sibling_visibility" in document:
             if not mirror_siblings or participants != [owner_actor]:
                 raise ValueError
@@ -592,10 +600,17 @@ def load_owner_visibility(
                 != document["publication_backend"]
             ):
                 raise ValueError
+            owner_embodiment = envelope["binding"]["body"]["origin"]["embodiment_id"]
             private_sibling = _private_sibling_visibility(
                 selection,
-                owner_embodiment=envelope["binding"]["body"]["origin"]["embodiment_id"],
+                owner_embodiment=owner_embodiment,
                 base_policy=policy,
+            )
+            additional_siblings = tuple(
+                _private_sibling_visibility(
+                    entry, owner_embodiment=owner_embodiment, base_policy=policy
+                )
+                for entry in document.get("additional_private_sibling_visibility", [])
             )
         return MandatoryEgressController(
             policy=policy,
@@ -609,6 +624,7 @@ def load_owner_visibility(
             presentation_resolver=presentation_resolver,
             mirror_sibling_conversations=mirror_siblings,
             private_sibling_visibility=private_sibling,
+            additional_private_sibling_visibility=additional_siblings,
         )
     except NativeEgressError:
         raise
@@ -919,7 +935,7 @@ PRIVATE_SIBLING_POLICY_ORIGIN: Final = "owner-signed-private-sibling"
 def _private_sibling_visibility(
     value: object, *, owner_embodiment: str, base_policy: Mapping[str, Any]
 ) -> _PrivateSiblingVisibility:
-    """Accept the single pair and destination covered by the installation signature."""
+    """Accept one pair and destination covered by the installation signature."""
     row = _closed(
         value,
         {"schema", "embodiments", "destination", "publication_backend"},
@@ -997,6 +1013,9 @@ class MandatoryEgressController:
         mirror_sibling_conversations: bool = False,
         presentation_resolver: Callable[[str], str] | None = None,
         private_sibling_visibility: _PrivateSiblingVisibility | None = None,
+        additional_private_sibling_visibility: tuple[
+            _PrivateSiblingVisibility, ...
+        ] = (),
     ) -> None:
         if not isinstance(proof_key, bytes) or len(proof_key) != 32:
             raise NativeEgressError("egress_proof_key_invalid")
@@ -1016,17 +1035,24 @@ class MandatoryEgressController:
             or verify_owner_binding is None
         ):
             raise NativeEgressError("egress_installation_invalid")
+        selections = additional_private_sibling_visibility
+        if private_sibling_visibility is not None:
+            selections = (private_sibling_visibility, *selections)
+        self._private_siblings = {
+            selection.embodiments: selection for selection in selections
+        }
+        if len(self._private_siblings) != len(selections):
+            raise NativeEgressError("egress_installation_invalid")
         if type(mirror_sibling_conversations) is not bool or (
             mirror_sibling_conversations
             and (
-                (transport is None and private_sibling_visibility is None)
+                (transport is None and not self._private_siblings)
                 or installation_digest is None
             )
         ):
             raise NativeEgressError("egress_installation_invalid")
-        if private_sibling_visibility is not None and not mirror_sibling_conversations:
+        if self._private_siblings and not mirror_sibling_conversations:
             raise NativeEgressError("egress_installation_invalid")
-        self._private_sibling_visibility = private_sibling_visibility
         self._mirror_sibling_conversations = mirror_sibling_conversations
         self._installation_digest = installation_digest
         self._owner_actor = owner_actor
@@ -1706,22 +1732,17 @@ class MandatoryEgressController:
     def selects_private_sibling(
         self, path_id: str, embodiments: tuple[str, str]
     ) -> bool:
-        private = self._private_sibling_visibility
         return (
-            private is not None
-            and path_id in SIBLING_CONVERSATION_PATHS
-            and frozenset(embodiments) == private.embodiments
+            path_id in SIBLING_CONVERSATION_PATHS
+            and frozenset(embodiments) in self._private_siblings
         )
 
     def mixed_private_sibling_audience(
         self, sender: str, addressees: list[str]
     ) -> bool:
-        private = self._private_sibling_visibility
-        return (
-            private is not None
-            and len(addressees) > 1
-            and sender in private.embodiments
-            and bool((private.embodiments - {sender}).intersection(addressees))
+        return len(addressees) > 1 and any(
+            frozenset((sender, addressee)) in self._private_siblings
+            for addressee in addressees
         )
 
     @property
@@ -1864,7 +1885,7 @@ class MandatoryEgressController:
             or self._installation_digest is None
             or self._owner_actor is None
             or self._verify_owner_binding is None
-            or (self._transport is None and self._private_sibling_visibility is None)
+            or (self._transport is None and not self._private_siblings)
             or self._proof_key == b"\0" * 32
         ):
             raise NativeEgressError("egress_migration_not_authorized")
@@ -2657,11 +2678,11 @@ class MandatoryEgressController:
             authentication_key=self._proof_key,
         )
         policy, transport = self._policy, self._transport
-        private = self._private_sibling_visibility
-        if private is not None and path_id in SIBLING_CONVERSATION_PATHS:
+        if self._private_siblings and path_id in SIBLING_CONVERSATION_PATHS:
             if sibling_embodiments is None:
                 raise NativeEgressError("egress_operation_invalid")
-            if self.selects_private_sibling(path_id, sibling_embodiments):
+            private = self._private_siblings.get(frozenset(sibling_embodiments))
+            if private is not None:
                 policy, transport = private.policy, private.transport
         try:
             reference = None
@@ -2846,12 +2867,14 @@ class MandatoryEgressController:
     def _publication_transport(
         self, retained: Mapping[str, Any]
     ) -> EchoTransport | None:
-        private = self._private_sibling_visibility
         if retained["origin"] == PRIVATE_SIBLING_POLICY_ORIGIN:
-            return (
-                private.transport
-                if private is not None and retained == private.policy
-                else None
+            return next(
+                (
+                    private.transport
+                    for private in self._private_siblings.values()
+                    if retained == private.policy
+                ),
+                None,
             )
         # Use an adapter only for the original authenticated destination.
         if retained["schema"] != self._policy["schema"]:
@@ -2891,7 +2914,7 @@ class MandatoryEgressController:
             journal,
             transport=(
                 self._transport
-                if self._private_sibling_visibility is None
+                if not self._private_siblings
                 else self._retained_publication_transport(journal, binding)
             ),
             transport_matches=self._publication_transport_matches,
@@ -2962,7 +2985,7 @@ class MandatoryEgressController:
             journal,
             transport=(
                 self._transport
-                if self._private_sibling_visibility is None
+                if not self._private_siblings
                 else self._retained_publication_transport(journal, binding)
             ),
             transport_matches=self._publication_transport_matches,
