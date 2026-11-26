@@ -22,6 +22,7 @@ from typing import Any
 from . import daemon
 from .authority_epochs import RootHistoryAuthority
 from .messaging_config import (
+    APPLICATION_SCHEMA_V3,
     _directory,
     load_application,
     protected_read,
@@ -73,9 +74,29 @@ def application_view(
     """Additional link with independent visibility, no duplicate native transport."""
     selected = read_verified_publication(base, app)
     document = json.loads(selected.application)
+    context = visibility_context(base)
+    relationships = base.service.relationships
+    if document["schema"] == APPLICATION_SCHEMA_V3 and relationships is not None:
+        # Group-only peers already have an owner-approved history in the
+        # native resolver. Reuse it for retained visibility acceptances.
+        authorities = dict(context.authorities)
+        resolve = (
+            relationships.store.authority_resolver or relationships.authority_resolver
+        )
+        for row in document["authorities"]:
+            participant = row["manifest"]["being_ref"]
+            if participant in authorities or resolve is None:
+                continue
+            try:
+                history = resolve(participant)
+            except KeyError:
+                continue
+            if isinstance(history, RootHistoryAuthority):
+                authorities[participant] = history
+        context = replace(context, authorities=authorities)
     controller = _visibility_factory(
         document, visibility, clock=base.service.clock, catalog_mode=catalog_mode
-    )(visibility_context(base))
+    )(context)
     view = load_application(
         replace(base, egress=controller), app, verified_publication=selected
     )
