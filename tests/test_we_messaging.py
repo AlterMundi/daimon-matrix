@@ -872,11 +872,21 @@ class WeLaneTests(SealedFixture):
                 ),
                 we_lane=sender,
             )
+            request_id = str(uuid.uuid4())
+            thread_id = str(uuid.uuid4())
+            selection = {
+                "request_id": request_id,
+                "thread_id": thread_id,
+                "recipient_id": REMOTE,
+            }
+            missing = service._we_conversation_page({"retained_delivery": selection})
+            self.assertEqual(missing["state"], "unconfirmed")
             result = service._we_converse(
                 {
                     "text": "online sibling still hears",
                     "addressees": [REMOTE],
-                    "request_id": str(uuid.uuid4()),
+                    "request_id": request_id,
+                    "thread_id": thread_id,
                     "ttl_ms": 30_000,
                 }
             )
@@ -896,6 +906,26 @@ class WeLaneTests(SealedFixture):
                 delivered["receipt_event_id"],
                 {e["event_id"] for e in self.ledger_a.conversation_evidence()},
             )
+
+            receipt = service._we_conversation_page({"retained_delivery": selection})
+            self.assertEqual(
+                receipt,
+                {
+                    **selection,
+                    "schema": "dm.we.retained-delivery/v1",
+                    "state": "delivered",
+                    "message_id": result["message_id"],
+                    "message_hash": result["message_hash"],
+                    "receipt_event_id": delivered["receipt_event_id"],
+                },
+            )
+            for wrong in ({"recipient_id": offline}, {"thread_id": str(uuid.uuid4())}):
+                result_for_wrong = service._we_conversation_page(
+                    {"retained_delivery": {**selection, **wrong}}
+                )
+                self.assertEqual(result_for_wrong["state"], "unconfirmed")
+                self.assertNotIn("message_id", result_for_wrong)
+            self.assertEqual(attempts, [offline, REMOTE])
 
     def test_expired_saved_payload_refuses_before_another_delivery(self) -> None:
         request_id = str(uuid.uuid4())

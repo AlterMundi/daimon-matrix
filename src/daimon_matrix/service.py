@@ -3165,6 +3165,18 @@ class HostedWeave:
 
     def _we_conversation_page(self, params: Any) -> dict[str, Any]:
         """Read the being's own conversation. Nothing polls; a human asks."""
+        if isinstance(params, Mapping) and "retained_delivery" in params:
+            _closed(params, {"retained_delivery"})
+            selection = _closed(
+                params["retained_delivery"], {"request_id", "thread_id", "recipient_id"}
+            )
+            if self.we_lane is None:
+                raise ServiceError("peer_transport_unavailable")
+            return self.we_lane.retained_delivery(
+                request_id=_uuid(selection["request_id"]),
+                thread_id=_uuid(selection["thread_id"]),
+                recipient_id=selection["recipient_id"],
+            )
         if not isinstance(params, Mapping) or not set(params) <= {
             "after",
             "cursor",

@@ -1716,6 +1716,42 @@ class Ledger:
             row = database.execute(query, (event_id,)).fetchone()
         return None if row is None else json.loads(bytes(row["event_json"]))
 
+    def local_operation_event(self, client_id: str, request_id: str) -> Event | None:
+        """Read the known event authored by an exact local operation."""
+        self.initialize()
+        with self._database() as database:
+            row = database.execute(
+                "SELECT events.event_json FROM local_operations "
+                "JOIN events USING(event_id) "
+                "WHERE client_id=? AND request_id=? AND events.status='known'",
+                (client_id, request_id),
+            ).fetchone()
+        return None if row is None else json.loads(bytes(row["event_json"]))
+
+    def conversation_receipts(self, message_id: str, recipient_id: str) -> list[Event]:
+        """Read bounded receipt candidates for one exact message and recipient."""
+        self.initialize()
+        with self._database() as database:
+            rows = database.execute(
+                """
+                SELECT event_json FROM events
+                  WHERE status='known' AND subject='communication-receipt'
+                  AND json_extract(CAST(event_json AS TEXT),
+                    '$.payload.message_ref.event_id')=?1
+                  AND json_extract(CAST(event_json AS TEXT),'$.payload.recipient_id')=?2
+                UNION
+                SELECT event_json FROM conversation_evidence
+                  WHERE json_extract(CAST(event_json AS TEXT),'$.subject')
+                    ='communication-receipt'
+                  AND json_extract(CAST(event_json AS TEXT),
+                    '$.payload.message_ref.event_id')=?1
+                  AND json_extract(CAST(event_json AS TEXT),'$.payload.recipient_id')=?2
+                LIMIT 2
+                """,
+                (message_id, recipient_id),
+            ).fetchall()
+        return [json.loads(bytes(row["event_json"])) for row in rows]
+
     def status_counts(self) -> dict[str, int]:
         self.initialize()
         with self._database() as database:
