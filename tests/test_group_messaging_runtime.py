@@ -3839,9 +3839,17 @@ class GroupRuntimeTests(unittest.TestCase):
         from daimon_matrix.operator_capabilities import STATUS_OBSERVER_METHODS
         from daimon_matrix.service import MESSAGING_METHODS
 
+        def visibility_for_group(context):
+            for identity in identities:
+                ref = identity.state.being_ref
+                self.assertEqual(
+                    context.authorities[ref], relationships.authority_resolver(ref)
+                )
+            return runtime.egress
+
         with patch(
             "daimon_matrix.chat_host._visibility_factory",
-            return_value=lambda _context: runtime.egress,
+            return_value=visibility_for_group,
         ):
             hosted = application_view(runtime, app, directory / "visibility.json")
         status = [
