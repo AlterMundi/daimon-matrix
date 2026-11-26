@@ -753,6 +753,65 @@ class WeConversation:
             "thread_id": thread,
         }
 
+    def retained_delivery(
+        self, *, request_id: str, thread_id: str, recipient_id: str
+    ) -> dict[str, Any]:
+        """Read one addressed sibling's receipt without sending any carrier."""
+        request = _uuid_text(request_id, "we_lane_request_invalid")
+        thread = _uuid_text(thread_id, "we_lane_thread_invalid")
+        recipient = _text(recipient_id, "we_lane_target_invalid", maximum=240)
+        result = {
+            "schema": "dm.we.retained-delivery/v1",
+            "request_id": request,
+            "thread_id": thread,
+            "recipient_id": recipient,
+            "state": "unconfirmed",
+        }
+        message = self.ledger.local_operation_event(
+            WE_MESSAGE_CLIENT_ID,
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"{WE_MESSAGE_CLIENT_ID}:{request}")),
+        )
+        if message is None:
+            return result
+        payload = _message_payload(message)
+        if (
+            message["origin"]["embodiment_id"] != self.local_embodiment_id
+            or payload["intent"]["thread_id"] != thread
+            or recipient not in payload["body"]["addressee"]
+        ):
+            return result
+        resolution = self.ledger.local_operation_event(
+            WE_RESOLUTION_CLIENT_ID,
+            str(uuid.uuid5(uuid.NAMESPACE_URL, f"{WE_RESOLUTION_CLIENT_ID}:{request}")),
+        )
+        if resolution is None:
+            return result
+        receipts = self.ledger.conversation_receipts(message["event_id"], recipient)
+        if len(receipts) != 1:
+            return result
+        receipt = receipts[0]
+        # Apply the same message, resolution, and signer checks used in live intake.
+        self._accept_sibling_receipt(
+            {
+                "schema": WE_INTAKE_SCHEMA,
+                "message_id": message["event_id"],
+                "message_hash": message["content_hash"],
+                "receipt": receipt,
+                "receipt_hash": hashlib.sha256(canonical_bytes(receipt)).hexdigest(),
+                "recipient_embodiment_id": recipient,
+            },
+            sibling=recipient,
+            message=message,
+            resolution=resolution,
+        )
+        return {
+            **result,
+            "state": "delivered",
+            "message_id": message["event_id"],
+            "message_hash": message["content_hash"],
+            "receipt_event_id": receipt["event_id"],
+        }
+
     def _author(
         self,
         *,

@@ -111,6 +111,16 @@ The older timestamp reader remains available; new integrations should use stable
 cursor pagination, which also discovers late arrivals with older origin dates.
 The generic known-event reader and sync cursor semantics remain unchanged.
 
+An authenticated local reader can inspect the addressed recipient of one
+previously submitted local request without reading the message or retransmitting
+it. Pass a closed `retained_delivery` selector with the original
+`request_id`, exact `thread_id` and selected `recipient_id` to
+`we.conversation.page`. This variant returns `dm.we.retained-delivery/v1`.
+A delivered result contains the immutable message ID and hash and the signed
+recipient's receipt event ID. When that exact receipt is unavailable the result
+is unconfirmed. A different thread or an unaddressed sibling cannot satisfy the
+lookup, even if another sibling received the same carrier.
+
 ## Surface
 
 The lane is reachable only through the local authenticated API, and only when a
