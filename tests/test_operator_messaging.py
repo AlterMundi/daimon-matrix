@@ -3154,7 +3154,10 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
         self.assertEqual(metadata.name, first["generation"])
 
     def test_group_peer_retirement_preserves_membership_and_exact_retry(self):
+        from unittest.mock import patch
+
         from daimon_matrix.authority_epochs import create_embodiment_retirement
+        from daimon_matrix.chat_host import application_view
         from daimon_matrix.identity import create_revocation, verify_successor
         from daimon_matrix.messaging_config import MessagingConfigError
         from daimon_matrix.native_egress import closed_visibility
@@ -3263,7 +3266,14 @@ class GroupApplicationAdmissionTests(unittest.TestCase):
                 clock=lambda: self.fixture.now, catalog_mode="migrate"
             ),
         )
-        loaded = load_application(restarted, self.app)
+        with patch("daimon_matrix.chat_host._visibility_factory") as visibility:
+            visibility.return_value.return_value = restarted.egress
+            loaded = application_view(restarted, self.app, self.app / "visibility.json")
+        context = visibility.return_value.call_args.args[0]
+        self.assertEqual(
+            context.authorities[incumbent.manifest.being_ref],
+            public_authority_history(public, history),
+        )
         audience = loaded.service.messaging.channels["tribe"].receiving_roster()
         self.assertIn(
             retained_route["embodiment_id"],
