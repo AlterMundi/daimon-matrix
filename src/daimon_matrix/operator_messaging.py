@@ -1401,9 +1401,8 @@ def _reissue_installation(
         "secrets",
         "publication_backend" if portable else "telegram_qualification",
     } | (
-        {"private_sibling_visibility"}
-        if "private_sibling_visibility" in previous
-        else set()
+        {"private_sibling_visibility", "additional_private_sibling_visibility"}
+        & previous.keys()
     ):
         raise MessagingConfigError("messaging_visibility_installation_rejected")
     if previous["application_sha256"] == application_sha256:
@@ -2769,7 +2768,7 @@ def replace_native_visibility_destination(
     bundle_name: str = "runtime.json",
     select_private_sibling: bool = False,
 ) -> dict[str, Any]:
-    """Select whole-scope or exact-pair native publication.
+    """Select whole-scope native publication or add one exact private pair.
 
     The caller holds the native runtime lock. The approved destination and
     backend are owner-local inputs. The selected bundle and exact predecessor
@@ -2998,14 +2997,18 @@ def _private_sibling_visibility_successor(
     from .native_egress import _private_sibling_visibility
 
     conflict = "messaging_native_visibility_destination_conflict"
-    if "private_sibling_visibility" in previous:
-        raise MessagingConfigError(conflict)
     route = copy.deepcopy(dict(configuration))
     selection = _private_sibling_visibility(
         route,
         owner_embodiment=runtime.service.origin["embodiment_id"],
         base_policy=previous["policy"],
     )
+    primary = previous.get("private_sibling_visibility")
+    additional = previous.get("additional_private_sibling_visibility", [])
+    if primary is not None and any(
+        item["embodiments"] == route["embodiments"] for item in (primary, *additional)
+    ):
+        raise MessagingConfigError(conflict)
     now = runtime.service.clock()
     for embodiment in sorted(selection.embodiments):
         member = authority.manifest.member(embodiment)
@@ -3021,9 +3024,10 @@ def _private_sibling_visibility_successor(
         )
         if not {"dm.we", "messages"} <= set(body["purposes"]):
             raise MessagingConfigError(conflict)
-    # Selecting a pair leaves the original generation, disclosure, proof key,
-    # and acceptance bytes intact. The outer owner signature covers both.
-    return {**previous, "private_sibling_visibility": route}
+    # Keep prior descriptor bytes and their derived policies intact.
+    if primary is None:
+        return {**previous, "private_sibling_visibility": route}
+    return {**previous, "additional_private_sibling_visibility": [*additional, route]}
 
 
 def _native_visibility_destination_successor(

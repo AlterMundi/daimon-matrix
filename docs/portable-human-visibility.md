@@ -192,7 +192,7 @@ they can be settled through their original route.
 
 ## Selected private sibling pair
 
-An owner-signed native installation can carry one `private_sibling_visibility`
+An owner-signed native installation can carry a `private_sibling_visibility`
 descriptor when the current scope includes sibling conversations and the
 installing being is its sole participating being. The descriptor pins the two
 embodiment IDs, a `compact-text/v1` Conversation destination and the existing
@@ -212,6 +212,13 @@ incarnations permitting `dm.we` and `messages`. The writer validates the
 candidate before selection, preserves the base document and saves its exact
 authenticated predecessor. Repeat the original digest and identical
 configuration to read back a selection after lost confirmation.
+
+Run the same command with the current installation digest to add a distinct
+pair on a body with a base visibility policy. The signed installation keeps the
+first descriptor and appends the new descriptor. Existing pairs, audiences,
+policies and proof keys are preserved. A request addressed to more than one
+body is refused if any selected private pair applies. A receive-only body's
+first private installation stays limited to its one approved pair.
 
 For this pair the existing catalog retains the private policy and proof with
 each obligation. The technical carrier receipt stays in the signed native

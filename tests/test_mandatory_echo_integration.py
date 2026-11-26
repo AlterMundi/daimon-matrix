@@ -404,9 +404,22 @@ class SignedVisibilityInstallationTests(unittest.TestCase):
         with self.assertRaises(NativeEgressError):
             self._load(wrong_scope)
 
+        other_pair = (own_body, "embodiment:other-fixture")
+        second = private_sibling_document(
+            self.root / "second.sqlite", self.owner_key, other_pair
+        )
+        document["additional_private_sibling_visibility"] = [second]
+        controller = self._load(document)
+        for selected in (pair, other_pair):
+            self.assertTrue(
+                controller.selects_private_sibling("peer-converse-request", selected)
+            )
+        with self.assertRaises(NativeEgressError):
+            self._load({**document, "additional_private_sibling_visibility": [route]})
+
         signed = self._write_envelope(document)
         envelope = json.loads(signed.read_bytes())
-        envelope["document"]["private_sibling_visibility"]["destination"][
+        envelope["document"]["additional_private_sibling_visibility"][0]["destination"][
             "publication"
         ]["audience"] = ["human:other"]
         signed.write_bytes(canonical_bytes(envelope))
@@ -582,7 +595,12 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         self.controller.register_path("peer-scope-request", "integration-native")
 
     def _enable_sibling_mirror(
-        self, *, private_sibling_visibility: _PrivateSiblingVisibility | None = None
+        self,
+        *,
+        private_sibling_visibility: _PrivateSiblingVisibility | None = None,
+        additional_private_sibling_visibility: tuple[
+            _PrivateSiblingVisibility, ...
+        ] = (),
     ) -> None:
         self.controller = MandatoryEgressController(
             policy=POLICY,
@@ -595,6 +613,7 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
             verify_owner_binding=self._verify_owner,
             mirror_sibling_conversations=True,
             private_sibling_visibility=private_sibling_visibility,
+            additional_private_sibling_visibility=additional_private_sibling_visibility,
         )
         self.controller.register_catalog(
             catalog_id="integration-native",
@@ -683,15 +702,36 @@ class MandatoryEchoIntegrationTests(unittest.TestCase):
         self.assertEqual(publisher.calls, 1)
         self.assertEqual(self.controller.inspect_retained(old), old_state)
 
-        # Startup and reconciliation use each exact retained obligation. The
-        # private ambiguous send never falls back to the functioning Telegram route.
-        self._enable_sibling_mirror(private_sibling_visibility=private)
+        # Restart with a second approved pair and the original proofs in place.
+        other_pair = (local, "embodiment:antigravity")
+        other_private, other_publisher = private_sibling_fixture(
+            self.path.with_name("other-private.sqlite"), POLICY, other_pair
+        )
+        self._enable_sibling_mirror(
+            private_sibling_visibility=private,
+            additional_private_sibling_visibility=(other_private,),
+        )
+        self.assertTrue(
+            self.controller.mixed_private_sibling_audience(
+                local, [pair[1], other_pair[1]]
+            )
+        )
+        another = self._admit(
+            "another-private",
+            path_id="peer-converse-response",
+            sibling_embodiments=other_pair,
+            projection=private_message,
+        )
+        self.assertEqual(self.controller.advance_one(another)["state"], "confirmed")
+        self.assertEqual(other_publisher.calls, 1)
+        # The prior ambiguous send cannot switch to the new or base publisher.
         self.assertEqual(self.controller.advance_one(selected)["state"], "ambiguous")
         retry = self._signed_retry(selected)
         with self.assertRaisesRegex(NativeEgressError, "egress_retry_unauthorized"):
             self.controller.retry_ambiguous(selected, retry)
         self.assertEqual(self.controller.inspect_retained(old), old_state)
         self.assertEqual(publisher.calls, 1)
+        self.assertEqual(other_publisher.calls, 1)
         self.assertEqual(len(self.transport.calls), 1)
 
     def test_portable_sibling_transport_holds_older_telegram_obligations(self) -> None:
