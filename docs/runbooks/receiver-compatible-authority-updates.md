@@ -6,8 +6,11 @@ and receiving observers must agree before a rollout is complete.
 
 ## One authorized rollout
 
-1. Identify required receiving bodies from the installed applications and signed
-   body inventory. Record unavailable bodies explicitly; labels are not identity.
+1. Resolve the affected bodies from the current signed inventory and the
+   installed applications that trust the changing authority. Reconcile the
+   maintenance target list against that set before using it. Include newly
+   admitted bodies with an installed affected application and record any
+   unavailable receiver explicitly.
 2. Prepare the exact candidate SDK and public signed authority chain. Run the
    receiving validator against that chain before irreversible sender activation.
    Stage a content-addressed receiving code/SDK successor using the existing
@@ -35,6 +38,10 @@ and receiving observers must agree before a rollout is complete.
    silently change the audience or replace the accepting key.
 6. Verify each required receiver has selected the compatible validator, adopted
    the exact signed successor and loaded matching application/visibility state.
+   After the last reload, compare that set of bodies with authenticated
+   readback from the current processes. Each required receiver must report the
+   expected authority and the active reader for the affected channel. A receiver
+   missing from the operator targets or readback keeps the rollout open.
    Retain the adoption and authenticated observer/readiness receipts before
    enabling general new-epoch egress. Use only a scoped authorized probe for the
    receiving communication check, then retain actual intake/echo evidence before
