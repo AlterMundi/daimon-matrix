@@ -3165,6 +3165,9 @@ class HostedWeave:
 
     def _we_conversation_page(self, params: Any) -> dict[str, Any]:
         """Read the being's own conversation. Nothing polls; a human asks."""
+        if isinstance(params, Mapping) and "selected_original" in params:
+            selection = _closed(params, {"selected_original"})
+            return self._we_selected_original(selection["selected_original"])
         if isinstance(params, Mapping) and "retained_delivery" in params:
             _closed(params, {"retained_delivery"})
             selection = _closed(
@@ -3231,6 +3234,55 @@ class HostedWeave:
             "more": len(rows) > limit,
             "schema": "dm.we.conversation-page/v1",
         }
+
+    def _we_selected_original(self, params: Any) -> dict[str, Any]:
+        """Resolve a selected original only with this body's signed receipt."""
+        selection = _closed(params, {"author", "event_id", "thread_id"})
+        event_id = _uuid(selection["event_id"])
+        thread_id = _uuid(selection["thread_id"])
+        author = _optional_text(selection["author"], 128)
+        local_body = self.ledger.local_origin["embodiment_id"]
+        if author is None or author == local_body:
+            raise ServiceError("invalid_params")
+
+        result: dict[str, Any] = {
+            "schema": "dm.we.selected-original/v1",
+            "original": None,
+        }
+        event = self.ledger.conversation_event(event_id)
+        entry = _we_conversation_entry(event) if event is not None else None
+        if (
+            entry is None
+            or entry["kind"] != "message"
+            or entry["thread_id"] != thread_id
+            or entry["author"] != author
+            or local_body not in entry["addressees"]
+        ):
+            return result
+
+        receipts = self.ledger.conversation_receipts(event_id, local_body)
+        if len(receipts) != 1:
+            return result
+        receipt = _we_conversation_entry(receipts[0])
+        if (
+            receipt is None
+            or receipt["kind"] != "receipt"
+            or receipt["thread_id"] != thread_id
+            or receipt["author"] != local_body
+            or receipt["outcome"] != "delivered"
+            or receipts[0]["payload"]["message_ref"].get("event_hash")
+            != event["content_hash"]
+        ):
+            return result
+
+        result["original"] = {
+            "event_id": event_id,
+            "author": author,
+            "thread_id": thread_id,
+            "receipt_event_id": receipt["event_id"],
+            "text": entry["text"],
+        }
+        return result
 
     def _we_conversation_cursor_page(self, params: Mapping[str, Any]) -> dict[str, Any]:
         limit = _uint(params.get("limit", 64), minimum=1, maximum=256)
