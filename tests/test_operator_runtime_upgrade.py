@@ -780,7 +780,9 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
             upgrade.UpgradeError, "upgrade_history_or_unrelated_files_changed"
         ):
             upgrade._capability_successor(
-                self.before, {**after, lock: b"unexpected"}, {},
+                self.before,
+                {**after, lock: b"unexpected"},
+                {},
                 provision_receiving_controller=True,
             )
 
