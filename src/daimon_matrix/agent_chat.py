@@ -100,8 +100,15 @@ def load_binding(path: Path) -> dict[str, Any]:
 class AgentChatMcp(DaimonMcp):
     """The same restricted, exact-retry contract for CLI, Hermes and MCP."""
 
-    def __init__(self, client: LocalClient, binding: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        client: LocalClient,
+        binding: dict[str, Any],
+        *,
+        object_tool_schemas: bool = False,
+    ) -> None:
         self.binding = binding
+        self.object_tool_schemas = object_tool_schemas
         super().__init__(
             client, _directory(Path(binding["request_dir"])), messaging_only=True
         )
@@ -177,6 +184,16 @@ class AgentChatMcp(DaimonMcp):
                 # The transport operation ID is derived from send_id below.
                 # It is not a second independent choice for the model.
                 properties.pop("operation_id", None)
+            if self.object_tool_schemas and tool.name == "messaging_send":
+                # Some hosts only accept a root object schema. Keep the
+                # canonical command validation in call_tool.
+                tool.input_schema.pop("oneOf", None)
+                tool.description += (
+                    " For new speech, provide channel_id, send_id, thread_id and "
+                    "text, with optional destination and coordination. For "
+                    "authorized recovery only, provide channel_id, schema "
+                    "dm.tribe.recovery-request/v1, original_send_id and recovery_id."
+                )
         return result
 
     async def call_tool(
@@ -193,28 +210,40 @@ class AgentChatMcp(DaimonMcp):
         )
 
 
-def bridge(binding: dict[str, Any], *, timeout: float = 45) -> AgentChatMcp:
+def bridge(
+    binding: dict[str, Any], *, timeout: float = 45, object_tool_schemas: bool = False
+) -> AgentChatMcp:
     if binding["schema"] == MULTI_SCHEMA:
-        return MultiAgentChatMcp(binding, timeout=timeout)
+        return MultiAgentChatMcp(
+            binding, timeout=timeout, object_tool_schemas=object_tool_schemas
+        )
     key = protected_read(Path(binding["client_key"]), size=32)
     config = ClientConfig.load(Path(binding["client_config"]), key)
     if not set(config.capability.methods) <= {
         row[0] for row in MESSAGING_TOOL_CONTRACTS.values()
     }:
         raise ValueError("agent_chat_requires_messaging_only_capability")
-    return AgentChatMcp(LocalClient(Path(binding["socket"]), config, timeout), binding)
+    return AgentChatMcp(
+        LocalClient(Path(binding["socket"]), config, timeout),
+        binding,
+        object_tool_schemas=object_tool_schemas,
+    )
 
 
 class MultiAgentChatMcp(AgentChatMcp):
     """Local channel aliases, not new identity or transport authority."""
 
-    def __init__(self, binding: dict[str, Any], *, timeout: float) -> None:
+    def __init__(
+        self, binding: dict[str, Any], *, timeout: float, object_tool_schemas: bool = False
+    ) -> None:
         self.links = {
             alias: bridge(child, timeout=timeout)
             for alias, child in binding["links"].items()
         }
         first = next(iter(self.links.values()))
-        super().__init__(first.client, first.binding)
+        super().__init__(
+            first.client, first.binding, object_tool_schemas=object_tool_schemas
+        )
         self.binding = binding
 
     async def call_tool(
@@ -312,7 +341,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--binding", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("channels")
-    commands.add_parser("mcp")
+    mcp = commands.add_parser("mcp")
+    mcp.add_argument("--object-tool-schemas", action="store_true")
     invoke = commands.add_parser("call")
     invoke.add_argument("name", choices=tuple(MESSAGING_TOOL_CONTRACTS))
     invoke.add_argument("--timeout", type=float, default=45)
@@ -323,7 +353,8 @@ def main(argv: list[str] | None = None) -> int:
             output = {k: binding[k] for k in ("incoming_channels", "outgoing_channels")}
             output["receiving"] = "human-request-only; no automatic reads or actions"
         elif args.command == "mcp":
-            asyncio.run(_run_stdio(bridge(binding).server()))
+            adapter = bridge(binding, object_tool_schemas=args.object_tool_schemas)
+            asyncio.run(_run_stdio(adapter.server()))
             return 0
         else:
             if not 0 < args.timeout <= 60:

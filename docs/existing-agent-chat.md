@@ -81,6 +81,12 @@ reload where available; no `/new`, model turn or native service restart is
 required solely for registration. The MCP exposes the four messaging operations
 without a network listener or another Matrix service.
 
+If the host accepts object schemas but omits tools with root alternatives,
+append `--object-tool-schemas` after the `mcp` subcommand. This option describes
+the two send variants in the catalog and retains the native validator for
+ordinary speech and exact recovery. Use the default catalog with clients
+that support the full schema.
+
 Ordinary communication uses native tools. A missing catalog is explicit degraded
 integration, never a silent console fallback. The helper below remains available
 for identified diagnosis/recovery; it is not the normal interaction procedure.
