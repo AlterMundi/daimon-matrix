@@ -764,6 +764,28 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
         ):
             upgrade._capability_successor(self.before, after, self.args["add_methods"])
 
+    def test_first_controller_can_rotate_a_runtime_without_a_custody_lock(self):
+        lock = ".custody.json.lock"
+        (self.source / lock).unlink()
+        self.before = upgrade._snapshot(self.source)
+        self.args["expected_source_sha256"] = upgrade._inventory(self.before)
+
+        self.stage(add_methods={}, provision_receiving_controller=True)
+        self.assertEqual(upgrade._snapshot(self.source), self.before)
+        self.publish()
+        after = upgrade._snapshot(self.source)
+        self.assertEqual(after[lock], b"")
+
+        with self.assertRaisesRegex(
+            upgrade.UpgradeError, "upgrade_history_or_unrelated_files_changed"
+        ):
+            upgrade._capability_successor(
+                self.before,
+                {**after, lock: b"unexpected"},
+                {},
+                provision_receiving_controller=True,
+            )
+
     def test_controller_request_field_is_explicit_and_strict(self):
         request = {
             key: str(value) if isinstance(value, Path) else value
