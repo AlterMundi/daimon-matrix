@@ -145,6 +145,38 @@ class WeLaneTests(SealedFixture):
             "dm:runtime:v1:" + "a" * 43,
             "test-receiver",
         )
+        selection = {
+            "event_id": first["message_id"],
+            "thread_id": first["thread_id"],
+            "author": self.origins["legion"]["embodiment_id"],
+        }
+        # The receiver has sparse evidence, so an ordinary event lookup misses
+        # the message. The exact selection does not scan the intake feed.
+        self.assertIsNone(self.ledger_b.event(first["message_id"]))
+        with patch.object(
+            self.ledger_b, "conversation_page", side_effect=AssertionError
+        ):
+            selected = service._we_conversation_page({"selected_original": selection})
+        self.assertEqual(selected["schema"], "dm.we.selected-original/v1")
+        self.assertEqual(
+            selected["original"],
+            {
+                **selection,
+                "text": "useful conversation without private history sync",
+                "receipt_event_id": first["deliveries"][0]["receipt_event_id"],
+            },
+        )
+        self.assertIsNone(
+            service._we_conversation_page(
+                {"selected_original": {**selection, "thread_id": str(uuid.uuid4())}}
+            )["original"]
+        )
+        with patch.object(self.ledger_b, "conversation_receipts", return_value=[]):
+            self.assertIsNone(
+                service._we_conversation_page({"selected_original": selection})[
+                    "original"
+                ]
+            )
         page = service._we_conversation_page({"cursor": old_cursor})
         self.assertEqual({e["kind"] for e in page["entries"]}, {"message", "receipt"})
         self.assertIn(first["message_id"], {e["event_id"] for e in page["entries"]})

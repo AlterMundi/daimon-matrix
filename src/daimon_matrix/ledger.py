@@ -1728,6 +1728,18 @@ class Ledger:
             ).fetchone()
         return None if row is None else json.loads(bytes(row["event_json"]))
 
+    def conversation_event(self, event_id: str) -> Event | None:
+        """Read one known or sparse conversation event by its exact ID."""
+        self.initialize()
+        with self._database() as database:
+            row = database.execute(
+                "SELECT event_json FROM events WHERE event_id=?1 AND status='known' "
+                "UNION ALL SELECT event_json FROM conversation_evidence "
+                "WHERE event_id=?1 LIMIT 1",
+                (event_id,),
+            ).fetchone()
+        return None if row is None else json.loads(bytes(row["event_json"]))
+
     def conversation_receipts(self, message_id: str, recipient_id: str) -> list[Event]:
         """Read bounded receipt candidates for one exact message and recipient."""
         self.initialize()

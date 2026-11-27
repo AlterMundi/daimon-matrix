@@ -161,6 +161,12 @@ Deploy the exact reviewed SDK and re-render the existing owner client and neutra
 binding from the maintained plan. Keep one body installation. The client must
 select the issued `observe` and `weave` profiles and report their real methods.
 Verify matching signed server/runtime binding and preserve harness controls.
+For a selected sibling original, the receiving body's same
+`we.conversation.page` capability accepts
+`{"selected_original":{"author":"EMBODIMENT","event_id":"UUID","thread_id":"UUID"}}`.
+It returns the exact addressed message and that body's signed delivery receipt,
+or an empty selection. This lookup also supports sparse conversation evidence
+and leaves any stored conversation cursor untouched.
 
 Restart the existing daemon with its previously approved startup selection,
 then check original identity, integrity and authorized scoped read. Qualify
