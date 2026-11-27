@@ -234,7 +234,11 @@ class MultiAgentChatMcp(AgentChatMcp):
     """Local channel aliases, not new identity or transport authority."""
 
     def __init__(
-        self, binding: dict[str, Any], *, timeout: float, object_tool_schemas: bool = False
+        self,
+        binding: dict[str, Any],
+        *,
+        timeout: float,
+        object_tool_schemas: bool = False,
     ) -> None:
         self.links = {
             alias: bridge(child, timeout=timeout)
