@@ -854,6 +854,11 @@ def _capability_successor(
         ):
             raise UpgradeError("upgrade_controller_binding_changed")
         added_files = {directory + "/", filename, key_filename}
+        # An H8 body may have opened custody without rotating it. A first
+        # rotation creates the exclusive lock in the staged copy.
+        lock = ".custody.json.lock"
+        if lock not in before and after.get(lock) == b"":
+            added_files.add(lock)
     if (
         found != set(additions)
         or renewed != renew_receiving_controller
