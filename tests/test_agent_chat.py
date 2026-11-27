@@ -1047,6 +1047,44 @@ class AgentChatTests(unittest.TestCase):
             "operation_id", MESSAGING_TOOL_CONTRACTS["messaging_reply"][1]["properties"]
         )
 
+    def test_object_tool_schema_keeps_native_send_validation(self):
+        from mcp.shared.exceptions import MCPError
+
+        binding = self.setup_binding()
+        client = Mock()
+        adapter = AgentChatMcp(client, binding, object_tool_schemas=True)
+        basic = AgentChatMcp(client, binding)
+        tools = {
+            tool.name: tool
+            for tool in asyncio.run(adapter.list_tools(None, None)).tools
+        }
+        canonical = {
+            tool.name: tool for tool in asyncio.run(basic.list_tools(None, None)).tools
+        }
+        send = tools.pop("messaging_send")
+        normal = canonical.pop("messaging_send")
+        self.assertEqual(tools, canonical)
+        self.assertEqual(
+            send.input_schema,
+            {k: v for k, v in normal.input_schema.items() if k != "oneOf"},
+        )
+        self.assertIn("original_send_id", send.description)
+        mixed = dict(
+            channel_id=binding["outgoing_channels"][0],
+            schema="dm.tribe.recovery-request/v1",
+            original_send_id=str(uuid.uuid4()),
+            recovery_id=str(uuid.uuid4()),
+            text="Unexpected replacement speech",
+        )
+        with self.assertRaises(MCPError):
+            asyncio.run(
+                adapter.call_tool(
+                    None,
+                    types.CallToolRequestParams(name="messaging_send", arguments=mixed),
+                )
+            )
+        self.assertEqual(client.mock_calls, [])
+
     def test_cli_argument_errors_are_precise_and_never_construct_a_client(self):
         from types import SimpleNamespace
 
