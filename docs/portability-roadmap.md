@@ -461,9 +461,53 @@ the current profile, using synthetic Matrix authority and loopback inference.
 It verified the original and return, uncertainty and retention across restart.
 The Antigravity configuration preflight covers profile loading only.
 
-Portability owns live selection and the private checkpoint canary against a
-linked project. Live provider measurements, receiving replies in both
-directions and the paired human questbook edit remain open.
+The current receiving candidate at `5594ed0fe46d9274382904c211ed0526a144c809`
+includes the serving `3d8367e` lineage and its paired Conversation voice and
+native Claude attachment corrections. Gateway binary SHA-256
+`1dae48f76039c5e9699c3fc9769b478a1d30e837a3c3ff6016ef21b30f1bcf33`
+passed read-only preflight against the running profile, with the original
+service PID and workspace root confirmed. The final source adds JavaScript
+adapter and fixture changes over the Rust build at `eb58df9f`; the Rust
+sources, manifest and lockfile are identical. The exact source and binary
+passed the signed project round trip, Telegram and paired Conversation voice,
+and native Claude attachments, all with loopback providers. The cold fixture
+reported a visible Claude answer in 3,368 ms and a visible Codex successor
+answer in 696 ms from the explicit retry, with one loopback call per leg and
+zero prior redispatches. These results do not establish a production selection.
+
+#### Owner handoff for the live checkpoint canary
+
+Portability owns selecting the compatible Gateway package and its dashboard
+and adapter. Compare the package with the then-serving lineage and retain
+its exact loaded sources and rollback through the existing receiver. The
+private candidate record on Ítaca holds the binary digest and fixture
+receipts. The running profile already has its workspace root. The private
+Holodeck project has its own Git origin, a verified commit and a retained
+DaimonCards receipt. It has no accepted topic checkpoint yet.
+
+1. Select an existing authorized workspace for the pilot, or adopt its
+   folder through Session Workspace. Confirm the exact Git origin and
+   commit with the checkout verifier. Keep the existing project UUID,
+   repository UUID, board and audience.
+2. Use one real retained Observer or general-conversation citation that
+   addresses the pilot topic and names the link and next work. Apply it
+   with the `project_checkpoint_shadow` writer. Read the exact resulting
+   revision and verify that the unchanged operation returns its original
+   attribution. Confirm that the room catalogue projects the same
+   repository without exposing the private origin.
+3. Use `select_recovery` for that revision and the original effect receipts.
+   Observe one result with current canonical coverage and one unresolved
+   effect. Confirm zero additional dispatches at their owning writer.
+   Qualify the cold path on a canary binding without removing any live
+   topic history. Retain provider calls and tokens, observed latency,
+   native completion and destination receipts for both directions.
+4. In the paired Holodeck room, open the linked project and read the
+   existing card and Git revision. A person makes one ordinary journal
+   edit and the authorized native reader observes the same change. Check
+   the competing claim and original receipt in that shared project.
+
+Live provider measurements, receiving replies in both directions, and
+the paired human questbook edit remain open.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
