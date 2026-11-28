@@ -3081,9 +3081,23 @@ class HostedWeave:
             if requested_ttl is None
             else _uint(requested_ttl, minimum=1, maximum=MAX_WE_TTL_MS)
         )
-        # The audience is DM-054's, resolved from signed facts at send time, so a
-        # sibling enrolled after the last message is in this one automatically.
+        # Ordinary /we speech uses every verified active sibling. A selected
+        # private pair restricts this communication's disclosure, not discovery
+        # or synchronization in /we.
         resolved = scopes.resolution(scope="/we", request_id=converse_id)
+        named = self._we_addressees(cast(list[str], addressees))
+        sender = lane.local_embodiment_id
+        egress = peer_context.egress
+        if egress.mixed_private_sibling_audience(sender, named):
+            raise ServiceError("mixed_private_sibling_audience")
+        targets = cast(list[Mapping[str, Any]], resolved["targets"])
+        private = egress.private_sibling_addressee(sender, named)
+        if private is not None:
+            targets = [
+                row for row in targets if row["recipient_id"] in {sender, private}
+            ]
+            if {row["recipient_id"] for row in targets} != {sender, private}:
+                raise ServiceError("private_sibling_unavailable")
 
         def deliver(
             embodiment_id: str, payload: Mapping[str, Any]
@@ -3123,9 +3137,9 @@ class HostedWeave:
 
         return lane.converse(
             text=text,
-            addressees=self._we_addressees(cast(list[str], addressees)),
+            addressees=named,
             request_id=converse_id,
-            targets=cast(list[Mapping[str, Any]], resolved["targets"]),
+            targets=targets,
             thread_id=_optional_text(params.get("thread_id"), 36),
             ttl_ms=ttl,
             deliver=deliver,

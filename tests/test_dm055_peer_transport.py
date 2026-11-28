@@ -205,6 +205,7 @@ class PeerTransportTests(PeerTransportFixture):
                 Any,
                 SimpleNamespace(
                     configured=lambda _id: (self.targets["daimonmatrix"], client),
+                    egress=egress,
                     authority=self.authority,
                     local_origin=self.origins["legion"],
                 ),
@@ -1248,7 +1249,12 @@ class PeerTransportTests(PeerTransportFixture):
                 recipient=recipient,
                 thread_id="fixture-thread",
                 stage="converse",
-                outgoing_request=True,
+                mirror_recipient=(
+                    self.targets["daimonmatrix"].credential_id
+                    if recipient == private
+                    else ordinary
+                ),
+                outgoing_origin=self.origins["legion"],
             )
 
         with patch(
@@ -1261,6 +1267,30 @@ class PeerTransportTests(PeerTransportFixture):
                     self.assertRaises(PeerTransportError),
                 ):
                     project(recipient)
+        message["payload"]["body"]["addressee"] = [private]
+        with patch(
+            "daimon_matrix.peer_transport.open_we_conversation_for_projection",
+            return_value={
+                "message": message,
+                "audience": [{"recipient_id": private}, {"recipient_id": ordinary}],
+            },
+        ):
+            for recipient in (ordinary, private):
+                with (
+                    self.subTest(recipient=recipient),
+                    self.assertRaises(PeerTransportError),
+                ):
+                    project(recipient)
+        with patch(
+            "daimon_matrix.peer_transport.open_we_conversation_for_projection",
+            return_value={"message": message, "audience": [{"recipient_id": private}]},
+        ):
+            with self.assertRaises(PeerTransportError):
+                project(ordinary)
+            self.assertEqual(project(private)["content"], {"text": "fixture text"})
+            message["origin"] = self.origins["daimonmatrix"]
+            with self.assertRaises(PeerTransportError):
+                project(private)
         self.assertEqual(transport.requests, [])
         self.assertEqual(publisher.calls, 0)
 
@@ -1430,6 +1460,7 @@ class PeerTransportTests(PeerTransportFixture):
                     Any,
                     SimpleNamespace(
                         configured=lambda _id: (self.targets["daimonmatrix"], client),
+                        egress=self.egress,
                         authority=self.authority,
                         local_origin=self.origins["legion"],
                     ),

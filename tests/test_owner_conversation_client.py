@@ -13,7 +13,7 @@ import uuid
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from daimon_matrix.canonical import canonical_bytes
 from daimon_matrix.client import CLIENT_CONFIG_SCHEMA_V3
@@ -92,6 +92,10 @@ class OwnerConversationClientTests(SealedFixture):
                     configured=lambda _embodiment: (
                         None,
                         SimpleNamespace(call=deliver),
+                    ),
+                    egress=Mock(
+                        mixed_private_sibling_audience=Mock(return_value=False),
+                        private_sibling_addressee=Mock(return_value=None),
                     ),
                     authority=self.authority,
                     local_origin=self.origins["legion"],
@@ -193,6 +197,10 @@ class OwnerConversationClientTests(SealedFixture):
                 Any,
                 SimpleNamespace(
                     configured=lambda _id: (None, SimpleNamespace(call=uncertain)),
+                    egress=Mock(
+                        mixed_private_sibling_audience=Mock(return_value=False),
+                        private_sibling_addressee=Mock(return_value=None),
+                    ),
                     authority=self.authority,
                     local_origin=self.origins["legion"],
                 ),

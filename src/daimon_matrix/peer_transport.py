@@ -57,6 +57,7 @@ from .we_messaging import (
     WeConversation,
     WeLaneError,
     open_we_conversation_for_projection,
+    we_recipient_targets,
 )
 from .weave import EventSigner, RootAuthority, WeaveProtocolError
 
@@ -120,7 +121,7 @@ def _conversation_projection(
     stage: str,
     mirror_recipient: str | None = None,
     private_receipt: bool = False,
-    outgoing_request: bool = False,
+    outgoing_origin: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     projection = native_projection(
         operation_id=operation_id,
@@ -148,12 +149,25 @@ def _conversation_projection(
     )
     message = opened["message"]
     body = message["payload"]["body"]
-    if outgoing_request and controller.mixed_private_sibling_audience(
-        message["origin"]["embodiment_id"], body["addressee"]
-    ):
-        # Every carrier verifies the same signed addressee set before it can
-        # publish. A mixed send would expose the private text on the base lane.
-        raise PeerTransportError()
+    if outgoing_origin is not None:
+        if message["origin"] != outgoing_origin:
+            raise PeerTransportError()
+        origin = message["origin"]["embodiment_id"]
+        addressees = body["addressee"]
+        if controller.mixed_private_sibling_audience(origin, addressees):
+            raise PeerTransportError()
+        private = controller.private_sibling_addressee(origin, addressees)
+        if private is not None:
+            audience = opened["audience"]
+            if [row["recipient_id"] for row in audience] != [
+                private
+            ] or we_recipient_targets(authority, audience)[
+                0
+            ].credential_id != mirror_recipient:
+                # Bind both the encrypted audience and the outer peer before
+                # any new human projection. A shared legacy seal must not gain
+                # a fresh base publication for a new carrier.
+                raise PeerTransportError()
     projection.update(
         event_id=message["event_id"],
         sender=message["being_ref"] + "/" + message["origin"]["embodiment_id"],
@@ -1632,7 +1646,7 @@ class PeerClient:
                 mirror_recipient=current_recipient["credential_id"],
                 thread_id=correlation_id,
                 stage=REQUEST_EGRESS[request_content_type][1],
-                outgoing_request=True,
+                outgoing_origin=self.local_origin,
             ),
             target_credential_id=current_recipient["credential_id"],
             target_embodiment_id=current_recipient["embodiment_id"],
