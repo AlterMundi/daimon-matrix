@@ -719,6 +719,21 @@ activity distinct from who receives the next human intervention.
 This is the implementation sequence for the spatial part of milestone 3.
 Each item names the behavior to deliver and what to observe in the pilot.
 
+The [receiving composition](https://github.com/AlterMundi/holodeck/commit/c0fcc34bc6c82c414e169a438ed7e0365c5d8328)
+brings PR40's topic rooms into the paired Questbook Workshop release from
+`45f27ae`. The existing A2UI toolbelt now exposes the project table,
+conversation, and return navigation in a topic room. The composition
+preserves topic scope on retained machine-context receipts and rechecks
+current access on recovery. A topic receipt cannot authorize an action in
+the physical world. The HTTP test covers that distinction after release.
+Mobile Chromium exercised entry, the empty project table, current links
+across two projects, and the selected pending question and result. The
+browser tests for the existing exterior Questbook and recovery of a
+committed mission after reload also passed. The remaining mobile journey
+and paired live use are tracked separately below. This branch is a
+candidate on the pilot release base. It has no receiving selection.
+
+
 1. **Explorer and default rooms.** Add an entry widget that opens the current
    authorized topic catalogue and moves the visitor into the selected virtual
    room. Use the logical topic reference from the existing Session Workspace
