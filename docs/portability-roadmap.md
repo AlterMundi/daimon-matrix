@@ -689,9 +689,18 @@ activity distinct from who receives the next human intervention.
    Antigravity's model uptake remains unobserved. The Source writer profile
    correctly refused a projection read before dispatch, and the CLI now
    returns the documented authentication exit for that case. The same selective
-   publisher read for Oliva returned `source_disclosure_denied`. A current
-   claim and `tribe-shared` read grant for this exact source have not been
-   established. Oliva received the public, immutable Skills locator in a
+   publisher read for Oliva returned `source_disclosure_denied`. On
+   2026-11-28 the loaded Claude owner socket authenticated both
+   `source.status` and `relationship.status`. The original publication
+   remained current. The publisher's verifier saw 15 complete relationship
+   events and one Tribe, with zero resource cards, bilateral relationships
+   or grants. Foreign Source disclosure checks for a current signed
+   knowledge card matching this Source ID and classification, and a current
+   read grant for that resource. The missing resource registration is
+   sufficient to explain the refusal on this publisher. Reconcile the
+   registration and exact read authority through the relationship owner
+   before trying the selected pull again. Oliva received the public,
+   immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
    copy with the signed terminal receipt
