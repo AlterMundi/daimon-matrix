@@ -816,6 +816,22 @@ the Chromium journeys and associated HTTP and frame checks. The
 standard Node suite passed 594 tests with six fixture-dependent skips.
 The native bridge suite passed 53 tests.
 
+The issue form is now packaged as a successor candidate. The installed
+Home verifier accepted the 96-file archive at Holodeck `fb31304`
+(40,458,240 bytes, SHA-256
+`d35db05311c4b808d505eae0c7bf18441c54173c988efb87f74b71f7cb90bbb9`).
+The manifest retains 92 files from the prior candidate byte-for-byte and
+changes only the HTML, packed browser bundle and bundled server. Pair it
+with the Matrix `1983c43` issue writer, SHA-256
+`f0a60d4838dace536b7638d293f33f3e9bffe8a804344ac4a8c22411f4095425`.
+The [packed receiver fixture](https://github.com/AlterMundi/holodeck/commit/9e2a176)
+runs the protected HTTP and browser journeys on those files with Node
+24.21.0. It verifies receipt recovery after the browser loses the response.
+The successor writer also reopened a disposable store from the installed
+predecessor and returned the same card, original creation receipt and one
+history entry. After an issue has been written, retain that writer when
+rolling back the UI. Production candidate selection remains open.
+
 The current own-native route re-read the real Git-review mission at
 revision three with its original receipt and Git link. The unselected
 bridge source from the updated composition read the current Matrix room
