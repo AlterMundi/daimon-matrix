@@ -29,8 +29,12 @@ project. Distinguish queued, incorporated, answered and visible.
 ## Topic state contract
 
 Each logical topic has a stable identifier, its own workspace and links to
-the projects it works on. A workspace provides a base for topic records and
-can link to several project repositories. The checkpoint records current
+the projects it works on. A workspace provides a base for topic records.
+Projects can have several repositories and can be linked from several topics.
+Keep the latest revision of each repository link available independently of
+the last changed link. Cold startup can select a subset; the catalog retains
+the other links and lets an authorized reader fetch them as needed.
+The checkpoint records current
 roles, work in progress, decisions, explicit next actions and open
 dependencies. It links to the exact project revisions, original messages,
 attachments and outcome receipts that support it. Its scope follows the topic

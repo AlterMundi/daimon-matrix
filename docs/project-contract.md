@@ -25,9 +25,16 @@ initialize only the selected project directory and commit the first useful
 files. Stage only changes belonging to that iteration. An existing repository,
 index, or uncommitted change remains part of the operator's working state.
 
-The durable topic link records the project identity, the authorized repository
-locator, and the full Git commit object ID. A local checkout is a per-workspace
-resolution of that locator. A branch name helps navigation. The commit
+A topic can link to multiple projects, a project can have multiple repositories,
+and the same project can appear in more than one topic. Keep logical topic,
+project, repository, and checkout identities distinct. Adding a repository or
+advancing its revision must preserve the other links in the topic.
+
+Each durable link records the project and repository identities, the authorized
+repository locator, and the full Git commit object ID. A local checkout is a
+per-workspace resolution of that locator. List and resolve links through their
+current audiences. Page the catalog and select what a cold start needs without
+limiting which projects or repositories can remain linked. A branch name helps navigation. The commit
 identifies the revision under review. An inaccessible locator, unborn
 repository or missing commit leaves the reference unresolved. A local
 repository is a valid project. When collaboration spans hosts, use a cloneable
