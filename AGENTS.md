@@ -22,6 +22,13 @@ For current architecture and receiving profiles, read
 Historical RC/provisional/Bridge records and archived pair runbooks do not select
 the current default. Preserve their evidence without executing their old flow.
 
+When a human proposes creating a project, follow the
+[`technical project contract`](docs/project-contract.md). Use Git for continuing
+work, give the daimon programmatic access to project state and actions, and
+project useful controls through A2UI. Prefer Holodeck as the primary projection
+for games and places it can support. Let the person start creating in their
+usual surface and handle project setup as part of the work.
+
 Read [`docs/foundation/daimon-matrix.md`](docs/foundation/daimon-matrix.md)
 before any naming, scope or ontology decision. It is the functional document: the
 living original is <https://hackmd.io/@nicoechaniz/daimon-matrix> and the
