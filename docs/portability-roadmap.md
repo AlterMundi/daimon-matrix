@@ -461,19 +461,23 @@ the current profile, using synthetic Matrix authority and loopback inference.
 It verified the original and return, uncertainty and retention across restart.
 The Antigravity configuration preflight covers profile loading only.
 
-The current receiving candidate at `5594ed0fe46d9274382904c211ed0526a144c809`
-includes the serving `3d8367e` lineage and its paired Conversation voice and
-native Claude attachment corrections. Gateway binary SHA-256
-`1dae48f76039c5e9699c3fc9769b478a1d30e837a3c3ff6016ef21b30f1bcf33`
-passed read-only preflight against the running profile, with the original
-service PID and workspace root confirmed. The final source adds JavaScript
-adapter and fixture changes over the Rust build at `eb58df9f`; the Rust
-sources, manifest and lockfile are identical. The exact source and binary
-passed the signed project round trip, Telegram and paired Conversation voice,
-and native Claude attachments, all with loopback providers. The cold fixture
-reported a visible Claude answer in 3,368 ms and a visible Codex successor
-answer in 696 ms from the explicit retry, with one loopback call per leg and
-zero prior redispatches. These results do not establish a production selection.
+The earlier candidate `5594ed0f` passed paired Conversation voice, native
+Claude attachments and the signed cold project round trip with loopback
+providers. The receiving candidate `65666c4e463927c3c195b0ab8c0d6a2d5257cd78`
+adds the then-serving `61c01d15` Telegram album lineage and
+[PR1139](https://github.com/AlterMundi/DaimonApp/pull/1139) at `8236537f`,
+including the room work, result and question surfaces. Gateway binary
+SHA-256 `34cb5cadb28f2a1cb3700c119b087ac37e6828d95dd46fcf65490f0a08580d9e`
+passed read-only preflight on that active Ítaca profile with the same
+running service PID. The composed Dashboard passed its Workspace, frame,
+request-control and 17 Sonic tests. Signed receiver fixtures passed the
+project round trip, both voice surfaces and album rollback across the
+same journal. The cold fixture reached visible Claude and Codex answers
+in 3,164 and 609 ms, respectively, with one loopback request per leg
+and zero earlier instructions redispatched. The album fixture verified a
+single native input for the album, a separate late original, and no duplicate
+admission of a redelivered member after restarting with the previous binary.
+The production selection remains with Portability.
 
 #### Owner handoff for the live checkpoint canary
 
@@ -483,7 +487,10 @@ its exact loaded sources and rollback through the existing receiver. The
 private candidate record on Ítaca holds the binary digest and fixture
 receipts. The running profile already has its workspace root. The private
 Holodeck project has its own Git origin, a verified commit and a retained
-DaimonCards receipt. It has no accepted topic checkpoint yet.
+DaimonCards receipt. The live own-native reader in this cut confirmed the
+same receipt and card revision three with the original Git link current.
+The room branch and protected workshop lineage still need a combined
+Holodeck release. The pilot has no accepted topic checkpoint yet.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
