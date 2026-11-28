@@ -318,7 +318,11 @@ Each item names the behavior to deliver and what to observe in the pilot.
    human intervention and verify that general Conversation receives the
    exact original once, with the topic, place and selected object captured
    at intake. Move while receipt is pending and verify the original keeps
-   its captured context and destination.
+   its captured context and destination. The Holodeck candidate opens the
+   general Conversation frame from the generated room. Its HTTP receiver
+   fixture switches topics while preparation is pending and recovers one
+   attachment with the original topic under current access. Actual
+   canonical original admission and live receipt readback remain open.
 4. **Visible work, results and questions.** Use authorized Observer states,
    canonical results and human tasks to show the same daimon at work in the
    room. Keep signals legible without reading a transcript. Observe a real
