@@ -374,6 +374,19 @@ The paired native policy test refused an unrelated human and being and
 rechecked a changed pairing. The exact pilot selections and staged seed
 remain in the private operator record. Use by the real pair is still open.
 
+The [exterior receiving composition](https://github.com/AlterMundi/holodeck/commit/b969486b12b69f6f81a6a2844a87630af8b4c03b)
+is based on the live explorer and meadow source `66dad9e`, observed as
+archive `6fd9cd26732d` on 2026-11-28. The Home verifier accepted the
+40,427,520-byte composed archive, SHA-256
+`b19c7b66ac3b81deed7a9c67e208154766c92561bddf0711ad7748cc5c6d6fb3`.
+All 75 live art payloads match its inventory. The protected HTTP/native
+fixture and 23 receiver regression tests passed. The current toroidal
+terrain keeps the traditional workshop bridge out of the live surface.
+The private pilot now also holds an open Git-review mission linked to the
+same exact commit; the bridge mission and its uncredited objective remain.
+This composition provides the exterior journal. Topic-room binding, live
+selection and use by the real pair remain separate acceptance work.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Git owns project
