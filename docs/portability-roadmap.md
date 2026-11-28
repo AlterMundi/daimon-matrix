@@ -543,10 +543,15 @@ binds the Git commit, rendered byte digest, immutable Home version,
 and its normal shared-login entry. The publisher store retained matching
 bytes; anonymous and owner-as-being HTTP requests to the human-only
 artifact returned 404, and the authenticated-entry route initiated shared
-SSO. Paired browser readback and opening this edition from the topic room
-are still required. Keep the selected edition while later work is a
-draft. The private locator stays with the existing pilot, outside this
-public roadmap.
+SSO. The [Holodeck integration](https://github.com/AlterMundi/holodeck/commit/83284b887639f06d52216b2e329b1a3ac918cb78)
+uses the paired project selection to open the same pinned Home edition
+from the project table. In the protected mobile Chromium fixture, the
+link kept its published commit after a later draft advanced. The room
+stopped exposing it after losing the project grant or the matching linked
+history. The selected Git and Home pins remain in the private pilot
+record. Live selection of the compatible Gateway, bridge and Holodeck
+build, and the paired browser opening that edition from both surfaces,
+are still required.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
