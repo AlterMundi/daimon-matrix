@@ -125,6 +125,14 @@ A recovery reservation can now distinguish this case from other unsent
 attempts. The receipt records eligibility evidence for a later writer, with
 no native creation or submission.
 
+The [authenticated retry reservation](https://github.com/AlterMundi/DaimonApp/commit/83de8c1644ea3de5d9d2288dd28d9a193ce436f1)
+revalidates the selected Git checkout, authority and checkpoint digest. The
+existing input writer saves one reservation for the original in the same
+transaction as requeue. The fixture verified that equivalent retries
+reuse it, a Gateway restart preserves it, and the original remains unsent
+while Codex refuses to load the saved history. The native creator and binding
+transition still need to consume this reservation.
+
 The [real Codex App Server boundary fixture](https://github.com/AlterMundi/DaimonApp/blob/e5c4f1625eaa8b2f295bfb54969f94d1a249e262/docs/project-checkpoint-shadow.md#native-codex-successor-boundary)
 verified that a new native ID cannot resume before its first saved turn.
 On the creating connection, one first turn carried the fixture checkpoint,
