@@ -605,7 +605,10 @@ it to the exact Git commit of the published guide. Separate receipt reads
 recovered the original creation and link events. The issue is open at
 revision two, with both previous cards unchanged. Keep this compatible
 writer when rolling back the world UI so it can read the new issue event.
-The paired human action and live workspace link remain open.
+A later Holodeck release, `b10cc0d03f3c`, retained the topic and issue routes
+and the same writer. The live own-native lane recovered both original
+receipts after that selection, and the project route returned 401 without
+authentication. The paired human action and live workspace link remain open.
 Portability selected Gateway `d4253a6c` and its matching Dashboard
 on Ítaca. The active Matrix topic controller advertised
 `project_checkpoint_shadow` and confirmed that the topic had no claimed
