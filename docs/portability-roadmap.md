@@ -212,6 +212,16 @@ next revision, which the same card writer returns to the daimon side. Revoking
 the room link refuses another title write. The fixture uses synthetic actors
 and no model call.
 
+The [card projection](https://github.com/AlterMundi/daimon-matrix/commit/f213310ed6e91da12aff902f0ecc5df7014198b9)
+and [room receiver](https://github.com/AlterMundi/holodeck/commit/4367a87cb880e1298b6db14e422381447d5f5367)
+show the registered repository label and full commit when both identifiers
+match the card's evidence and the viewer's currently scoped project page.
+The mobile Chromium fixture creates Git objects locally, reads the exact hash
+from the mission, excludes evidence from another project, and verifies that
+moving the registered revision hides the old hash while the native card
+retains its evidence. This read opens no model turn and exposes no repository
+locator. Historical Git verification and a live shared remote remain open.
+
 Daimons read the card model and submit typed operations programmatically.
 An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
 board or review. Its component tree, selection and drafts are view state.
