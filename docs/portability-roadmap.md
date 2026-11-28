@@ -719,19 +719,24 @@ activity distinct from who receives the next human intervention.
 This is the implementation sequence for the spatial part of milestone 3.
 Each item names the behavior to deliver and what to observe in the pilot.
 
-The [receiving composition](https://github.com/AlterMundi/holodeck/commit/c0fcc34bc6c82c414e169a438ed7e0365c5d8328)
+The [receiving composition](https://github.com/AlterMundi/holodeck/commit/e95652ca52963245bb5d80dff46882ca1aa6d6ba)
 brings PR40's topic rooms into the paired Questbook Workshop release from
 `45f27ae`. The existing A2UI toolbelt now exposes the project table,
 conversation, and return navigation in a topic room. The composition
 preserves topic scope on retained machine-context receipts and rechecks
 current access on recovery. A topic receipt cannot authorize an action in
 the physical world. The HTTP test covers that distinction after release.
-Mobile Chromium exercised entry, the empty project table, current links
-across two projects, and the selected pending question and result. The
-browser tests for the existing exterior Questbook and recovery of a
-committed mission after reload also passed. The remaining mobile journey
-and paired live use are tracked separately below. This branch is a
-candidate on the pilot release base. It has no receiving selection.
+The mobile Chromium journey passed on that revision. It entered from
+the explorer, opened the project table and a door for the selected project,
+and read the selected question and result. It recovered a committed
+mission from its original receipt after loss of the response, checked
+current project access and concurrent edits, changed Conversation's
+recipient in the room, and returned through the spatial minimap. It
+verified the exact sequence of work and travel writes independently of
+renderer pose presence. The exterior Questbook and reload tests also
+passed on the integration branch. This branch is a candidate on the pilot
+release base. Live adoption and paired use of the composed surfaces
+remain open.
 
 
 1. **Explorer and default rooms.** Add an entry widget that opens the current
