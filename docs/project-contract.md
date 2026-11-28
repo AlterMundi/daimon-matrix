@@ -78,7 +78,11 @@ that distinction during cold recovery: an older checkpoint commit may be
 available while the checkout contains a later or separate line of work.
 The probe leaves the checkout and index alone. Gateway remains responsible
 for the topic binding, access to the referenced source and publishing a
-checkpoint revision.
+checkpoint revision. For a checkout prepared with a `git:local:UUID` locator,
+add `--local-repository UUID` using the UUID from the selected link. The
+probe checks the same repository marker used by the preparation helper.
+A matching commit in a checkout with a different local identity cannot
+resolve the link.
 
 The project records its purpose, how to open or run it, and the next action
 when that would let someone else continue. Use shared cards when there is

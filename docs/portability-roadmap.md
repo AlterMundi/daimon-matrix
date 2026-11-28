@@ -414,7 +414,10 @@ its HEAD matched the linked commit at the time of the receipt readback. The
 probe now reports that check separately from finding the Git object. A
 separate branch tip and an unborn HEAD both preserve access to the object
 without satisfying checkout alignment. The live harness switch and its
-dispatch accounting are still open.
+dispatch accounting are still open. A subsequent read from the configured
+SSH origin with its pinned host key found the same commit at the advertised
+default branch tip. The existing operator account performed that read;
+access from a second participant's account is still open.
 
 [Gateway PR1137][direct-gateway] merged on 2026-11-28 at
 [`cec753ad`](https://github.com/AlterMundi/DaimonApp/commit/cec753ad1acdee7d467830ac0533584f47840f54).

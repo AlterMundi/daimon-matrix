@@ -1,6 +1,7 @@
 """Exercise the project revision probe against real, isolated Git workspaces."""
 
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,6 +73,24 @@ class ProjectGitRevisionTest(unittest.TestCase):
             self.assertFalse(prepare_project_git(workspace, "current", "story", repository)["created_checkout"])
             with self.assertRaisesRegex(ValueError, "different local repository identity"):
                 prepare_project_git(workspace, "current", "story", uuid4())
+            checkout = workspace / "story"
+            _git(
+                checkout, "-c", "user.name=Fixture",
+                "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false",
+                "commit", "--allow-empty", "-qm", "Story draft",
+            )
+            commit = _git(checkout, "rev-parse", "HEAD")
+            verifier = Path(preparation.__file__).with_name("verify_project_git.py")
+            command = [
+                sys.executable, str(verifier),
+                str(checkout), commit, "--local-repository", str(repository),
+            ]
+            subprocess.run(command, check=True, capture_output=True, timeout=10)
+            command[-1] = str(uuid4())
+            rejected = subprocess.run(command, capture_output=True, timeout=10)
+            self.assertEqual(rejected.returncode, 1)
+            self.assertIn(b"different local repository identity", rejected.stderr)
             draft = workspace / "existing"
             draft.mkdir()
             (draft / "chapter.md").write_text("Keep my draft.")
