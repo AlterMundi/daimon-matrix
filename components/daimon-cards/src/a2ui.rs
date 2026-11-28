@@ -65,7 +65,7 @@ pub fn update(card: &Card, access: &BoardAccess<'_>, labels: &Labels<'_>) -> sup
             "status": match card.status { Status::Open => labels.open, Status::InProgress => labels.in_progress, Status::Done => labels.done },
             "assignment": if card.assignee.is_some() { labels.assigned } else { labels.unassigned },
             "claimDisabled":!access.can_write || card.status != Status::Open || card.assignee.is_some(),
-            "doneDisabled":!access.can_write || card.status != Status::InProgress,
+            "doneDisabled":!access.can_write || card.status != Status::InProgress || card.objectives.iter().any(|item|item.receipt.is_none()),
         }
     }}))
 }

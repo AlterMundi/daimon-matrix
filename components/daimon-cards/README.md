@@ -46,8 +46,18 @@ selected objective, and the actions that apply. A `select_quest` event changes
 the host's selection. It writes no card event. The existing `claim` and
 `done` surface actions map to `Claim` and `Complete`. Acceptance assigns the
 actor and enters progress in one revision; completion requires an active card.
-The same commands work from a daimon tool. Apply world-backed progress from
-the owning Room's verified receipt when the Holodeck host is connected.
+The same commands work from a daimon tool. Use `require_world` to add an
+objective before quest acceptance. The private `record_world` writer operation
+credits a required objective after the owner verifies the original Room
+command outcome and event. The ordinary `apply` route cannot record world
+progress. Both ordinary completion and a direct status change to completed
+require receipts for all required objectives.
+
+The [Holodeck owner adapter](https://github.com/AlterMundi/holodeck/pull/40)
+uses Home's project view and edit grants and reads the original Room outcome
+for the authenticated actor. Its protected HTTP fixture credits a workshop
+bridge objective and retains the credited result across Room reset without
+re-executing the command.
 
 The event model uses
 [Lattice v2's event-system design](https://github.com/Stage-11-Agentics/lattice/blob/8736575d11853b1b90c4e49685747a53f13a9e6c/docs/architecture/event-system.md)

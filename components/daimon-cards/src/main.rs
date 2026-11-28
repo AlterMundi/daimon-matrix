@@ -31,6 +31,9 @@ enum Operation {
     Apply {
         command: Command,
     },
+    RecordWorld {
+        command: Command,
+    },
     MountCard {
         card: Uuid,
         labels: ProjectionLabels,
@@ -86,6 +89,7 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
         Operation::Read { card } => json!(cards.read(&access, card)?),
         Operation::History { card, after } => json!(cards.history(&access, card, after)?),
         Operation::Apply { command } => json!(cards.apply(&access, command)?),
+        Operation::RecordWorld { command } => json!(cards.record_world(&access, command)?),
         Operation::MountCard { card, labels } => {
             let card = cards.read(&access, card)?.ok_or(Error::Missing)?;
             json!(a2ui::mount(&card, &access, &labels.labels())?)

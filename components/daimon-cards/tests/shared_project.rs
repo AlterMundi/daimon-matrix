@@ -394,3 +394,130 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         1
     );
 }
+
+#[test]
+fn world_objectives_require_confirmed_receipts_before_completion() {
+    use daimon_cards::{WorldEvent, WorldObjective, WorldReceipt};
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = Cards::open(&temp.path().join("board.sqlite")).unwrap();
+    let actor = Actor {
+        kind: ActorKind::Daimon,
+        subject: "fixture-daimon".into(),
+    };
+    let access = BoardAccess {
+        project: id(1),
+        actor: &actor,
+        can_write: true,
+    };
+    let card = id(2);
+    let objective = WorldObjective {
+        id: id(3),
+        place: "island-workshop".into(),
+        event: WorldEvent::BridgeState { raised: true },
+    };
+    store
+        .apply(
+            &access,
+            action(
+                40,
+                card,
+                0,
+                Action::Create {
+                    title: "Operate the bridge".into(),
+                },
+            ),
+        )
+        .unwrap();
+    store
+        .apply(
+            &access,
+            action(
+                41,
+                card,
+                1,
+                Action::RequireWorld {
+                    objective: objective.clone(),
+                },
+            ),
+        )
+        .unwrap();
+    let active = store
+        .apply(&access, action(42, card, 2, Action::Claim))
+        .unwrap();
+    let Outcome::Applied { event } = active else {
+        panic!("Quest not accepted")
+    };
+    let receipt = WorldReceipt {
+        place: objective.place.clone(),
+        run: id(4),
+        edition: "island-workshop@draft-1".into(),
+        command: "original-bridge-action".into(),
+        actor: actor.subject.clone(),
+        sequence: 17,
+        occurred_at_ms: event.card.active_since_ms.unwrap(),
+        event: objective.event,
+    };
+    assert!(matches!(
+        store
+            .apply(
+                &access,
+                action(
+                    43,
+                    card,
+                    3,
+                    Action::SetStatus {
+                        status: Status::Done
+                    }
+                )
+            )
+            .unwrap(),
+        Outcome::Conflict {
+            current_revision: 3,
+            reason: Conflict::ObjectivesPending
+        }
+    ));
+    let command = action(
+        44,
+        card,
+        3,
+        Action::RecordWorld {
+            objective: objective.id,
+            receipt: receipt.clone(),
+        },
+    );
+    assert!(matches!(
+        store.apply(&access, command.clone()),
+        Err(Error::Access)
+    ));
+    let mut mismatch = receipt.clone();
+    mismatch.actor = "different-fixture".into();
+    assert!(matches!(
+        store.record_world(
+            &access,
+            action(
+                45,
+                card,
+                3,
+                Action::RecordWorld {
+                    objective: objective.id,
+                    receipt: mismatch
+                }
+            )
+        ),
+        Err(Error::Invalid)
+    ));
+    let credited = store.record_world(&access, command.clone()).unwrap();
+    let Outcome::Applied { event } = credited else {
+        panic!("Room evidence not applied")
+    };
+    assert_eq!(event.card.objectives[0].receipt.as_ref(), Some(&receipt));
+    let closed = store
+        .apply(&access, action(46, card, 4, Action::Complete))
+        .unwrap();
+    assert!(matches!(closed, Outcome::Applied { event } if event.card.status == Status::Done));
+    assert_eq!(
+        store.record_world(&access, command).unwrap(),
+        Outcome::Retained { event }
+    );
+}

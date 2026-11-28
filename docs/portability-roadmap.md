@@ -160,9 +160,14 @@ view state. A quest keeps the same project and card identity across human and
 daimon views. When progress depends on exploring, interacting or changing
 the world, show the affected place or object and observe the corresponding
 Holodeck receipt before counting that objective. Finish the whole quest only
-after its required objectives are satisfied. The initial fixture covers the
-journal and its shared claim and completion lifecycle; the room-backed
-objective and its receiving proof belong to the actual Holodeck pilot.
+after its required objectives are satisfied. The Chromium fixture covers the
+journal and shared claim and completion. The [Holodeck receiving fixture](https://github.com/AlterMundi/holodeck/pull/40)
+uses protected HTTP and the same Rust writer to credit a workshop bridge
+objective from its original Room receipt. It verifies pending and credited
+progress, refusal of early completion, and stable confirmation after a room
+reset. The live pilot still needs the A2UI journal mounted for the selected
+profile, the signed daimon action path, and reciprocal verification with
+real project participants.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and

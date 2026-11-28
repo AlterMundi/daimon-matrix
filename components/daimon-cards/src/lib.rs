@@ -66,14 +66,64 @@ impl GitRevision {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorldEvent {
+    BridgeState { raised: bool },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldObjective {
+    pub id: Uuid,
+    pub place: String,
+    pub event: WorldEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldReceipt {
+    pub place: String,
+    pub run: Uuid,
+    pub edition: String,
+    pub command: String,
+    pub actor: String,
+    pub sequence: u64,
+    pub occurred_at_ms: u64,
+    pub event: WorldEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldProgress {
+    pub objective: WorldObjective,
+    pub receipt: Option<WorldReceipt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
-    Create { title: String },
-    EditTitle { title: String },
-    Assign { assignee: Option<Actor> },
+    Create {
+        title: String,
+    },
+    EditTitle {
+        title: String,
+    },
+    Assign {
+        assignee: Option<Actor>,
+    },
     Claim,
     Complete,
-    SetStatus { status: Status },
-    LinkRevision { revision: GitRevision },
+    SetStatus {
+        status: Status,
+    },
+    LinkRevision {
+        revision: GitRevision,
+    },
+    RequireWorld {
+        objective: WorldObjective,
+    },
+    RecordWorld {
+        objective: Uuid,
+        receipt: WorldReceipt,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +145,10 @@ pub struct Card {
     pub assignee: Option<Actor>,
     pub evidence: Vec<GitRevision>,
     pub revised_by: Actor,
+    #[serde(default)]
+    pub objectives: Vec<WorldProgress>,
+    #[serde(default)]
+    pub active_since_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +181,8 @@ pub enum Conflict {
     AlreadyAssigned,
     AlreadyCompleted,
     NotInProgress,
+    ObjectivesPending,
+    ObjectiveAlreadyRecorded,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -208,6 +264,22 @@ impl Cards {
     }
 
     pub fn apply(&mut self, access: &BoardAccess<'_>, command: Command) -> Result<Outcome> {
+        if matches!(command.action, Action::RecordWorld { .. }) {
+            return Err(Error::Access);
+        }
+        self.commit(access, command)
+    }
+
+    /// Only the owner adapter calls this after reading the authoritative room
+    /// receipt with the current project actor. Tool and surface actions use apply.
+    pub fn record_world(&mut self, access: &BoardAccess<'_>, command: Command) -> Result<Outcome> {
+        if !matches!(command.action, Action::RecordWorld { .. }) {
+            return Err(Error::Invalid);
+        }
+        self.commit(access, command)
+    }
+
+    fn commit(&mut self, access: &BoardAccess<'_>, command: Command) -> Result<Outcome> {
         authorized(access, true)?;
         if command.operation.is_nil() || command.card.is_nil() || command.expected_revision < 0 {
             return Err(Error::Invalid);
@@ -249,6 +321,8 @@ impl Cards {
                     assignee: None,
                     evidence: vec![],
                     revised_by: access.actor.clone(),
+                    objectives: vec![],
+                    active_since_ms: None,
                 }
             }
             (Action::Create { .. }, None) => return Err(Error::Invalid),
@@ -256,6 +330,10 @@ impl Cards {
             (_, None) => return Err(Error::Missing),
             (_, Some(card)) => card,
         };
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| Error::Invalid)?;
+        let committed_at_ms = u64::try_from(time.as_millis()).map_err(|_| Error::Invalid)?;
         match &command.action {
             Action::Create { .. } => {}
             Action::EditTitle { title } => {
@@ -279,14 +357,91 @@ impl Cards {
                 }
                 card.assignee = Some(access.actor.clone());
                 card.status = Status::InProgress;
+                card.active_since_ms = Some(committed_at_ms);
             }
             Action::Complete => {
                 if card.status != Status::InProgress {
                     return Ok(conflict(Conflict::NotInProgress));
                 }
+                if card
+                    .objectives
+                    .iter()
+                    .any(|objective| objective.receipt.is_none())
+                {
+                    return Ok(conflict(Conflict::ObjectivesPending));
+                }
                 card.status = Status::Done;
             }
-            Action::SetStatus { status } => card.status = *status,
+            Action::SetStatus { status } => {
+                if *status == Status::Done
+                    && card
+                        .objectives
+                        .iter()
+                        .any(|objective| objective.receipt.is_none())
+                {
+                    return Ok(conflict(Conflict::ObjectivesPending));
+                }
+                if *status == Status::InProgress && card.status != Status::InProgress {
+                    card.active_since_ms = Some(committed_at_ms);
+                }
+                card.status = *status;
+            }
+            Action::RequireWorld { objective } => {
+                if card.status != Status::Open
+                    || objective.id.is_nil()
+                    || !identifier(&objective.place, 80)
+                    || card
+                        .objectives
+                        .iter()
+                        .any(|entry| entry.objective.id == objective.id)
+                {
+                    return Err(Error::Invalid);
+                }
+                card.objectives.push(WorldProgress {
+                    objective: objective.clone(),
+                    receipt: None,
+                });
+            }
+            Action::RecordWorld { objective, receipt } => {
+                if card.status != Status::InProgress {
+                    return Ok(conflict(Conflict::NotInProgress));
+                }
+                let started = card.active_since_ms.ok_or(Error::Invalid)?;
+                if receipt.actor != access.actor.subject
+                    || receipt.run.is_nil()
+                    || !identifier(&receipt.command, 80)
+                    || !identifier(&receipt.edition, 160)
+                    || receipt.sequence == 0
+                    || receipt.occurred_at_ms < started
+                {
+                    return Err(Error::Invalid);
+                }
+                if card
+                    .objectives
+                    .iter()
+                    .filter_map(|entry| entry.receipt.as_ref())
+                    .any(|old| {
+                        old.place == receipt.place
+                            && old.run == receipt.run
+                            && old.command == receipt.command
+                    })
+                {
+                    return Ok(conflict(Conflict::ObjectiveAlreadyRecorded));
+                }
+                let target = card
+                    .objectives
+                    .iter_mut()
+                    .find(|entry| entry.objective.id == *objective)
+                    .filter(|entry| {
+                        entry.objective.place == receipt.place
+                            && entry.objective.event == receipt.event
+                    })
+                    .ok_or(Error::Invalid)?;
+                if target.receipt.is_some() {
+                    return Ok(conflict(Conflict::ObjectiveAlreadyRecorded));
+                }
+                target.receipt = Some(receipt.clone());
+            }
             Action::LinkRevision { revision } => {
                 if !revision.valid() {
                     return Err(Error::Invalid);
@@ -304,10 +459,6 @@ impl Cards {
         }
         card.revision = current_revision.checked_add(1).ok_or(Error::Invalid)?;
         card.revised_by = access.actor.clone();
-        let time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| Error::Invalid)?;
-        let committed_at_ms = u64::try_from(time.as_millis()).map_err(|_| Error::Invalid)?;
         let event = Event {
             committed_at_ms,
             command,
@@ -326,6 +477,14 @@ impl Cards {
         tx.commit()?;
         Ok(Outcome::Applied { event })
     }
+}
+
+fn identifier(value: &str, max: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_@.".contains(&b))
 }
 
 fn current(db: &Connection, project: Uuid, card: Uuid) -> Result<Option<Card>> {
