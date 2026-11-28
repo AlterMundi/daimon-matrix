@@ -168,18 +168,28 @@ and workflow support we need to maintain locally.
    resource access. Verify a distinct authorized Tribe participant can retrieve
    and use the selected guide revision and shared card within that audience.
    Their view must not expose private topic or being-level memory.
-5. **Migrate existing work.** After the pilot acceptance, inventory every owned
-   topic and its linked work using the current Gateway and owning project records.
-   Compare a shadow migration first. Reuse logical topic IDs, native bindings,
-   existing repos, active trackers and original sources. Backfill only the
-   project links, checkpoints and card references that the retained evidence
-   supports. Preserve original dates, authorship, permissions, uncommitted work
-   and uncertain effects. Choose one outcome per topic, including an intentional
-   absence of a project when there is no continuing project work. Record missing
-   evidence explicitly. Adopt in bounded batches and reconcile each batch with
-   the inventory. The final check resolves the current revision and next
-   actionable work from the migrated topics, without relying on private native
-   history or duplicating an earlier effect.
+5. **Migrate existing work and tidy the environment.** After the contract pilot
+   passes, migrate one existing topic and its linked work. Compare a shadow
+   migration first. Reuse its logical ID, native binding, repositories, trackers
+   and original sources. Backfill links and checkpoints supported by retained
+   evidence. Verify that the selected project revision, next action, local
+   drafts, permissions and uncertain outcomes remain usable. Use the pilot to
+   refine the workflow. Once it works in ordinary use, apply it to a few more
+   topics, then to the full inventory in bounded batches.
+
+   Include workspaces, build outputs, caches and copies in the inventory.
+   Check what active topics, workers and projects still use. After verifying
+   the migrated work, use the existing cleanup tools to retire unused,
+   reproducible outputs and redundant copies. Preserve originals, local and
+   staged edits, receipts, current dependencies and required recovery data.
+   Verify that affected projects can still open or build and record what was
+   reclaimed. Existing host and preservation holds remain in force.
+
+   Reconcile each batch with the inventory. Keep original dates and authorship.
+   Record missing evidence and topics with no continuing project explicitly.
+   The final check resolves the current revision and next actionable work
+   from the migrated topics without relying on private native history or
+   duplicating an earlier effect.
 
 ## Additional harness pilots on ITACA
 
