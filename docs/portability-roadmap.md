@@ -813,8 +813,17 @@ Each item names the behavior to deliver and what to observe in the pilot.
    refusal after cancellation. Chromium checks the host-to-frame journey,
    unchanged general recipient and dismissal when closing Conversation,
    with a controlled result response. A result outside the current bounded
-   page remains unavailable through this shortcut. Answering a retained
-   question, spatial cues, and live receiving acceptance remain open.
+   page remains unavailable through this shortcut. The
+   [question action](https://github.com/AlterMundi/holodeck/commit/b2428b0)
+   opens the existing For You dialog inside Conversation. The
+   [canonical request reader](https://github.com/AlterMundi/DaimonApp/commit/8236537f)
+   filters current actionable questions to the exact room destination.
+   Chromium checks that the other topic's question stays out of the
+   dialog and the general recipient is preserved. The request-controls
+   fixture verifies a single, explicitly chosen answer with the original
+   question and revision, and lookup through a later pending page.
+   Internal-only questions stay with their owning session. Live paired
+   use, its decision receipt, and spatial work cues remain open.
 5. **Explicit direct mode.** Add an in-room choice to address the topic
    directly. Show the topic history in canonical Conversation and make the
    active recipient unmistakable. The general avatar can step aside or
