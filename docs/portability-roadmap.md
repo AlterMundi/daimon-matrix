@@ -6,7 +6,9 @@ conversation after a pause, a host or harness change, or loss of the native
 session. The next turn finds the right work, knows what happened and continues
 without repeating effects. [Current architecture](current-architecture.md)
 describes the stack, and [receiving state](../CURRENT-STATE.md) records actual
-deployments.
+deployments. The [technical project contract](project-contract.md) defines the
+default for newly created work. This roadmap covers how to qualify continuity
+and shared project coordination.
 
 ## State and ownership
 
