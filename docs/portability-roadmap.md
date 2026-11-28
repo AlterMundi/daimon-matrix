@@ -395,6 +395,14 @@ open at revision three. Anonymous journal access was denied. The private
 operator record retains the exact native receipt and release request.
 The paired human's actual use and the topic-room binding remain open.
 
+The [installed own-native command](https://github.com/AlterMundi/holodeck/blob/45f27ae2b8fd70acefe821161c56b3bf7d03599a/docs/native-creation-quickstart.md#paired-project-questbook)
+now includes `holodeck-world --own questbook` with the same receiving socket
+and identity. It read back the exact original live receipt and ordinary
+own observation continued to work through the same wrapper. Gateway
+PR1137 is ready for integration and identifies this exact private pilot
+as the first live checkpoint consumer. Its serving selection remains
+with Portability.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Git owns project
