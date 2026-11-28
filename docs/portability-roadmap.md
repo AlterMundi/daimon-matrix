@@ -585,7 +585,13 @@ the live bridge, Holodeck and paired-browser acceptance remain open.
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
    commit with the checkout verifier. Keep the existing project UUID,
-   repository UUID, board and audience.
+   repository UUID, board and audience. The existing Git preparation
+   helper now restores an exact commit from an absolute origin or a
+   selected SSH origin with its pinned host key. The private pilot SSH
+   remote served the selected commit into a disposable workspace, and
+   an exact repeat preserved a local draft. Six Git tests passed,
+   including restoring a historical commit and reusing it while the
+   origin is unavailable. This rehearsal did not claim a Gateway folder.
 2. Use one real retained Observer or general-conversation citation that
    addresses the pilot topic and names the link and next work. Apply it
    with the `project_checkpoint_shadow` writer. Read the exact resulting
