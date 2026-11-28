@@ -529,12 +529,11 @@ Holodeck project has its own Git origin, a verified commit and a retained
 DaimonCards receipt. The live own-native reader in this cut confirmed the
 same receipt and card revision three with the original Git link current.
 The combined Holodeck candidate below preserves the serving world.
-The loaded bridge still lacks the topic-room operation. The current shared
-Home profile enables workspace access and the selected Gateway now serves
-the project reader. Select the matching bridge and Holodeck candidate
-through their existing owners. Keep the current pair and use the
-then-serving release as the rollback reference. The pilot has no accepted
-topic checkpoint yet.
+The loaded bridge now supports the topic-room operation. The current shared
+Home profile enables workspace access and the selected Gateway serves the
+project reader. Select the matching Holodeck package through its existing
+owner. Keep the current pair and use the then-serving release as the
+rollback reference. The pilot has no accepted topic checkpoint yet.
 
 The first pilot deliverable is the bridge mission playtest guide. The
 existing Home publisher accepted a paired-human HTML edition of
@@ -557,14 +556,16 @@ unpacked server passed 11 Node 24/Chromium Conversation and Questbook
 checks, including the pinned guide with a later draft. The
 [packed browser fixture](https://github.com/AlterMundi/holodeck/commit/2c7943c0b34d43961dc08ae774dc42004cc2daf4)
 can rerun against that immutable package. The candidate bridge passed 37
-tests; its active predecessor still lacks the topic-room operation.
-The candidate also ran on a temporary Unix socket with the existing
-Holodeck caller UID and selected live Dashboard provider. It returned
-the real Matrix topic, preserved the current pair, Conversation route
-and Questbook read grant, and refused an unrelated actor. The project
-catalogue was still empty. The prepared bridge configuration retains
-the existing socket, callers and grants, and changes only the Dashboard
-provider selection. The serving bridge remained unchanged.
+tests and returned the real Matrix topic from a temporary socket using
+the existing Holodeck caller and live Dashboard provider. The existing
+bridge service then selected its source, SHA-256
+`f5aa77fb00c7e4641269a6738fa40336e92614412af9ca9527d28889944dbfbd`,
+with a scoped restart and its previous selection retained for rollback.
+The production socket returned the authenticated Matrix topic, preserved
+the pair, Conversation route and Questbook read grant, and refused an
+unrelated actor. Gateway's process and executable were unchanged. The
+topic's project catalogue remains empty until the workspace and
+checkpoint are linked.
 Portability selected Gateway `d4253a6c` and its matching Dashboard
 on Ítaca. The active Matrix topic controller advertised
 `project_checkpoint_shadow` and confirmed that the topic had no claimed
@@ -586,8 +587,8 @@ exact revision, source, repeat and revocation checks, with no additional
 dispatches or model calls. The locked Rust 1.95 release candidate on
 serving baseline `19bff073` has SHA-256
 `fb5238bad398b59399027ecf1f9ff5d0b00822eca93f1bf1982e6891b0e3682c`.
-Portability owns the receiving selection. Pilot workspace adoption and
-the live bridge, Holodeck and paired-browser acceptance remain open.
+Portability owns the receiving selection. Pilot workspace adoption, the Holodeck package selection and
+paired-browser acceptance remain open.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
