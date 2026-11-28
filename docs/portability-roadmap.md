@@ -525,11 +525,16 @@ identifies the exact owner-workspace correction and its qualification.
 Portability owns selection of the compatible Gateway package against the
 then-serving lineage and retains the loaded revision and rollback through
 the existing receiver. The live Gateway already has a workspace root and
-project reader. The Matrix topic controller reports no permanent workspace.
-The current Holodeck package, bridge and issue-capable Questbook writer
-are installed. The private project has an SSH Git origin, a verified
-commit, the linked issue receipt and a pinned Home edition. The pilot
-still needs the workspace adoption and its first accepted topic checkpoint.
+project reader. Portability selected Gateway `346f857c` on Ítaca. Matrix
+adopted the permanent workspace through its owner control while the topic
+was active. The workspace read returned the new claim and retained the
+active working directory. A strict-host-key SSH checkout inside the claimed
+workspace recovered the exact published commit. The authorized Questbook
+reader recovered the original link receipt and the issue at revision two.
+The Holodeck package, bridge, issue writer and pinned Home edition are
+installed. The project catalogue still returned revision zero with no
+links. The next step is the first shadow checkpoint with a current,
+authorized citation of that exact link and its next work.
 
 The first pilot deliverable is the bridge mission playtest guide. The
 existing Home publisher accepted a paired-human HTML edition of
@@ -641,8 +646,10 @@ the existing revision. The room reader exposed the approved label and exact
 commit without the SSH locator. The normal local-Git journey still passed.
 Both used synthetic Conversation and Codex peers with zero model calls or
 extra dispatches. The installed Gateway and the real pilot topic were
-untouched. Portability owns the Gateway selection. Pilot workspace adoption and the
-paired-browser opening of the same release through both surfaces remain open.
+untouched during the fixture. Portability subsequently selected the
+compatible Gateway and Matrix adopted the workspace as recorded above.
+The live shadow link and paired-browser opening of the same release
+through both surfaces remain open.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
