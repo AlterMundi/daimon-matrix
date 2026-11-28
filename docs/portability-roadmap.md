@@ -558,6 +558,13 @@ checks, including the pinned guide with a later draft. The
 [packed browser fixture](https://github.com/AlterMundi/holodeck/commit/2c7943c0b34d43961dc08ae774dc42004cc2daf4)
 can rerun against that immutable package. The candidate bridge passed 37
 tests; its active predecessor still lacks the topic-room operation.
+The candidate also ran on a temporary Unix socket with the existing
+Holodeck caller UID and selected live Dashboard provider. It returned
+the real Matrix topic, preserved the current pair, Conversation route
+and Questbook read grant, and refused an unrelated actor. The project
+catalogue was still empty. The prepared bridge configuration retains
+the existing socket, callers and grants, and changes only the Dashboard
+provider selection. The serving bridge remained unchanged.
 Portability selected Gateway `d4253a6c` and its matching Dashboard
 on Ítaca. The active Matrix topic controller advertised
 `project_checkpoint_shadow` and confirmed that the topic had no claimed
