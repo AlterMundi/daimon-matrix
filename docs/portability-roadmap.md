@@ -751,12 +751,13 @@ includes that source and keeps its flight, locomotion and terrain modules
 byte-identical. The installed Home verifier accepted the 96-file,
 40,448,000-byte candidate archive, SHA-256
 `c3e809dece1c4e0cce996c81009e4b6a1c6851f26579fb650809f142129ad85d`.
-Eleven Node 24.21.0 tests passed across the mobile room and shared
-Questbook journeys and their HTTP and frame checks. The predecessor
-topic candidate also booted from its exact package on Node 24.21.0
-against fixture Home and bridge sockets. It checked health, protected
-HTML, room entry, Git revision projection and revocation with zero
-model calls.
+The exact archive booted on the installed Node 24.21.0 runtime in
+production mode against fixture Home and bridge sockets. It checked
+health, protected HTML, room entry, Git revision projection and both
+levels of revocation with zero model calls. Eleven tests passed across
+the Chromium journeys and associated HTTP and frame checks. The
+standard Node suite passed 594 tests with six fixture-dependent skips.
+The native bridge suite passed 53 tests.
 
 The current own-native route re-read the real Git-review mission at
 revision three with its original receipt and Git link. The unselected
