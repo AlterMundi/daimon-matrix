@@ -119,6 +119,20 @@ and workflow support we need to maintain locally.
    its installed orientation, memory access and published skill versions.
    Attribute the result to its actual body and preserve each audience.
 
+## Additional harness pilots on ITACA
+
+After the current continuity and coordination repairs pass live acceptance,
+enroll one topic each for Antigravity and Goose. Use real work that suits the
+topic. Qualify both before adding separate Qwen and MiniMax CLI topics. Verify
+each selected profile and portable embodiment through the existing admission
+path before treating its topic as ready.
+
+Use the same test across all four topics and the existing Codex and Claude
+topics. Admit a request, observe its attributed progress and final return,
+recover useful context after a restart, and exercise the available native
+steering or queued-input behavior. Verify the actual recipient and visibility
+from each surface. Use the same Gateway entry points for those operations.
+
 ## Evidence for a Claude engineering partnership
 
 Demonstrate a reproducible case using synthetic project data and a real Claude
