@@ -665,6 +665,16 @@ activity distinct from who receives the next human intervention.
    confirmed reader and was never attempted. The signed delivery proves
    the route for this guide announcement. Foreign Source intake and use by
    a receiving model remain open.
+   After the Codex owner descriptors were renewed, the local signed reader
+   returned `dm.scope.we/v1`. The MCP connector in the already-open turn
+   still returned `authentication_failed`. Codex's current Source writer
+   created its own signed starting cursor, selected the existing publication
+   from Claude and pulled the exact claim and publication into quarantine.
+   The authenticated readback matched the original publication hash. Pull
+   `aa6cbcc2-3423-468f-9696-bc634e1718c4` retained two origin events, zero
+   unrelated events, and invoked zero model calls. This is Source intake
+   for the Codex body. The installed skill and existing Source adoption
+   in Antigravity are separately evidenced above.
    Ítaca preflight found a 1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an
