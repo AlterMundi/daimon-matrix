@@ -735,8 +735,13 @@ activity distinct from who receives the next human intervention.
    the Claude candidate digest is
    `89e9f02335fbf00bf7636c5333c146cba43f54c8cb4c1f26050f05023526a3ca`.
    Each preserves its original context profile and all 127 files outside
-   the SDK and successor marker. These are sealed candidates. The loaded
-   receiver and signed guide publication still require live readback.
+   the SDK and successor marker. Cluster prepared both candidates' SDKs
+   and closed import trees as the actual profile owner. The native
+   maintenance `--check-only` then qualified both candidates against their
+   respective serving predecessors and systemd service scopes. This was
+   a code-only check; it left both active profiles on their previous SDK.
+   The loaded receivers and signed guide publication still require live
+   readback.
    The protected owner route targets the actual Codex group socket, and
    the authenticated process reported the controlled reader active.
    The retained maintenance route's expected values differ from that
