@@ -438,10 +438,18 @@ activity distinct from who receives the next human intervention.
    preview could not authorize a pull and landed no data. The successful
    `dm.source-pull-result/v1` retained both envelopes and one quarantine
    decision, `c4e748e6-1d35-4d96-993c-9a2d785e629c`. The authenticated
-   Antigravity reader resolved the original publication event. The same
-   selective publisher read for Oliva returned `source_disclosure_denied`.
-   A current claim and `tribe-shared` read grant for this exact source have
-   not been established. Foreign receipt and actual harness use remain open.
+   Antigravity reader resolved the original publication event. An operator
+   verified the signed locator against the upstream Git object and the local
+   installed 2,260-byte guide. Both copies have SHA-256
+   `02947f30f1c95ca3bf80e8a445ea39979fea2c4da87bbe7df2370a0a2b6470df`.
+   Antigravity's owning Source path admitted the exact participation claim
+   (`1f21e3d7-6f43-4adf-a0ab-c3d550fb9535`) and then returned an
+   active external-reference projection for the original publication under
+   decision `4875eb48-d3c9-4e90-9967-072a068200e5`. This confirms operator
+   review and Source adoption with zero model calls. The same selective
+   publisher read for Oliva returned `source_disclosure_denied`. A current
+   claim and `tribe-shared` read grant for this exact source have not been
+   established. Foreign receipt and use by a receiving model remain open.
    Ítaca preflight found a 1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an
