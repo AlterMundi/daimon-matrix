@@ -87,8 +87,13 @@ Use ordinary Git to commit the first useful files and, if shared, push the
 first revision. On a filesystem where Git requires
 explicit trust for a collaborator-owned bare repository, use its exact
 authorized path with `git -c safe.directory=/path/to/repository.git` for the
-Git operation. Existing SSH and HTTP repositories can use ordinary Git
-directly. The helper does not create service access or edit an existing
+Git operation. To recover an existing checkout, pass
+`--origin ORIGIN --commit COMMIT` with its retained repository UUID. For
+an `ssh://` origin also pass the operator's existing pinned
+`--known-hosts FILE`. The helper verifies the full commit before publishing
+a new checkout. A repeat verifies the existing origin and commit locally and
+keeps its branch, HEAD, index and drafts. Use ordinary Git for other authorized
+transports. The helper does not create service access or edit an existing
 checkout's Git configuration.
 
 Use `python tools/verify_project_git.py REPO COMMIT`

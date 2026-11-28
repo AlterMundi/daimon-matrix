@@ -100,6 +100,47 @@ class ProjectGitRevisionTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "project directory"):
                 prepare_project_git(workspace, "current", "../outside", uuid4())
 
+    def test_restore_existing_origin_at_exact_commit_without_moving_a_draft(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source, workspace = root / "source", root / "workspace"
+            source.mkdir()
+            workspace.mkdir()
+            (workspace / ".daimon-topic").write_text("current")
+            repository = uuid4()
+            _git(source, "init", "--initial-branch=main")
+            for title in ("Published story", "Working story"):
+                (source / "scene.md").write_text(title)
+                _git(source, "add", "--", "scene.md")
+                _git(source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                     "-c", "commit.gpgsign=false", "commit", "-qm", title)
+            exact = _git(source, "rev-parse", "HEAD^")
+            with self.assertRaisesRegex(ValueError, "exact commit"):
+                prepare_project_git(workspace, "current", "absent", repository,
+                                    origin=str(source), commit="abc")
+            with self.assertRaisesRegex(ValueError, "commit is unavailable"):
+                prepare_project_git(workspace, "current", "absent", repository,
+                                    origin=str(source), commit="a" * 40)
+            self.assertFalse((workspace / "absent").exists())
+            result = prepare_project_git(workspace, "current", "story", repository,
+                                         origin=str(source), commit=exact)
+            checkout = workspace / "story"
+            self.assertTrue(result["created_checkout"])
+            self.assertTrue(result["checkout_at_selected_commit"])
+            self.assertEqual(result["locator"], f"git:{source}")
+            self.assertEqual((checkout / "scene.md").read_text(), "Published story")
+
+            _git(checkout, "switch", "-c", "next", "origin/main")
+            (checkout / "scene.md").write_text("An uncommitted draft")
+            _git(checkout, "add", "--", "scene.md")
+            staged = _git(checkout, "diff", "--cached")
+            source.rename(root / "unreachable")
+            retry = prepare_project_git(workspace, "current", "story", repository,
+                                        origin=str(source), commit=exact)
+            self.assertFalse(retry["created_checkout"])
+            self.assertFalse(retry["checkout_at_selected_commit"])
+            self.assertEqual(staged, _git(checkout, "diff", "--cached"))
+
     def test_failed_git_steps_leave_a_retryable_project(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
