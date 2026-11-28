@@ -373,12 +373,24 @@ activity distinct from who receives the next human intervention.
    Selective installation and rollback passed in an isolated receiving root.
    On 2026-11-28, the existing Ítaca skill binding installed `daimon-gateway`
    1.0.4 from that exact commit and its surface check passed. This records
-   installed bytes before any fresh harness uptake. On the same date, native
-   Foundation scope and the existing Source owner reader returned
-   `authentication_failed`; the selected local capability descriptors
-   expired at 07:31 UTC. Source/Weave publication and remote reception
-   remain to be verified through the maintained owner renewal and adoption
-   paths. Ítaca preflight found a 1,495,826,432-byte ledger on the active
+   installed bytes before any fresh harness uptake. The Codex body’s native
+   Foundation scope and Source owner reader returned `authentication_failed`
+   after its descriptors expired at 07:31 UTC. The separately signed Claude
+   body on Ítaca authenticated through its existing Weave writer and published
+   a shareable `skill.proposed` offer for that exact Skills commit. The
+   authenticated local reader confirmed event
+   `0dbb6af6-6a55-531d-ade3-fa8c90cf3fd8` at sequence 41 with content hash
+   `8b291ca362cfecf3252d7b280a1694330165e051389fe1374ee9a341b213bc2b`.
+   Its causal parent `8371e543-2f51-5f86-9bfc-dee8b6f7c390` retained an
+   incorrect documentation URL; the successor corrects that locator and
+   references the same package bytes. The Antigravity body authenticated,
+   found no copy of the corrected event, and reported the Claude peer
+   available. The receiving heads lack the predecessor chain needed by the
+   existing sync, which pages intervening events without a subject filter.
+   This guide verification did not transfer unrelated events. Same-being
+   receiving uptake and the disclosure-authorized Source exchange with a
+   distinct Tribe participant remain open. Ítaca preflight found a
+   1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an
    equal-sized disposable ledger file. A separate signed SQLite fixture
@@ -404,7 +416,8 @@ activity distinct from who receives the next human intervention.
    sending a native RPC. The owning lifecycle still needs this observation
    wired into the signed original-profile transaction, matching visibility
    activation and authenticated post-start read. The service kept running
-   throughout. No peer publication or model wakeup was issued.
+   throughout that recovery qualification. The guide offer did not invoke
+   a model or authorize installation on a receiving body.
 5. **Migrate existing work and tidy the environment.** After the contract pilot
    passes, migrate one existing topic and its linked work. Compare a shadow
    migration first. Reuse its logical ID, native binding, repositories, trackers
