@@ -717,6 +717,17 @@ activity distinct from who receives the next human intervention.
    request recovered its signed event without an additional ledger event
    and the competing request was refused. Live registration needs the
    compatible relationship writer; the unsigned candidate is still retained.
+   The serving SDK preimages required different compatibility adapters.
+   The Claude copy passed current disclosure and authoring tests with the
+   existing exact-operation reader backported. The Codex copy from
+   `017e5516` also needed the existing current relationship snapshot helper.
+   Its release-matched fixture verified one winner for two competing
+   requests and exact recovery after the ledger commits. The isolated
+   Claude and Codex patch digests are
+   `952eb5991305442a979186a3ccc1d5791af00101a2627d3fc3302f0f780eee6c` and
+   `def977c824bb9c2edc268c200f1e6a922ff7f86752013ece73d0304ac0f7cc08`.
+   Exact preimages and tested successor hashes are retained for the
+   respective service owners. Both live services still use their prior SDK.
    Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
