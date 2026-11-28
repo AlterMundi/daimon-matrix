@@ -744,10 +744,20 @@ activity distinct from who receives the next human intervention.
    readback.
    The protected owner route targets the actual Codex group socket, and
    the authenticated process reported the controlled reader active.
-   The retained maintenance route's expected values differ from that
-   process on all six selection fields. Reconcile the predecessor approval
-   with the current signed startup observation before using the scoped
-   selection and rollback route. Both responders still use the prior SDK.
+   In the 2026-11-28 receive-only inspection, all seven owner routes in
+   the retained maintenance registry authenticated. Every loaded selection
+   differed from its registered preimage on at least four fields. Cluster's
+   installed maintenance CLI refused the original registry with
+   `receiving_cohort_selection_changed` beneath its generic CLI error.
+   A temporary registry with the seven observed tuples qualified in the
+   installed CLI's `--check-only`. The current coverage implementation,
+   run on authenticated roster and reader observations, then found two
+   membership bases: Codex on Ítaca and the six other registered routes.
+   All seven roster observations had incomplete coverage with those routes.
+   This distinguishes the stale registry from an unresolved signed cohort
+   difference. Reconcile that difference through the existing authority
+   and reader route before selecting the SDK. The active registry, signed
+   rosters and serving SDKs were left intact.
    Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
