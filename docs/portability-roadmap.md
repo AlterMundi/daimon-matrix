@@ -608,7 +608,13 @@ writer when rolling back the world UI so it can read the new issue event.
 A later Holodeck release, `b10cc0d03f3c`, retained the topic and issue routes
 and the same writer. The live own-native lane recovered both original
 receipts after that selection, and the project route returned 401 without
-authentication. The paired human action and live workspace link remain open.
+authentication. A fresh checkout from the private Git origin over its
+existing strict-host-key SSH route recovered the exact commit. The owning
+Questbook reader recovered the issue's original Git-link receipt and the
+current issue at revision two. The Home publisher's retained bytes matched
+the selected edition, with the paired-human audience and the same exact
+artifact and version in the shared-login destination. This read used zero
+model calls. The paired human action and live workspace link remain open.
 Portability selected Gateway `d4253a6c` and its matching Dashboard
 on Ítaca. The active Matrix topic controller advertised
 `project_checkpoint_shadow` and confirmed that the topic had no claimed
@@ -917,7 +923,13 @@ activity distinct from who receives the next human intervention.
    a receiving model remain open.
    After the Codex owner descriptors were renewed, the local signed reader
    returned `dm.scope.we/v1`. The MCP connector in the already-open turn
-   still returned `authentication_failed`. Codex's current Source writer
+   still returned `authentication_failed`. A fresh foreground instance of
+   the same installed Codex connector completed the native handshake,
+   authenticated `scope.we`, and resolved the original guide publication
+   as published with its exact signed event and hash. It returned
+   `source_projection_not_promoted` for this body's local projection.
+   The Codex app-server reload queues a refresh for loaded threads, so
+   this comparison did not use it. Codex's current Source writer
    created its own signed starting cursor, selected the existing publication
    from Claude and pulled the exact claim and publication into quarantine.
    The authenticated readback matched the original publication hash. Pull

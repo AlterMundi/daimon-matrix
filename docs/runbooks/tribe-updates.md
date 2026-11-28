@@ -59,6 +59,18 @@ publication and import operations. Check the method on the selected
 descriptor before preparing a request. An exit-3 CLI authentication
 refusal is local and happens before dispatch, with no retry token.
 
+After an owner descriptor renewal, an already-open Foundation MCP connector
+can keep the earlier capability. Compare one read through a fresh foreground
+instance of the installed connector before treating its authentication error
+as a daemon outage. Check the typed payload and its signed result. An MCP
+transport response alone proves neither. A successful fresh read establishes
+the current descriptor and tool route. Codex app-server MCP reload schedules a
+refresh for loaded threads, so use the foreground comparison for this scoped
+inspection. Keep the original Source assessment and adoption decision when
+reconciling across same-being bodies. A published Source status and
+`source_projection_not_promoted` can coexist while a receiving body's
+projection has yet to incorporate that decision.
+
 Source project publications are attributed learning references, not species or
 ancestry selectors. The foundation's ancestry `/source.pull` and
 `/species.pull.name` must keep their lineage meaning; species release/live
