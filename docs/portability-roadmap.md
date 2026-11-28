@@ -75,9 +75,19 @@ cut requires no model call and no Gateway deployment.
 The [Gateway shadow candidate](https://github.com/AlterMundi/DaimonApp/pull/1137)
 adds the revisioned local store and controller action. Its isolated
 SQLite/Git test verifies the exact link through a store restart and checkout
-move, with matching operation re-reads and conflict detection. Canonical
-conversation audience changes, the receiving controller, and cold harness
-recovery still require their own acceptance evidence.
+move, with matching operation re-reads and concurrent conflict detection.
+A synthetic Codex peer exercises the actual Gateway controller and
+general-conversation reader. When a human correction supersedes the cited
+source, read and repeat fail while the worker's workspace stays available.
+Both fixtures run without model inference. Live worker use and cold harness
+recovery still require separate acceptance.
+
+For cold recovery, both existing startup paths already have a checkpoint
+slot fed by the claimed workspace's `CONTINUITY.md`. Use those receiving
+paths for the verified project checkpoint after resolving its local checkout.
+Revalidate the original source and effect owner before the first useful turn.
+Keep the checkpoint's project locator and immutable commit separate from
+a local checkout path so a move does not rewrite the accepted revision.
 
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
