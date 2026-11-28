@@ -83,15 +83,19 @@ move, with matching operation re-reads and concurrent conflict detection.
 A synthetic Codex peer exercises the actual Gateway controller and
 general-conversation reader. When a human correction supersedes the cited
 source, read and repeat fail while the worker's workspace stays available.
-Both fixtures run without model inference. Live worker use and cold harness
-recovery still require separate acceptance.
+The catalog fixture reads three repositories across two projects from the
+same topic. Updating one link keeps the other links independently readable.
 
-For cold recovery, both existing startup paths already have a checkpoint
-slot fed by the claimed workspace's `CONTINUITY.md`. Use those receiving
-paths for the verified project checkpoint after resolving its local checkout.
-Revalidate the original source and effect owner before the first useful turn.
-Keep the checkpoint's project locator and immutable commit separate from
-a local checkout path so a move does not rewrite the accepted revision.
+The candidate uses the existing Codex and Claude startup paths for an
+explicitly selected set of verified repository revisions. An isolated
+paired-human round trip exercised the actual Gateway and Claude Code 2.1.332
+with Agent SDK 0.3.332, a loopback provider, and a synthetic Codex Core.
+Both receiving paths carried the selected repositories and the unchanged
+original receipt references. One request had a retained terminal result and
+one remained unresolved. The round trip made no duplicate dispatches or
+real provider calls. It does not establish a live rollout or cold recovery
+with either production harness's native history unavailable.
+
 
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
