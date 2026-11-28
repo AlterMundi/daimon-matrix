@@ -449,7 +449,14 @@ activity distinct from who receives the next human intervention.
    review and Source adoption with zero model calls. The same selective
    publisher read for Oliva returned `source_disclosure_denied`. A current
    claim and `tribe-shared` read grant for this exact source have not been
-   established. Foreign receipt and use by a receiving model remain open.
+   established. Oliva received the public, immutable Skills locator in a
+   directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
+   The author's authenticated delivery readback proved Oliva's receiving
+   copy with the signed terminal receipt
+   `e8adbe47-5a62-4f52-8970-7e6a214417c7`. One other Oliva route had no
+   confirmed reader and was never attempted. The signed delivery proves
+   the route for this guide announcement. Foreign Source intake and use by
+   a receiving model remain open.
    Ítaca preflight found a 1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an
