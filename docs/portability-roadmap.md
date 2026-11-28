@@ -549,9 +549,18 @@ from the project table. In the protected mobile Chromium fixture, the
 link kept its published commit after a later draft advanced. The room
 stopped exposing it after losing the project grant or the matching linked
 history. The selected Git and Home pins remain in the private pilot
-record. Live selection of the compatible Gateway, bridge and Holodeck
-build, and the paired browser opening that edition from both surfaces,
-are still required.
+record. The installed Home archive verifier accepted all 96 files of
+the 40,458,240-byte Holodeck package built from `83284b8`, SHA-256
+`f2e9e076fe527102a64fc1b24ffa74852864121d60fb43e47e28637ba36bb08b`.
+It includes the recorded `1553b42` world release lineage. The exact
+unpacked server passed 11 Node 24/Chromium Conversation and Questbook
+checks, including the pinned guide with a later draft. The
+[packed browser fixture](https://github.com/AlterMundi/holodeck/commit/2c7943c0b34d43961dc08ae774dc42004cc2daf4)
+can rerun against that immutable package. The candidate bridge passed 37
+tests; its active predecessor still lacks the topic-room operation.
+Live selection of the compatible Gateway, bridge and Holodeck build,
+and the paired browser opening that edition from both surfaces, are
+still required.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
