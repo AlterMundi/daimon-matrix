@@ -520,20 +520,16 @@ the real paired project canary remain with Portability.
 
 #### Owner handoff for the live checkpoint canary
 
-Portability owns selecting the compatible Gateway package and its dashboard
-and adapter. Compare the package with the then-serving lineage and retain
-its exact loaded sources and rollback through the existing receiver. The
-private candidate record on Ítaca holds the binary digest and fixture
-receipts. The running profile already has its workspace root. The private
-Holodeck project has its own Git origin, a verified commit and a retained
-DaimonCards receipt. The live own-native reader in this cut confirmed the
-same receipt and card revision three with the original Git link current.
-The first combined Holodeck candidate preserved its then-current world baseline.
-The loaded bridge now supports the topic-room operation. The current shared
-Home profile enables workspace access and the selected Gateway serves the
-project reader. Select the matching Holodeck package through its existing
-owner. Keep the current pair and use the then-serving release as the
-rollback reference. The pilot has no accepted topic checkpoint yet.
+The [Portability receiving handoff](https://github.com/AlterMundi/daimon-matrix/issues/497#issuecomment-7241325680)
+identifies the exact owner-workspace correction and its qualification.
+Portability owns selection of the compatible Gateway package against the
+then-serving lineage and retains the loaded revision and rollback through
+the existing receiver. The live Gateway already has a workspace root and
+project reader. The Matrix topic controller reports no permanent workspace.
+The current Holodeck package, bridge and issue-capable Questbook writer
+are installed. The private project has an SSH Git origin, a verified
+commit, the linked issue receipt and a pinned Home edition. The pilot
+still needs the workspace adoption and its first accepted topic checkpoint.
 
 The first pilot deliverable is the bridge mission playtest guide. The
 existing Home publisher accepted a paired-human HTML edition of
