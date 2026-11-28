@@ -498,12 +498,25 @@ The external Telegram adapter fixture also passed with the same binary,
 including paused delivery, lost acknowledgments and unchanged originals.
 The Conversation and Workspace UI checks and 13 dashboard view tests
 passed. Repository-wide format drift was already present in the same
-files across the two parents. The cold round trip stopped at native
-acceptance in this fixture environment on both this build and the
-previous checkpoint binary. That repeat does not qualify cold recovery.
-Ítaca advanced to `1c651fe4` during the check; its later scoped model and
-tool changes still need composition before this becomes a candidate for
-that serving profile.
+files across the two parents. The initial cold fixture failed before
+native submission on both this build and the previous checkpoint binary.
+The fixture SDK imported successfully but its controller tool could not
+resolve the `zod` peer dependency. The existing complete controller SDK
+fixture supplied that dependency. With it, the same binary completed
+the round trip without changing input or receipt semantics.
+
+The current receiving candidate `934aac6c715b2f64c22c0d0b704f94a2b05fa6b0`
+also includes the observed serving `f9ad6be3` model, effort and tool
+selection changes. Its locked offline Rust 1.95 release binary has SHA-256
+`f23276a875bf12bab484e16d2bcaa28916f1763f8f9da4aa75a0a6bc5db7d618`.
+The exact binary passed shadow checkpoint tests. In the cold round-trip
+fixture, Claude Code 2.1.332 with Agent SDK 0.3.325 reached the visible
+reply in 4,642 ms (8 input and 4 output fixture tokens). Codex App Server
+0.167.0 reached the visible reply in 1,203 ms after retry (218 fixture
+tokens). Each used one loopback inference request, with zero real
+provider calls and zero earlier instructions redispatched. The worker
+and Workspace tests also passed. Selection of the serving Gateway and
+the real paired project canary remain with Portability.
 
 #### Owner handoff for the live checkpoint canary
 
