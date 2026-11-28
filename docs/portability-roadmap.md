@@ -754,10 +754,16 @@ activity distinct from who receives the next human intervention.
    run on authenticated roster and reader observations, then found two
    membership bases: Codex on Ítaca and the six other registered routes.
    All seven roster observations had incomplete coverage with those routes.
-   This distinguishes the stale registry from an unresolved signed cohort
-   difference. Reconcile that difference through the existing authority
-   and reader route before selecting the SDK. The active registry, signed
-   rosters and serving SDKs were left intact.
+   The eight-owner Cluster group configuration supplied the missing
+   route. Emma's controlled reader authenticated through her existing
+   owner binding and reported the same membership basis as the six
+   registered routes outside Ítaca. Both membership bases cover eight
+   beings and share their membership proofs. Ítaca has all 12 bodies in
+   the common audience plus one additional embodiment of an existing
+   member. The required authority epochs also differ. Use the existing
+   Emma binding to restore coverage, then reconcile the differing signed
+   embodiment and required epochs through the existing authority writer.
+   Recheck the complete audience before selecting either SDK.
    Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
