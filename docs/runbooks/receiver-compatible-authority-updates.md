@@ -171,6 +171,16 @@ body routes distinct provider/route/key reference identifiers even when a being
 consciously retains the same key bytes. This is group maintenance, never per-pair
 enrollment or another group.
 
+For a listener collision on a shared host, the same writer accepts
+`local_port=...` for the local group application. It moves the listener and
+signed intake together, preserving the host and transport material. A
+direct local roster endpoint that matched the old intake follows the move.
+An independently advertised endpoint stays as selected in the roster.
+Check actual port ownership and inventory the other receivers' selected
+routes before changing the local application. If any receivers route to the
+old endpoint, qualify the coordinated route change before cutting over.
+Keep carrier and receipt identities intact.
+
 Freeze the predecessor digest and desired roster in the owning maintenance
 operation. Exact retry recovers the same signed metadata generation after a lost
 publication return; it neither remints messages nor retransmits uncertain sends.

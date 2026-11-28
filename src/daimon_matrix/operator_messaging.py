@@ -1837,15 +1837,18 @@ def reconfigure_group_routes(
     *,
     expected_application_sha256: str,
     installation: Path | None = None,
+    local_port: int | None = None,
 ) -> dict[str, Any]:
     """Publish owner-selected routes without changing membership or history.
 
     The caller holds the runtime writer with the old sender quiesced. Existing
     rows may change endpoint only. Added bodies must be active under an already
-    pinned being and reuse that being's existing transport material. No key,
+    pinned being and reuse that being's existing transport material. The local
+    listener port can move with its signed intake on the same host. No key,
     capability, authority, membership, store or message is created or replaced.
     """
     import fcntl
+    from urllib.parse import urlsplit
 
     from .messaging_config import APPLICATION_SCHEMA_V3
 
@@ -1873,6 +1876,22 @@ def reconfigure_group_routes(
             raise MessagingConfigError("messaging_group_routes_conflict")
         candidate = copy.deepcopy(previous)
         candidate["roster"] = copy.deepcopy(list(roster))
+        if local_port is not None:
+            if type(local_port) is not int or not 1 <= local_port <= 65_535:
+                raise MessagingConfigError("messaging_group_routes_conflict")
+            intake = urlsplit(previous["intake"]["endpoint"])
+            candidate["listen"]["port"] = local_port
+            candidate["intake"]["endpoint"] = intake._replace(
+                netloc=f"{intake.hostname}:{local_port}"
+            ).geturl()
+            origin = runtime.service.origin
+            for row in candidate["roster"]:
+                if (
+                    row["body_ref"] == origin["body_ref"]
+                    and row["embodiment_id"] == origin["embodiment_id"]
+                    and row["route"]["endpoint"] == previous["intake"]["endpoint"]
+                ):
+                    row["route"]["endpoint"] = candidate["intake"]["endpoint"]
         validate_shape(candidate)
         old_rows = {
             (row["being_ref"], row["embodiment_id"]): row for row in previous["roster"]

@@ -2976,6 +2976,33 @@ class GroupRouteMaintenanceTests(unittest.TestCase):
         )
         self.assertEqual(records.get("request", self.record_id), self.retained)
 
+    def test_local_port_moves_the_listener_and_intake_in_one_signed_generation(self):
+        from urllib.parse import urlsplit
+
+        baseline = (self.app / "publication.json").read_bytes()
+        port = 48771
+        for invalid in (True, 0, 65_536, "48771"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                self.publish(local_port=invalid)
+            self.assertEqual((self.app / "publication.json").read_bytes(), baseline)
+
+        publication = self.publish(local_port=port)
+        selected, _ = read_publication(self.runtime, self.app)
+        self.assertEqual(selected["listen"], {**self.previous["listen"], "port": port})
+        intake = urlsplit(selected["intake"]["endpoint"])
+        previous_intake = urlsplit(self.previous["intake"]["endpoint"])
+        self.assertEqual(intake.port, port)
+        self.assertEqual(intake.hostname, previous_intake.hostname)
+        self.assertEqual(intake.path, previous_intake.path)
+        self.assertEqual(
+            selected["intake"],
+            {**self.previous["intake"], "endpoint": intake.geturl()},
+        )
+        self.assertEqual(self.publish(local_port=port), publication)
+        with self.assertRaises(ValueError):
+            self.publish(local_port=port + 1)
+        self.assertEqual(read_publication(self.runtime, self.app)[0], selected)
+
     def test_lost_selection_ack_recovers_same_signed_generation(self):
         import daimon_matrix.operator_messaging as operator
 
