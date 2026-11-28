@@ -117,6 +117,14 @@ original as unsent, preserved the saved Codex binding and topic generation,
 and submitted no native thread or turn. The Telegram fixture also preserved
 the original and presented the specific missing-history notice.
 
+The [routed refusal receipt](https://github.com/AlterMundi/DaimonApp/commit/50126307f88be77961a5ca2797048b3b2346f26f)
+ties the pre-submission rejection to the paired original, previous native
+thread and the exact verified checkpoint digest. Owner input status and the
+audit record survived a Gateway restart with the original still unsent.
+A recovery reservation can now distinguish this case from other unsent
+attempts. The receipt records eligibility evidence for a later writer, with
+no native creation or submission.
+
 The [real Codex App Server boundary fixture](https://github.com/AlterMundi/DaimonApp/blob/e5c4f1625eaa8b2f295bfb54969f94d1a249e262/docs/project-checkpoint-shadow.md#native-codex-successor-boundary)
 verified that a new native ID cannot resume before its first saved turn.
 On the creating connection, one first turn carried the fixture checkpoint,
