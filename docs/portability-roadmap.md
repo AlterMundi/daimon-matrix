@@ -170,6 +170,18 @@ reopened the one persisted turn. The run observed one loopback call, 218
 simulated tokens and zero earlier instructions resubmitted. Earlier Codex
 activity and inference remain fixtures. Live receiving acceptance is open.
 
+The [Gateway candidate aligned with master](https://github.com/AlterMundi/DaimonApp/commit/d6594d06fc6bfb607f4a2961e6aa1865eedf77d6)
+repeats the paired fixture with Claude Code 2.1.332 and Codex App Server
+0.167.0. The cold answers appeared after 2,979 ms and 625 ms respectively.
+Each leg made one loopback call and resubmitted zero earlier instructions.
+The recorded counts are 8 input and 4 output fixture tokens for Claude and
+218 fixture tokens for Codex. Both legs preserve the retained result and the
+unresolved receipt. Ítaca was still serving `06965d97` at readback. Master
+includes a patch-equivalent version of that head's direct attachment change,
+but the serving lineage also contains receiving-specific changes. Portability
+owns their composition and verification alongside the checkpoint in the
+selected release.
+
 The [owner lineage transition](https://github.com/AlterMundi/DaimonApp/commit/acac086a30422f5ac9aa3ace2041ce5e12f42aab)
 advances the topic's native pointer in the same transaction that records the
 successor turn's completion. It retains the logical generation and keeps
