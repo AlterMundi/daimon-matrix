@@ -86,16 +86,26 @@ source, read and repeat fail while the worker's workspace stays available.
 The catalog fixture reads three repositories across two projects from the
 same topic. Updating one link keeps the other links independently readable.
 
-The candidate uses the existing Codex and Claude startup paths for an
+The [checkpoint recovery fixture](https://github.com/AlterMundi/DaimonApp/blob/4b78cd7dbed0ffe0f7a829471841c13a55608782/docs/project-checkpoint-shadow.md#selected-cold-recovery)
+uses the existing Codex and Claude startup paths for an
 explicitly selected set of verified repository revisions. An isolated
 paired-human round trip exercised the actual Gateway and Claude Code 2.1.332
 with Agent SDK 0.3.332, a loopback provider, and a synthetic Codex Core.
-Both receiving paths carried the selected repositories and the unchanged
-original receipt references. One request had a retained terminal result and
-one remained unresolved. The round trip made no duplicate dispatches or
-real provider calls. It does not establish a live rollout or cold recovery
-with either production harness's native history unavailable.
+After the fixture removed the preceding Claude transcript from native lookup,
+the new input recovered in a distinct Claude session. It received the three
+selected repository revisions across two projects and the same two original
+receipt references. One request had a retained result and one remained
+unresolved. The recovery used one loopback provider call and zero duplicate
+dispatches. A subsequent turn on the existing Codex thread received both
+retained Claude exchanges and the same checkpoint.
 
+A separate run simulated Codex Core's missing-rollout error at the first
+Claude-to-Codex input. Gateway retained that new input as unsent, preserved
+the saved Codex binding and submitted no native thread or turn. A supported
+cold continuation into Codex still needs to open a distinct native lineage
+inside the same logical topic, without retiring its project sources or
+changing earlier effect receipts. The useful first turn and live receiving
+qualification in both directions remain open.
 
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
