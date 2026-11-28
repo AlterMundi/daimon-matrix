@@ -28,6 +28,16 @@ existing service backup path for SQLite. The browser and tool action envelopes
 cannot choose their acting identity or project permission. The library adds
 no new login, listener, model turn, background job or deployment.
 
+The owner-side binary is a process adapter for an existing Node or Python
+host. Launch `daimon-cards STORE` with one JSON request on standard input.
+The authenticated host supplies `project`, `actor`, `can_write` and a typed
+`input`. It never forwards a browser's or model's choice of identity or
+permission. `apply` accepts a tool command. `apply_surface` resolves a
+normalized A2UI event against the host's mounted card and passes the same
+typed command to the writer. The response carries the canonical revision
+or the conflict. The owner retains the same operation ID when the outcome
+is unconfirmed. Close standard input to finish each request.
+
 The event model uses
 [Lattice v2's event-system design](https://github.com/Stage-11-Agentics/lattice/blob/8736575d11853b1b90c4e49685747a53f13a9e6c/docs/architecture/event-system.md)
 as a reference for attributed events and derived state. This cut uses SQLite

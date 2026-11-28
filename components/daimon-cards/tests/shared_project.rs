@@ -8,7 +8,7 @@ use daimon_cards::{
     Action, Actor, ActorKind, BoardAccess, Cards, Command, Conflict, Error, GitRevision, Outcome,
     Status, a2ui,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 fn git(path: &Path, args: &[&str]) -> String {
@@ -32,6 +32,30 @@ fn action(operation: u128, card: Uuid, expected_revision: i64, action: Action) -
         expected_revision,
         action,
     }
+}
+
+fn owner_call(db: &Path, access: &BoardAccess<'_>, input: Value) -> Value {
+    let mut process = Process::new(env!("CARGO_BIN_EXE_daimon-cards"))
+        .arg(db)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    serde_json::to_writer(
+        process.stdin.take().unwrap(),
+        &json!({
+            "project":access.project,"actor":access.actor,"can_write":access.can_write,"input":input
+        }),
+    )
+    .unwrap();
+    let output = process.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "The owner adapter did not return a receipt"
+    );
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reply["ok"], true, "{reply}");
+    reply["result"].clone()
 }
 
 #[test]
@@ -137,16 +161,28 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
     let Outcome::Applied { event: edited } = edited else {
         panic!("card edit was not applied")
     };
-    let surface = a2ui::mount(&edited.card, &human_access, &labels).unwrap();
+    let surface = owner_call(
+        &db,
+        &human_access,
+        json!({
+            "type":"mount_card","card":card,"labels":{
+                "claim":labels.claim,"mark_done":labels.mark_done,"open":labels.open,
+                "in_progress":labels.in_progress,"done":labels.done,
+                "assigned":labels.assigned,"unassigned":labels.unassigned,
+            }
+        }),
+    );
     let surface_id = surface[0]["createSurface"]["surfaceId"].clone();
     assert_eq!(surface[2]["updateDataModel"]["value"]["revision"], 2);
-    let activate = |name: &str, revision: i64, operation: u128| {
-        let event = serde_json::from_value(json!({"surfaceId":surface_id,"name":name,
-            "context":{"card":card,"revision":revision}}))
-        .unwrap();
-        a2ui::command(event, card, id(operation)).unwrap()
+    assert_eq!(
+        surface[2]["updateDataModel"]["value"]["title"],
+        edited.card.title
+    );
+    let activated_event = |name: &str, revision: i64| {
+        json!({"surfaceId":surface_id,"name":name,
+        "context":{"card":card,"revision":revision}})
     };
-    let human_claim = if let Some(projection) = std::env::var_os("DAIMON_CARDS_PROYECCION") {
+    let human_event: Value = if let Some(projection) = std::env::var_os("DAIMON_CARDS_PROYECCION") {
         let mut browser = Process::new("node")
             .arg("tests/projection_probe.mjs")
             .arg(projection)
@@ -162,22 +198,36 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
             .lines()
             .find_map(|line| line.strip_prefix("DAIMON_CARDS_EVENT "))
             .expect("the renderer emitted no card action");
-        a2ui::command(serde_json::from_str(event).unwrap(), card, id(3)).unwrap()
+        serde_json::from_str(event).unwrap()
     } else {
-        activate("claim", 2, 3)
+        activated_event("claim", 2)
     };
+    let human_claim = a2ui::command(
+        serde_json::from_value(human_event.clone()).unwrap(),
+        card,
+        id(3),
+    )
+    .unwrap();
     let daimon_claim: Command = serde_json::from_value(json!({"operation":id(4),"card":card,
         "expected_revision":2,"action":{"type":"claim"}}))
     .unwrap();
     let barrier = Barrier::new(2);
-    let claim = |access: &BoardAccess<'_>, command: Command| {
-        let mut contender = Cards::open(&db).unwrap();
+    let race = |access: &BoardAccess<'_>, input: Value| -> Outcome {
         barrier.wait();
-        contender.apply(access, command).unwrap()
+        serde_json::from_value(owner_call(&db, access, input)).unwrap()
     };
     let (human_result, daimon_result) = std::thread::scope(|threads| {
-        let left = threads.spawn(|| claim(&human_access, human_claim.clone()));
-        let right = threads.spawn(|| claim(&daimon_access, daimon_claim.clone()));
+        let left = threads.spawn(|| race(&human_access, json!({
+            "type":"apply_surface","operation":id(3),"mounted_card":card,"event":human_event,
+        })));
+        let right = threads.spawn(|| {
+            race(
+                &daimon_access,
+                json!({
+                    "type":"apply","command":daimon_claim,
+                }),
+            )
+        });
         (left.join().unwrap(), right.join().unwrap())
     });
     let (accepted, winner, winning_command) = match (human_result, daimon_result) {
@@ -220,7 +270,15 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
             ),
         )
         .unwrap();
-    store.apply(&human_access, activate("done", 4, 6)).unwrap();
+    let finished = owner_call(
+        &db,
+        &human_access,
+        json!({
+            "type":"apply_surface","operation":id(6),"mounted_card":card,
+            "event":activated_event("done",4),
+        }),
+    );
+    assert_eq!(finished["event"]["card"]["status"], "done");
     drop(store);
 
     let mut reopened = Cards::open(&db).unwrap();
