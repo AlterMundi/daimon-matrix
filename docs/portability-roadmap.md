@@ -760,10 +760,19 @@ activity distinct from who receives the next human intervention.
    registered routes outside Ítaca. Both membership bases cover eight
    beings and share their membership proofs. Ítaca has all 12 bodies in
    the common audience plus one additional embodiment of an existing
-   member. The required authority epochs also differ. Use the existing
-   Emma binding to restore coverage, then reconcile the differing signed
-   embodiment and required epochs through the existing authority writer.
-   Recheck the complete audience before selecting either SDK.
+   member. The selected Ítaca application identifies that embodiment as
+   `goose:itaca:compaii`. Its signed identifier matches the active Goose
+   Matrix unit. The observed unit starts the base admission observer and
+   visibility installation without a qualified Source profile or a
+   standalone Tribe group selector. Only its base socket was present;
+   the Ítaca group did not select Goose in its reader vector. This
+   establishes identity and base service activation; authenticated
+   Tribe receiving for Goose still needs qualification. The required
+   authority epochs also differ. Reuse Emma's existing owner route and
+   reconcile the signed successor with the other receivers through
+   the existing authority writer. Portability owns Goose's group
+   receiving qualification. Recheck the complete, agreed audience
+   before selecting either SDK.
    Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
