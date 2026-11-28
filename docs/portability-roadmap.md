@@ -390,9 +390,15 @@ activity distinct from who receives the next human intervention.
    installation pins the SHA-256 of its current runtime bundle. The live
    renewal must republish that installation through the owning signer and
    verify the new load under the same fence. The existing Cluster Source
-   lifecycle's controller-only renewal refuses expired original roles.
-   Preserve the serving process until the original-role renewal and matching
-   visibility rebind can run as one bounded recovery. No peer publication
+   lifecycle's controller-only renewal refuses expired original roles. Its
+   predecessor freeze also starts with an authenticated original-role read,
+   which cannot supply fresh evidence after that role expires. The isolated
+   combined recovery now proves renewed runtime publication, refusal of the
+   stale signed visibility installation, rebound visibility load, and an
+   authenticated `scope.we` read. Rebinding retains the disclosure and
+   publication configuration. An exact retry adds no new generation. Keep the serving
+   process running until the owning lifecycle has an expired-profile
+   predecessor path and verifies the combined recovery. No peer publication
    or model wakeup was issued.
 5. **Migrate existing work and tidy the environment.** After the contract pilot
    passes, migrate one existing topic and its linked work. Compare a shadow

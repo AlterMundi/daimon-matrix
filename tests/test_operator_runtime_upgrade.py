@@ -412,6 +412,98 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
             ):
                 upgrade._copy(snapshot, self.parent / "failed-copy")
 
+    def test_expired_owner_renewal_requires_matching_signed_visibility_rebind(self):
+        from daimon_matrix.daemon import _visibility_factory
+        from daimon_matrix.local_api import LocalCapability, create_request
+        from daimon_matrix.messaging_config import config_digest
+        from daimon_matrix.native_egress import (
+            VISIBILITY_SCHEMA_VERSION,
+            NativeEgressError,
+            closed_visibility,
+        )
+        from daimon_matrix.operator_messaging import _reissue_installation
+        from daimon_matrix.runtime import load_runtime
+        from tests.test_closed_visibility_provisioning import (
+            ClosedVisibilityProvisioningTests,
+        )
+
+        def clock():
+            return time.time_ns() // 1_000_000
+
+        self.expire_profiles()
+
+        def load(installation=None, *, migrate=False):
+            options = (
+                {"egress": closed_visibility(clock=clock, catalog_mode="migrate")}
+                if installation is None
+                else {
+                    "egress_factory": _visibility_factory(
+                        installation,
+                        clock=clock,
+                        catalog_mode="migrate" if migrate else "validate",
+                    )
+                }
+            )
+            return load_runtime(
+                self.source,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=clock,
+                **options,
+            )
+
+        fixture = ClosedVisibilityProvisioningTests()
+        self.addCleanup(fixture.doCleanups)
+        closed = load()
+        closed.egress.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
+        installation = fixture.installation(self.source, closed)
+        old = json.loads(installation.read_bytes())["document"]
+        predecessor = load(installation, migrate=True)
+        predecessor.egress.adopt_closed_visibility_catalogs(
+            version=VISIBILITY_SCHEMA_VERSION
+        )
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        ready = self.stage()
+        published = self.publish()
+        self.assertEqual(published["successor_sha256"], ready["successor_sha256"])
+
+        with self.assertRaisesRegex(NativeEgressError, "egress_installation_invalid"):
+            load(installation)
+        owner = load()
+        new_digest = config_digest(
+            json.loads((self.source / "runtime.json").read_bytes())
+        )
+        result = _reissue_installation(
+            owner, installation, application_sha256=new_digest
+        )
+        self.assertTrue(result["reissued"])
+        rebound = json.loads(installation.read_bytes())["document"]
+        self.assertEqual(rebound["application_sha256"], new_digest)
+        for field in ("disclosure", "secrets", "telegram_qualification"):
+            self.assertEqual(old[field], rebound[field])
+        self.assertFalse(
+            _reissue_installation(owner, installation, application_sha256=new_digest)[
+                "reissued"
+            ]
+        )
+        loaded = load(installation)
+        client = json.loads((self.source / "client.json").read_bytes())
+        capability = LocalCapability.from_value(
+            client["capability"], (self.source / "client.key").read_bytes()
+        )
+        result = loaded.service.handle(
+            create_request(
+                capability,
+                request_id=str(uuid.uuid4()),
+                issued_at_ms=clock(),
+                nonce=os.urandom(16),
+                method="scope.we",
+                params={},
+            )
+        )
+        self.assertIsNone(result["error"])
+        self.assertIsInstance(result["result"], dict)
+
     def test_owner_renewal_restores_read_preserving_secrets_and_history(
         self,
     ):
