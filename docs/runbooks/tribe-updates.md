@@ -37,6 +37,14 @@ and expired SourceReview contracts never select a target or renew attention.
 | Apply native memory/behavior deltas within one being | Existing same-being integration operator with exact proposals, decisions, owning adapters and effect receipts | Cross-being autobiography, arbitrary app deployment and consumed model context |
 | Deploy app/backend/SDK software | Owning repository release and receiver maintenance route, current placement, qualified candidate and compatible rollback | Publication/notification is not deployment; service health is not device acceptance |
 
+For a selected guide, use [Source V1](../../specs/source-selective-learning.md)
+on the current publisher and receiving body. Use the receiver's signed cursor
+for a durable pull. The selective page carries Source evidence without
+traversing unrelated body history. Reuse current grants for the exact Source
+ID and publication classification. A successful earlier transfer of a
+different Source does not confer access. Record the receiver's own pull and
+readback before any adoption claim.
+
 Source project publications are attributed learning references, not species or
 ancestry selectors. The foundation's ancestry `/source.pull` and
 `/species.pull.name` must keep their lineage meaning; species release/live

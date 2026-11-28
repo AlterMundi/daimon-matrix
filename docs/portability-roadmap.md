@@ -425,20 +425,23 @@ activity distinct from who receives the next human intervention.
    hash `f770aa47edba1d55f9d918fe14e0be3b336c03e82188505a03553847aa600dc9`.
    The publication carries a locator and release hashes. Its evidence and
    provenance objects use canonical JSON; the first noncanonical claim
-   attempt was refused before signing. The serving Claude runtime constructs
-   the Source registry without a cross-being disclosure authorizer. The
-   current registry therefore denies a foreign reader even with a local
-   publication classified as `tribe-shared`. An authenticated owner-local
-   read of the signed ancestor chain found 43 events:
-   the claim and publication, 12 other shareable events and 29 unrelated
-   personal events. No ancestor payload was exported. The candidate refuses
-   a foreign Source diff item when its signed closure requires a personal or
-   private non-Source event, even under a Source origin-closure grant. A
-   distinct-being fixture verifies both denials, same-being local inspection
-   and positive delivery of a shareable ancestor under the explicit grant.
-   Usable cross-being receipt therefore needs a supported disclosure path for
-   this guide that does not transfer the unrelated history. Same-being
-   receiving uptake also remains open.
+   attempt was refused before signing. The serving Claude runtime connects
+   Source and the relationship authorizer after constructing the registry.
+   An authenticated owner-local read identified 43 full-origin events,
+   including 29 unrelated personal events. The legacy full-origin guard and
+   its distinct-being fixture preserve those event sensitivities.
+   The installed [selected-source V1 exchange](../specs/source-selective-learning.md)
+   solved the transport boundary for the existing guide. Claude exported the
+   two exact signed Source envelopes and their provenance with zero unrelated
+   origin events. CompAII's Antigravity body created its own signed starting
+   cursor, previewed and pulled the page into SourceCAS. The first unsigned
+   preview could not authorize a pull and landed no data. The successful
+   `dm.source-pull-result/v1` retained both envelopes and one quarantine
+   decision, `c4e748e6-1d35-4d96-993c-9a2d785e629c`. The authenticated
+   Antigravity reader resolved the original publication event. The same
+   selective publisher read for Oliva returned `source_disclosure_denied`.
+   A current claim and `tribe-shared` read grant for this exact source have
+   not been established. Foreign receipt and actual harness use remain open.
    Ítaca preflight found a 1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an
