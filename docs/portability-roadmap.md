@@ -224,8 +224,17 @@ locator. The [Gateway historical reader](https://github.com/AlterMundi/DaimonApp
 allows an owned topic with a selected checkout to resolve the exact registered
 commit after a newer checkpoint. It requires current link authority, matching
 repository identity, retained citation and the actual local Git object.
-Holodeck consumption of historical verification and a live shared remote
-remain open.
+The [Gateway room reader](https://github.com/AlterMundi/DaimonApp/commit/5ab58ba796f0ccfbdbe08cdcbffb9c9ee5d46469)
+resolves up to eight references from the selected mission against that
+retained evidence. The [card adapter](https://github.com/AlterMundi/daimon-matrix/commit/c94fa2a3783eaa36c65a2c1889ef1372ee7a8ebd)
+and [Holodeck readback](https://github.com/AlterMundi/holodeck/commit/cdc04a555edeb94df42e7d3aac633156d408ab1c)
+keep an authorized earlier hash visible after the registry advances.
+The Gateway fixture verifies real Git objects, a separate project's
+exclusion and rejection of an unregistered object. Chromium verifies the
+mission with a synthetic room authority, then drops the hash when the
+reader withdraws that historical evidence. The two compositions are
+qualified separately. Production adoption and a live shared remote remain
+open.
 
 Daimons read the card model and submit typed operations programmatically.
 An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
