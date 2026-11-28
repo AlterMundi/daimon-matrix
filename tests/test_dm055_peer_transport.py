@@ -1225,7 +1225,7 @@ class PeerTransportTests(PeerTransportFixture):
             mirror_sibling_conversations=True,
             private_sibling_visibility=selection,
         )
-        message = {
+        message: dict[str, Any] = {
             "event_id": "fixture-original",
             "being_ref": self.authority.state.being_ref,
             "origin": self.origins["legion"],

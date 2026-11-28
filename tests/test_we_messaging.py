@@ -854,6 +854,7 @@ class WeLaneTests(SealedFixture):
                     call=lambda payload, **_kwargs: receiver.intake(payload)
                 )
 
+            private_sibling_addressee = Mock(return_value=None)
             service = HostedWeave(
                 self.ledger_a,
                 self.signers["legion"],
@@ -868,7 +869,7 @@ class WeLaneTests(SealedFixture):
                         configured=configured,
                         egress=Mock(
                             mixed_private_sibling_audience=Mock(return_value=False),
-                            private_sibling_addressee=Mock(return_value=None),
+                            private_sibling_addressee=private_sibling_addressee,
                         ),
                         authority=self.authority,
                         local_origin=self.origins["legion"],
@@ -922,8 +923,7 @@ class WeLaneTests(SealedFixture):
                 self.assertEqual(result_for_wrong["state"], "unconfirmed")
                 self.assertNotIn("message_id", result_for_wrong)
             self.assertEqual(attempts, [offline, REMOTE])
-            assert service.peer_context is not None
-            service.peer_context.egress.private_sibling_addressee.return_value = REMOTE
+            private_sibling_addressee.return_value = REMOTE
             attempts.clear()
             private = service._we_converse(
                 {
