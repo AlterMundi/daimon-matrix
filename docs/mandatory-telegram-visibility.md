@@ -661,12 +661,12 @@ independent review and deployment therefore remain parent acceptance gates.
 
 ### Historical initial slice author-run validation (before independent review)
 
-Worktree: `/home/debian/dm-milestone2-issue137`; branch
+Worktree: `\$HOME/dm-milestone2-issue137`; branch
 `issue-137-mandatory-telegram-echo`; unchanged HEAD
 `acb131f18c200bb028ee86fa3a8ef9a2f6c040a3`. No commits or staged changes.
-The shared `/home/debian/dm-milestone2-test-venv/bin/python` was used read-only
+The shared `\$HOME/dm-milestone2-test-venv/bin/python` was used read-only
 with `PYTHONPATH=src`. The full suite used
-`COLLECTIVE_MEMORY_CONTRACT_ROOT=/home/debian/dm-milestone2-collective-contract`.
+`COLLECTIVE_MEMORY_CONTRACT_ROOT=\$HOME/dm-milestone2-collective-contract`.
 
 - Focused `unittest tests.test_mandatory_echo tests.test_telegram_mirror -q`:
   **36 tests passed**, including `-W error::ResourceWarning`.
@@ -706,8 +706,8 @@ services, shared inventories, native integration, commits or pushes were used.
 The shared test interpreter was used read-only.
 
 Independent source evidence (left unchanged):
-`/home/debian/dm132-live-exchange/ISSUE137-CORE-INDEPENDENT-REVIEW.md` and
-`/home/debian/dm132-live-exchange/review137_independent_probes.py`.
+`\$HOME/dm132-live-exchange/ISSUE137-CORE-INDEPENDENT-REVIEW.md` and
+`\$HOME/dm132-live-exchange/review137_independent_probes.py`.
 The original probes were executed before edits: **8 tests, 3 failures, exit 1**,
 15.961 seconds. Observations: stale approval caused a second POST and stored
 1000 ms while current time was 3000; reused authorization ID caused three POSTs
@@ -760,7 +760,7 @@ from unittest.mock import patch
 from daimon_matrix import telegram_mirror as t
 
 m = runpy.run_path(
-    "/home/debian/dm132-live-exchange/review137_independent_probes.py"
+    "\$HOME/dm132-live-exchange/review137_independent_probes.py"
 )
 C = m["Probe"]
 setup, exchange = C.setUp, t._plain_http_exchange

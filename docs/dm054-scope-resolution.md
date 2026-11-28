@@ -130,7 +130,7 @@ uptime and64KiB of memory metadata without child processes or model/network work
 
 These are kernel OS observations, **not** a process/cgroup allowance, a future
 capacity reservation, a physical hypervisor census or an operation grant. Oliva's
-KVM observes its own guest OS, separately from native ITACA. The current surface
+KVM observes its own guest OS, separately from native primary receiving host. The current surface
 changes on reboot and requires a fresh read. This does not create `/here` or
 Tribe membership. `controls: not-established` explicitly retains the unfinished
 realm-modification-control domain; status alone is not full foundation acceptance.
@@ -180,7 +180,7 @@ nor authority to stop the native harness, goals, another user's services or an
 unrelated task. A disconnected launcher or lost acknowledgment requires inspecting
 the same named unit and retained result, not launching the command again.
 
-Initial ITACA acceptance used one genuine authenticated Matrix realm read under
+Initial primary receiving host acceptance used one genuine authenticated Matrix realm read under
 UID1000/NoNewPrivileges,128MiB,16tasks and a60second lifetime. Kernel CPU quota
 changed from25% to50% while that same task remained active; the selected owner
 stop produced a successful exit and removal of its cgroup, with zero model calls

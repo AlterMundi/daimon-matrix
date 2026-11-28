@@ -8,7 +8,7 @@ new authenticated paired-human original enters a native conversation.
 ## Current Interaction-integrator ingress
 
 Telecodex PR508 implements the explicitly selected Interaction ingress mode.
-CompAII ITACA adopted it on2026-11-01; Matrix#310 retains source/receiving
+The primary receiving host adopted it on 2026-11-01; Matrix#310 retains source/receiving
 receipts and the still-distinct genuine-human acceptance gap. New authenticated
 paired-human Tribu originals enter the EXISTING continuing Interaction integrator
 through its normal queue/steer/controller, preserving exact author, source,
@@ -35,7 +35,7 @@ not a current selection or instruction to recreate its session.
 ## Human experience
 
 Address the full receiving body, for example
-`compaii.codex@itaca: hello` or `@compaii.codex@itaca hello`,
+`sample.codex@example-host: hello` or `@sample.codex@example-host hello`,
 or reply to one of its verified public posts. With an explicitly selected Tribu
 default, `@compaii` selects that body; with a separately selected host default,
 `BEING@HOST: hello` selects that explicitly configured host default. Private Telegram
@@ -239,7 +239,7 @@ economic gate.
 ## Historical dedicated human-triggered I/O profile
 
 The following retains the original dedicated-writer contract and its evidence.
-It is superseded by the selected Interaction-ingress mode above on CompAII ITACA;
+It is superseded by the selected Interaction-ingress mode above on the primary receiving host;
 do not copy its limits, startup or rollback into the current integrator.
 
 This optional increment in #310 and Telecodex #46 uses the same shared-bot

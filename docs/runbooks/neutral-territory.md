@@ -43,8 +43,8 @@ Write a plan JSON (closed field set; everything else is derived):
   "home": "/home/nicolas",
   "platform": "linux-systemd",
   "harnesses": ["hermes", "codex"],
-  "env_file": "/home/nicolas/.hermes/.env",
-  "wrapper_path": "/home/nicolas/.local/bin/hmk",
+  "env_file": "/home/example/.hermes/.env",
+  "wrapper_path": "/home/example/.local/bin/hmk",
   "service_unit": "hermes-gateway.service"
 }
 ```
@@ -63,11 +63,11 @@ To render the shared `hmk` wrapper, add an explicit native command:
 
 ```json
 {
-  "hermes_home": "/home/owner/agents/compaii/hermes-home",
+  "hermes_home": "/home/example/agents/compaii/hermes-home",
   "hmk": {
     "python": "/usr/bin/python3",
-    "scripts_root": "/home/owner/vendor/daimon-memory-kit/scripts",
-    "workspace_root": "/home/owner/agents/compaii"
+    "scripts_root": "/home/example/vendor/daimon-memory-kit/scripts",
+    "workspace_root": "/home/example/agents/compaii"
   }
 }
 ```

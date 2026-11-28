@@ -51,20 +51,20 @@ before the independent CompAII review described below.
 
 | Repository and worktree | Branch / exact commit | Classification | V0 destination |
 |---|---|---|---|
-| `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-4` | `security/v0-containment-4` / `aa58a62d1fff70ae60efa9660e450557535b2382` (PR 13) | Reusable after adaptation | Temporary DM-050/DM-073 containment evidence only |
-| `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-6` | `protocol/v1-spec-6` / `10a1d8bc535dfc1404174d2265f2a7a123329c62` (PR 14) | Reusable after adaptation | DM-011, DM-012, DM-016, DM-018, DM-050, DM-051 |
-| `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-7` | `runtime/v1-broker-7` / `2516978416a1ec7383e45a3b55f4b5fc0fe1d356` (PR 15) | Reusable after adaptation | DM-022, DM-050, DM-052, DM-073 |
-| `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-8` | `clients/v1-cutover-8` / `4ed63514b7d003624314957203672633ef57ecb3` (PR 16) | Reusable after adaptation | DM-050 through DM-053 |
-| `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-ci-fixture-18` | `ci/v1-http-fixture-18` / `1147cebd4fd6d788de107c9ed56e10d3d263a8f4` (PR 19) | Reusable after adaptation | DM-050 through DM-053 and DM-073 |
+| `tribe-bridge` | `security/v0-containment-4` / `aa58a62d1fff70ae60efa9660e450557535b2382` (PR 13) | Reusable after adaptation | Temporary DM-050/DM-073 containment evidence only |
+| `tribe-bridge` | `protocol/v1-spec-6` / `10a1d8bc535dfc1404174d2265f2a7a123329c62` (PR 14) | Reusable after adaptation | DM-011, DM-012, DM-016, DM-018, DM-050, DM-051 |
+| `tribe-bridge` | `runtime/v1-broker-7` / `2516978416a1ec7383e45a3b55f4b5fc0fe1d356` (PR 15) | Reusable after adaptation | DM-022, DM-050, DM-052, DM-073 |
+| `tribe-bridge` | `clients/v1-cutover-8` / `4ed63514b7d003624314957203672633ef57ecb3` (PR 16) | Reusable after adaptation | DM-050 through DM-053 |
+| `tribe-bridge` | `ci/v1-http-fixture-18` / `1147cebd4fd6d788de107c9ed56e10d3d263a8f4` (PR 19) | Reusable after adaptation | DM-050 through DM-053 and DM-073 |
 | Tribe v1 transitional production cutover | Reversible promotion from the v0 port while Daimon Matrix is implemented | Reusable after adaptation | Operate and test now; later replace its identity and semantic layers through DM-050 through DM-054 |
-| `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-9` | `coordination/github-leases-9` / `7e1cd907abde69f111f45121ad2eaafbfad3e61d` (PR 17) | Reusable after adaptation | DM-003; retarget Project 8 to Project 9 and separate work ownership from `/tribe` |
-| `tribe-bridge`, `/home/nicolas/sandbox/tribe-bridge-issue-12` | `architecture/daimon-manifest-12` / `c283821138e50abd82c95a74a6e684211cc93fe4` (PR 20 head; merged as `32294f2ede5556a81bac3f3dfa3cf578e28ab365`) | Reusable after adaptation | DM-010, DM-012, DM-018, DM-040, DM-041, DM-054 |
-| `hermes-memory-kit`, `/home/nicolas/sandbox/hermes-memory-kit-issue-1` | `memory/canonical-contract-1` / `892998cfae639a0bcb7f43f06cbfc14aa945a7f9` (PR 2) | Reusable after adaptation | DM-017, DM-034, DM-035 |
-| `hermes-memory-kit`, `/home/nicolas/sandbox/hermes-memory-kit-collective-3` | `memory/collective-publication-3` / `350c61a103d186fe82447dcfc39da45b699279bd` (PR 4) | Reusable after adaptation | Outbound publication half of DM-036 |
-| `compaii-state`, `/home/nicolas/sandbox/compaii-state-issue-5` | `safety/stage-restore-5` / `87cbc7b32e65aa0e7c875db363f95ef9f3da62f9` (PR 1) | Reusable after adaptation | DM-018, DM-035, DM-073 |
-| `compaii-state`, `/home/nicolas/sandbox/compaii-state-issue-2` | `memory/external-hmk-dependency-2` / `533e5478201dece985faf3ba730be515fff25d23` (PR 3) | Directly reusable | Keep one pinned external HMK implementation |
-| `compaii-state`, `/home/nicolas/sandbox/compaii-state-daimon-4` | `identity/daimon-binding-4` / `0f762eab84fa29836051c4300c8f908608c15e52` (PR 5) | Reusable after adaptation | Use as a transitional provenance binding now; later recast it as a ledger projection/publication receipt rather than identity authority |
-| `compaii-state`, `/home/nicolas/sandbox/compaii-state-wiki-gate-10` | `wiki/project-bootstrap-gate-10` / `43c43b63c14d5f622237bad2e37716af0a38d2d6` (PR 6) | Reusable after adaptation | DM-035 and DM-073 |
+| `tribe-bridge` | `coordination/github-leases-9` / `7e1cd907abde69f111f45121ad2eaafbfad3e61d` (PR 17) | Reusable after adaptation | DM-003; retarget Project 8 to Project 9 and separate work ownership from `/tribe` |
+| `tribe-bridge` | `architecture/daimon-manifest-12` / `c283821138e50abd82c95a74a6e684211cc93fe4` (PR 20 head; merged as `32294f2ede5556a81bac3f3dfa3cf578e28ab365`) | Reusable after adaptation | DM-010, DM-012, DM-018, DM-040, DM-041, DM-054 |
+| `hermes-memory-kit` | `memory/canonical-contract-1` / `892998cfae639a0bcb7f43f06cbfc14aa945a7f9` (PR 2) | Reusable after adaptation | DM-017, DM-034, DM-035 |
+| `hermes-memory-kit` | `memory/collective-publication-3` / `350c61a103d186fe82447dcfc39da45b699279bd` (PR 4) | Reusable after adaptation | Outbound publication half of DM-036 |
+| `compaii-state` | `safety/stage-restore-5` / `87cbc7b32e65aa0e7c875db363f95ef9f3da62f9` (PR 1) | Reusable after adaptation | DM-018, DM-035, DM-073 |
+| `compaii-state` | `memory/external-hmk-dependency-2` / `533e5478201dece985faf3ba730be515fff25d23` (PR 3) | Directly reusable | Keep one pinned external HMK implementation |
+| `compaii-state` | `identity/daimon-binding-4` / `0f762eab84fa29836051c4300c8f908608c15e52` (PR 5) | Reusable after adaptation | Use as a transitional provenance binding now; later recast it as a ledger projection/publication receipt rather than identity authority |
+| `compaii-state` | `wiki/project-bootstrap-gate-10` / `43c43b63c14d5f622237bad2e37716af0a38d2d6` (PR 6) | Reusable after adaptation | DM-035 and DM-073 |
 | `compaii-state/identity/profiles/mccompaii` | Intentional DaemonCraft/Minecraft profile | Reusable after adaptation | Body/incarnation state for DM-041/DM-042; bundled memory is not canonical personal continuity |
 
 ## Contracts worth importing

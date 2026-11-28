@@ -2,7 +2,7 @@
 
 **Author self-review / implementation record, not independent approval.**
 Base: `acb131f18c200bb028ee86fa3a8ef9a2f6c040a3`.
-Worktree: `/home/debian/dm-milestone2-issue132`.
+Worktree: `\$HOME/dm-milestone2-issue132`.
 Accepted public successor scope: `3bb82bbf-ecc5-4345-9349-6b5537788575`.
 No commits, pushes, GitHub mutations, production/custody access or service changes.
 Only synthetic test custody and loopback listeners were used.
@@ -37,9 +37,9 @@ Only synthetic test custody and loopback listeners were used.
 
 ## Verification record
 
-Environment: read-only `/home/debian/dm-milestone2-test-venv/bin/python`,
+Environment: read-only `\$HOME/dm-milestone2-test-venv/bin/python`,
 `PYTHONPATH=src`, collective contract at
-`/home/debian/dm-milestone2-collective-contract`. No pip/environment mutation.
+`\$HOME/dm-milestone2-collective-contract`. No pip/environment mutation.
 This environment lacks pytest; tests ran with the repository's unittest suites.
 
 - TDD red/green slices: missing foreign reducer; retained-proof corruption;
@@ -215,8 +215,8 @@ code. The shared command prefix was exactly:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src \
-COLLECTIVE_MEMORY_CONTRACT_ROOT=/home/debian/dm-milestone2-collective-contract \
-/home/debian/dm-milestone2-test-venv/bin/python -m unittest -v
+COLLECTIVE_MEMORY_CONTRACT_ROOT=\$HOME/dm-milestone2-collective-contract \
+\$HOME/dm-milestone2-test-venv/bin/python -m unittest -v
 ```
 
 Each named test was added and run before its production slice:

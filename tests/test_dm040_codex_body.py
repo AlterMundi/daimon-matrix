@@ -919,8 +919,8 @@ for line in sys.stdin:
 
 class InstalledCodexSmokeTests(unittest.TestCase):
     def test_exact_binary_strict_config_and_feature_state_when_available(self) -> None:
-        binary = Path(
-            "/home/nicolas/.npm-global/lib/node_modules/@openai/codex/"
+        binary = Path.home() / (
+            ".npm-global/lib/node_modules/@openai/codex/"
             "node_modules/@openai/codex-linux-x64/vendor/"
             "x86_64-unknown-linux-musl/bin/codex"
         )
@@ -1057,14 +1057,12 @@ class PrivateRealCodexMatrixSmokeTests(RuntimeFixture):
         if os.environ.get("DAIMON_DM040_REAL_BODY_SMOKE") != "1":
             self.skipTest("set DAIMON_DM040_REAL_BODY_SMOKE=1 for private smoke")
         configured = os.environ.get("DAIMON_DM040_CODEX_BINARY")
-        self.installed_codex = Path(
-            configured
-            or (
-                "/home/nicolas/.npm-global/lib/node_modules/@openai/codex/"
-                "node_modules/@openai/codex-linux-x64/vendor/"
-                "x86_64-unknown-linux-musl/bin/codex"
-            )
+        default_binary = Path.home() / (
+            ".npm-global/lib/node_modules/@openai/codex/"
+            "node_modules/@openai/codex-linux-x64/vendor/"
+            "x86_64-unknown-linux-musl/bin/codex"
         )
+        self.installed_codex = Path(configured) if configured else default_binary
         if not self.installed_codex.is_file():
             self.skipTest("pinned private Codex binary is not installed")
         if hashlib.sha256(self.installed_codex.read_bytes()).hexdigest() != (
