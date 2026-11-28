@@ -49,6 +49,8 @@ enum Operation {
         missions: String,
         #[serde(default)]
         project_revisions: Vec<a2ui::questbook::ProjectRevision>,
+        #[serde(default)]
+        include_revision_candidates: bool,
     },
     ApplySurface {
         operation: Uuid,
@@ -107,13 +109,14 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
             journal,
             missions,
             project_revisions,
+            include_revision_candidates,
         } => {
             let cards = cards.list(&access, after)?;
             let selected = selected.or_else(|| cards.first().map(|card| card.id));
             let Some(selected) = selected else {
                 return Ok(Value::Null);
             };
-            json!(a2ui::questbook::mount(
+            let mut surface = a2ui::questbook::mount(
                 &cards,
                 selected,
                 &access,
@@ -121,7 +124,16 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
                 &journal,
                 &missions,
                 &project_revisions,
-            )?)
+            )?;
+            if include_revision_candidates {
+                let card = cards
+                    .iter()
+                    .find(|card| card.id == selected)
+                    .ok_or(Error::Missing)?;
+                surface[2]["updateDataModel"]["value"]["revisionCandidates"] =
+                    json!(card.evidence.iter().rev().take(8).collect::<Vec<_>>());
+            }
+            json!(surface)
         }
         Operation::ApplySurface {
             operation,
