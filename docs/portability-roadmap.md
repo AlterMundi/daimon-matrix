@@ -154,8 +154,21 @@ verified that a new native ID cannot resume before its first saved turn.
 On the creating connection, one first turn carried the fixture checkpoint,
 both receipt IDs and the new original to a loopback provider. The next
 connection recovered that exact native turn. The fixture used one loopback
-request and observed 218 simulated tokens. It did not exercise Gateway's
-logical binding writer or any live account.
+request and observed 218 simulated tokens. That first standalone fixture
+did not exercise Gateway's logical binding writer.
+
+The [composed Codex successor test](https://github.com/AlterMundi/DaimonApp/blob/33fa0c2db178901b9e0f7765b9ea5c41443a7efd/docs/project-checkpoint-shadow.md#native-codex-successor-boundary)
+now drives the paired Conversation retry through Gateway and the real Codex
+App Server for the missing-history response, successor creation and first
+turn. Current Core emitted a second thread announcement after the reply;
+the earlier collector treated it as ordinary rebinding and failed after
+native acceptance. The candidate keeps the reserved binding and waits for
+the exact terminal event even when Core announces idle first. The composed
+run reached the visible answer 748 ms after retry. The loopback packet
+contained the unchanged receipt references, and a later native connection
+reopened the one persisted turn. The run observed one loopback call, 218
+simulated tokens and zero earlier instructions resubmitted. Earlier Codex
+activity and inference remain fixtures. Live receiving acceptance is open.
 
 The [owner lineage transition](https://github.com/AlterMundi/DaimonApp/commit/acac086a30422f5ac9aa3ace2041ce5e12f42aab)
 advances the topic's native pointer in the same transaction that records the
