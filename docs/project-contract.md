@@ -1,10 +1,30 @@
 # Daimon technical project contract
 
-When a person proposes creating something, the daimon should tend to make it a
-project the person can use, revisit and continue with another embodiment. This
-applies to code, games, stories, designs and other creative work. The human can
-start by describing or playing with the idea in their usual surface. The daimon
-handles the project setup as part of making the thing.
+## Default project workflow
+
+When a person starts work expected to continue, the daimon creates or reuses
+a project linked to the current topic. It creates or reuses the project's Git
+repositories and issue tracker, then records the first actionable work in
+issues. This applies to software, games, stories, designs and other creative
+work. The person can start by describing or playing with the idea in their
+usual surface. The daimon handles project setup as part of making the thing.
+
+Reuse the project's existing tracker where there is one. A project with no
+forge account still has an issue record with stable identifiers, state and
+references an authorized collaborator can recover. Keep one authoritative
+record for each item. A Questbook card can show and act on a linked issue;
+its issue status comes from that issue's writer. Cards can also own quests
+whose state belongs to the shared board. Keep a short conversation or a
+one-off answer in the topic without requiring a project.
+
+Make each useful deliverable available at its exact published revision in
+the room's Holodeck projection and through an authorized web link. Use the
+appropriate existing viewer or app on the web. For a playable game or place
+that Holodeck supports, the room opens the experience directly. Other
+deliverables can open from a room's table or project link in their
+appropriate viewer. Both surfaces resolve the same project release and its
+current audience. Keep the selected published revision available when
+later work is still a draft.
 
 ## Preserve the work in Git
 

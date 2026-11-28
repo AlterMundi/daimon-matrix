@@ -19,7 +19,8 @@ and shared project coordination.
 | Harness adapters | Native resume, execution and intervention. Report capabilities and outcomes so Gateway can distinguish incorporation into the active turn, queued input and uncertain dispatch. |
 | DaimonApp and TeleDaimon | Project authorized conversation records from the same originals and retain surface delivery receipts. |
 | Observer and the general conversation | Supply sourced observations to a bounded topic checkpoint. Gateway validates its revision and references. The checkpoint is reconstructible from authorized evidence. |
-| Git and project records | Version project files, card state and exact review revisions. The system that performed an external action owns its outcome receipts. |
+| Git and project records | Version project files, issues, card state and exact review revisions. The system that performed an external action owns its outcome receipts. |
+| Holodeck and web viewers | Open the same published deliverable revision under its current audience. Retain view state separately from project and release state. |
 | DMK and shared Skills | Preserve being-level memory and published operating knowledge through their existing update and adoption paths. |
 
 Keep the owning source, contract, receiving configuration and regression
@@ -580,12 +581,19 @@ activity distinct from who receives the next human intervention.
    Cover both a receipt that resolves the effect and an outcome that remains
    uncertain. Preserve the original ID, continue independent work, and verify
    zero duplicate dispatches at the component that owns the effect.
-3. **Shared project collaboration.** Pilot versioned cards and commit-based
-   review in a real non-code Git project with a shared remote and a mix of
-   human and daimon participants. Show assignment, attributed review, offline
-   project edits, card state synchronization and recovery across two workspaces.
-   Verify the Rust writer and A2UI projection using that same journey.
-   Run the [Holodeck topic-room delivery sequence](#holodeck-topic-room-delivery)
+3. **Default project creation and shared delivery.** Start from an ordinary
+   request for continuing work in a topic. Verify that the daimon creates or
+   reuses the linked project, Git repository and issue tracker, and records
+   the first actionable issue. Complete this path without a forge account.
+   Pilot versioned cards and commit-based review in a real non-code project
+   with a shared remote and human and daimon participants. Show assignment,
+   attributed review, offline edits, card synchronization and recovery across
+   two workspaces. Verify that the Rust writer and A2UI views preserve one
+   authority per issue or quest. Publish one deliverable and open the same
+   exact revision from its topic room in Holodeck and its authorized web
+   viewer. In each view, confirm the current audience and preservation of the
+   published revision while later work is a draft. Run the
+   [Holodeck topic-room delivery sequence](#holodeck-topic-room-delivery)
    in the same pilot with a pair that starts without a house or authored rooms.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
