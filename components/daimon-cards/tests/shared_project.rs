@@ -302,7 +302,7 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
     let stored = reopened.read(&human_access, card).unwrap().unwrap();
     assert_eq!(stored.revision, 5);
     assert_eq!(stored.status, Status::Done);
-    assert_eq!(stored.evidence, vec![revision]);
+    assert_eq!(stored.evidence, vec![revision.clone()]);
     assert_eq!(reopened.list(&daimon_access, None).unwrap(), vec![stored]);
     assert_eq!(reopened.history(&human_access, card, 0).unwrap().len(), 5);
     assert_eq!(
@@ -359,6 +359,10 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         )
         .unwrap();
     let cards = reopened.list(&daimon_access, None).unwrap();
+    let project_revisions = [a2ui::questbook::ProjectRevision {
+        revision: revision.clone(),
+        label: "Playtest".into(),
+    }];
     let journal = a2ui::questbook::mount(
         &cards,
         card,
@@ -366,10 +370,15 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         &labels,
         "Questbook",
         "Missions",
+        &project_revisions,
     )
     .unwrap();
     let state = &journal[2]["updateDataModel"]["value"];
     assert_eq!(state["selection"], json!(card));
+    assert_eq!(
+        state["revisions"],
+        format!("Playtest · {}", revision.commit)
+    );
     assert_eq!(state["quests"][0]["label"], "Open · Find the map");
     assert_eq!(
         state["quests"][1]["label"],
@@ -382,9 +391,14 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         &labels,
         "Questbook",
         "Missions",
+        &project_revisions,
     )
     .unwrap();
     assert_eq!(journal[0], changed[0]);
+    assert_eq!(
+        changed[2]["updateDataModel"]["value"]["hasRevisions"],
+        false
+    );
     assert_eq!(
         changed[2]["updateDataModel"]["value"]["selection"],
         json!(another)

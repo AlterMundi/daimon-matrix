@@ -47,6 +47,8 @@ enum Operation {
         labels: ProjectionLabels,
         journal: String,
         missions: String,
+        #[serde(default)]
+        project_revisions: Vec<a2ui::questbook::ProjectRevision>,
     },
     ApplySurface {
         operation: Uuid,
@@ -104,6 +106,7 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
             labels,
             journal,
             missions,
+            project_revisions,
         } => {
             let cards = cards.list(&access, after)?;
             let selected = selected.or_else(|| cards.first().map(|card| card.id));
@@ -116,7 +119,8 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
                 &access,
                 &labels.labels(),
                 &journal,
-                &missions
+                &missions,
+                &project_revisions,
             )?)
         }
         Operation::ApplySurface {
