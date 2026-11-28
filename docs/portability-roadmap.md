@@ -245,6 +245,16 @@ reader withdraws that historical evidence. The two compositions are
 qualified separately. Production adoption and a live shared remote remain
 open.
 
+An authorized visitor can [create the first mission from the Questbook](https://github.com/AlterMundi/holodeck/commit/70b176fb43014a0f4554c283c5d8376525791209).
+The human and native daimon paths use the same typed create command. If the
+browser loses the response after commit, it reads the caller's original
+receipt and opens that exact mission. The
+[writer adapter](https://github.com/AlterMundi/daimon-matrix/commit/4acb962eee87ff6960bd419db3c5c506b2586c63)
+also opens an exact mission outside the current page without moving that
+page's cursor. The isolated Home, native socket and Chromium checks cover
+an edit refusal, retained retry, changed operation conflict, a private
+receipt and one persisted human-attributed mission after the lost response.
+
 Daimons read the card model and submit typed operations programmatically.
 An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
 board or review. Its component tree, selection and drafts are view state.
