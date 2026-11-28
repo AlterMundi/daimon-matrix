@@ -727,7 +727,18 @@ activity distinct from who receives the next human intervention.
    `952eb5991305442a979186a3ccc1d5791af00101a2627d3fc3302f0f780eee6c` and
    `def977c824bb9c2edc268c200f1e6a922ff7f86752013ece73d0304ac0f7cc08`.
    Exact preimages and tested successor hashes are retained for the
-   respective service owners. Both live services still use their prior SDK.
+   respective service owners. Cluster's maintained builder sealed separate
+   31-wheel SDKs from the qualified Codex and Claude backport trees.
+   Codex source `6aca7f376039e349e73b6e02877c10cf9f47475c` selects wheel
+   SHA-256 `0c396a5390fb4abea9ef315f310497e7bfbd2a0bfa8e08b7130865aefe4860a2`.
+   Claude source `ee2698c58a82d65ccec9658e93cf21c25ac5a6cd` selects wheel
+   SHA-256 `d6e2018c5f7f33f30392a9938b2597dce1dab31e36993c21e0b98f87b6f28967`.
+   Each wheel retained the previously tested patched module bytes.
+   The hash-locked offline installer verified both dependency sets,
+   compared installed files to the wheels and imported the guarded writer
+   from a disposable Python 3.13 environment. The candidate SDKs and source
+   objects are retained privately on Ítaca. Both live services still use
+   their prior SDK. Use their existing scoped selection and rollback paths.
    Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
