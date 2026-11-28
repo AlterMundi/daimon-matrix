@@ -529,12 +529,12 @@ Holodeck project has its own Git origin, a verified commit and a retained
 DaimonCards receipt. The live own-native reader in this cut confirmed the
 same receipt and card revision three with the original Git link current.
 The combined Holodeck candidate below preserves the serving world.
-The loaded bridge lacks the topic-room operation, and the loaded Gateway
-does not serve the project reader. The current shared Home profile already
-enables workspace access. Select the compatible Gateway and Dashboard
-first, then the matching bridge and Holodeck candidate through their
-existing owners. Keep the current pair and use the then-serving release
-as the rollback reference. The pilot has no accepted topic checkpoint yet.
+The loaded bridge still lacks the topic-room operation. The current shared
+Home profile enables workspace access and the selected Gateway now serves
+the project reader. Select the matching bridge and Holodeck candidate
+through their existing owners. Keep the current pair and use the
+then-serving release as the rollback reference. The pilot has no accepted
+topic checkpoint yet.
 
 The first pilot deliverable is the bridge mission playtest guide. The
 existing Home publisher accepted a paired-human HTML edition of
@@ -558,9 +558,17 @@ checks, including the pinned guide with a later draft. The
 [packed browser fixture](https://github.com/AlterMundi/holodeck/commit/2c7943c0b34d43961dc08ae774dc42004cc2daf4)
 can rerun against that immutable package. The candidate bridge passed 37
 tests; its active predecessor still lacks the topic-room operation.
-Live selection of the compatible Gateway, bridge and Holodeck build,
-and the paired browser opening that edition from both surfaces, are
-still required.
+Portability selected Gateway `d4253a6c` and its matching Dashboard
+on Ítaca. The active Matrix topic controller advertised
+`project_checkpoint_shadow` and confirmed that the topic had no claimed
+workspace. A read-only rehearsal of the candidate bridge using the
+selected Dashboard and current Home owner binding returned this real
+topic and an empty repository catalogue. The workspace writer refused
+adoption while the topic was executing, and readback confirmed that no
+folder was allocated. Use the existing workspace adoption when the
+selected topic is idle and retain its execution directory. The live
+bridge and Holodeck build still need selection, followed by the paired
+browser opening the exact edition from both surfaces.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
