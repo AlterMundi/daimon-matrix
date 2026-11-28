@@ -9,7 +9,7 @@ pub(super) fn surface_id(project: Uuid) -> String {
 }
 
 /// The host owns `selected` and sends a new projection for a navigation
-/// event. Only claim and completion go to the card writer.
+/// event. Title editing, claim and completion use the card writer.
 pub fn mount(
     cards: &[Card],
     selected: Uuid,
@@ -65,7 +65,7 @@ pub fn mount(
         json!({"version":"1.0","createSurface":{"surfaceId":surface,"catalogId":CATALOG}}),
         json!({"version":"1.0","updateComponents":{"surfaceId":surface,"components":[
             {"id":"root","component":"HudPanel","label":journal,
-                "children":["missions","objective","status","assignment","instructions","progress","claim","done"]},
+                "children":["missions","objective","status","assignment","instructions","progress","edit_title","claim","done"]},
             {"id":"missions","component":"HudChoice","label":missions,"options":{"@path":"/quests"},
                 "value":{"@path":"/selection"},"draft":{"@path":"/questDraft"},
                 "action":{"event":{"name":"select_quest","context":{"card":{"@path":"/questDraft"}}}}},
@@ -74,6 +74,8 @@ pub fn mount(
             {"id":"assignment","component":"HudText","label":{"@path":"/assignment"}},
             {"id":"instructions","component":"HudText","label":{"@path":"/instructions"},"lines":2,"visible":{"@path":"/hasObjectives"}},
             {"id":"progress","component":"HudText","label":{"@path":"/progress"},"visible":{"@path":"/hasObjectives"}},
+            {"id":"edit_title","component":"HudButton","label":"Editar título",
+                "visible":{"@path":"/canEditTitle"},"action":write_event("edit_title")},
             {"id":"claim","component":"HudButton","label":labels.claim,
                 "disabled":{"@path":"/claimDisabled"},"action":write_event("claim")},
             {"id":"done","component":"HudButton","label":labels.mark_done,
@@ -86,6 +88,7 @@ pub fn mount(
             "hasObjectives":!card.objectives.is_empty(),"instructions":instructions,"tracking":tracking,
             "next":(cards.len() == 32).then(|| cards.last().map(|item| item.id)).flatten(),
             "progress":format!("{}/{}",card.objectives.iter().filter(|item|item.receipt.is_some()).count(),card.objectives.len()),
+            "canEditTitle":access.can_write,
             "claimDisabled":!access.can_write || card.status != Status::Open || card.assignee.is_some(),
             "doneDisabled":!access.can_write || card.status != Status::InProgress || card.objectives.iter().any(|item|item.receipt.is_none()),
         }}}),

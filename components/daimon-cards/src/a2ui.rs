@@ -83,6 +83,8 @@ pub struct Event {
 pub struct Context {
     pub card: Uuid,
     pub revision: i64,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// `mounted_card` comes from the host's retained surface selection.
@@ -98,9 +100,12 @@ pub fn command(
     {
         return Err(Error::Access);
     }
-    let action = match event.name.as_str() {
-        "claim" => Action::Claim,
-        "done" => Action::Complete,
+    let action = match (event.name.as_str(), event.context.title) {
+        ("claim", None) => Action::Claim,
+        ("done", None) => Action::Complete,
+        ("edit_title", Some(title)) if event.surface_id == questbook::surface_id(project) => {
+            Action::EditTitle { title }
+        }
         _ => return Err(Error::Invalid),
     };
     Ok(Command {

@@ -48,6 +48,12 @@ selected objective, and the actions that apply. A `select_quest` event changes
 the host's selection. It writes no card event. The existing `claim` and
 `done` surface actions map to `Claim` and `Complete`. Acceptance assigns the
 actor and enters progress in one revision; completion requires an active card.
+The Questbook also projects an `edit_title` action. The host keeps a local
+draft and sends the normalized event with the selected card, observed revision
+and proposed title. It maps to the same `EditTitle` command that the daimon tool
+uses. Stale writes return a conflict. Holodeck refreshes the shared title while
+retaining the draft for the human to review and submit.
+
 The same commands work from a daimon tool. Use `require_world` to add an
 objective before quest acceptance. The private `record_world` writer operation
 credits a required objective after the owner verifies the original Room
