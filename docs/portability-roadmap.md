@@ -42,6 +42,32 @@ own attributed observations. Gateway checks the topic, sources and prior
 revision before accepting the delta. Conflicting or stale observations remain
 inspectable. The system that performed an action is the source for its outcome.
 
+### First delivery: a project link in shadow
+
+Start with one change: attach an authorized repository and immutable commit to
+the existing logical topic. Reuse Gateway's permanent workspace binding and
+retained source references. Keep the repository locator private to its authorized
+audience. The shadow reader compares the proposed link with Git and the cited
+source. Keep the shadow result outside the active native context until its
+recorded revision and evidence agree.
+
+The proposal binds the logical topic and its current binding, the expected
+checkpoint revision, a stable operation ID, the project link and the retained
+source references. Gateway derives the actor from the owning session, resolves
+the references under their existing audiences, and projects the validated
+result. An exact repeated proposal reads its original result. A competing
+proposal against an older revision returns a conflict and the current revision.
+Unavailable or unverifiable evidence leaves the proposal unresolved. A reference
+to an uncertain effect remains a reference to its owning receipt.
+
+Qualify with two shadow writers, a moved checkout, duplicate delivery, a
+missing commit, and a source outside the topic's audience. A passing fixture
+shows the same project revision in both workspaces and one accepted revision
+after competing proposals. Cold recovery and live receiving acceptance are
+subsequent tests. The workspace owner supplies the current binding; Observer
+and the general conversation may supply existing attributed evidence. This
+cut requires no model call and no Gateway deployment.
+
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
 receipts by ID. Use deterministic readers for routing facts, revisions and
@@ -84,6 +110,11 @@ assignment and state changes work without a model turn. Prove that a human
 without a forge account and a daimon can act on the same card and see the
 result from their respective surfaces.
 
+For A2UI, send ordinary card actions to the same writer and re-read its result
+for the displayed revision. A stale assignment refreshes the card from that
+writer while preserving the viewer's selection or unsaved draft. Holodeck uses
+the same project and action identifiers for the game or place it projects.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Existing projects
@@ -118,6 +149,15 @@ and workflow support we need to maintain locally.
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
    Attribute the result to its actual body and preserve each audience.
+   Publish the maintained contract and orientation through the existing Skills
+   and Source/Weave adoption routes. Verify the source revision actually
+   loaded on the selected body and retain audience limits. The
+   [foundation](foundation/daimon-matrix.md) and its
+   [living-in-the-present companion](foundation/living-in-the-present.md)
+   orient continuity. The project checkpoint retains work and
+   commitments; being-level learning stays with the selected memory and
+   skills. `/tribe` project collaboration follows authorized relationships and
+   resource access.
 
 ## Additional harness pilots on ITACA
 

@@ -16,6 +16,34 @@ When the project is shared, use a remote reachable by its participants and an
 accessible view for people who do not use Git. Keep large project sources in
 their supported durable storage and commit stable references where needed.
 
+### Repository and revision binding
+
+Use the topic's existing Gateway workspace binding to find its permanent
+folder. A project checkout is an explicit selection within or alongside that
+folder. An existing Git root is reused with its own history. For new work,
+initialize only the selected project directory and commit the first useful
+files. Stage only changes belonging to that iteration. An existing repository,
+index, or uncommitted change remains part of the operator's working state.
+
+The durable topic link records the project identity, the authorized repository
+locator, and the full Git commit object ID. A local checkout is a per-workspace
+resolution of that locator. A branch name helps navigation. The commit
+identifies the revision under review. An inaccessible locator, unborn
+repository or missing commit leaves the reference unresolved. A local
+repository is a valid project. When collaboration spans hosts, use a cloneable
+remote reachable by the authorized participants.
+
+The first test uses a readable non-code project, a local Git remote, and two
+independent workspace directories. Both sides resolve the same project commit
+after one workspace moves. Returning to the first workspace leaves its local
+changes intact. Repeated observation produces the same revision without a new
+commit, network write or model call.
+
+For the isolated pilot, run `python tools/verify_project_git.py REPO COMMIT`
+on the already authorized checkout. The probe only verifies the exact local
+Git object. Gateway remains responsible for the topic binding, access to
+the referenced source and publishing a checkpoint revision.
+
 The project records its purpose, how to open or run it, and the next action
 when that would let someone else continue. Use shared cards when there is
 work to coordinate. Record decisions and meaningful changes where future
