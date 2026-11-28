@@ -565,9 +565,7 @@ class SourceDisclosureTests(unittest.TestCase):
             max_bytes=1_048_576,
         )
         return {
-            event["event_id"]
-            for item in bundle["items"]
-            for event in item["events"]
+            event["event_id"] for item in bundle["items"] for event in item["events"]
         }
 
     def test_foreign_source_grant_preserves_weave_ancestor_sensitivity(self) -> None:
