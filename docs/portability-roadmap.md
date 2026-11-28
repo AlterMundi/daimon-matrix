@@ -176,10 +176,10 @@ repeats the paired fixture with Claude Code 2.1.332 and Codex App Server
 Each leg made one loopback call and resubmitted zero earlier instructions.
 The recorded counts are 8 input and 4 output fixture tokens for Claude and
 218 fixture tokens for Codex. Both legs preserve the retained result and the
-unresolved receipt. Ítaca was still serving `06965d97` at readback. Master
-includes a patch-equivalent version of that head's direct attachment change,
-but the serving lineage also contains receiving-specific changes. Portability
-owns their composition and verification alongside the checkpoint in the
+unresolved receipt. TeleDaimon's package read back as `06965d97`.
+Master includes a patch-equivalent version of that head's direct attachment
+change. The separately selected Gateway profile is checked below. Portability
+owns its composition and verification alongside the checkpoint in the
 selected release.
 
 The [owner lineage transition](https://github.com/AlterMundi/DaimonApp/commit/acac086a30422f5ac9aa3ace2041ce5e12f42aab)
@@ -415,12 +415,18 @@ are still open.
 [Gateway PR1137][direct-gateway] merged on 2026-11-28 at
 [`cec753ad`](https://github.com/AlterMundi/DaimonApp/commit/cec753ad1acdee7d467830ac0533584f47840f54).
 The merge tree is byte-for-byte identical to the qualified candidate
-`d6594d06`. Ítaca's selected Gateway still read back as `06965d97`.
-Use the ordinary Portability release composition to preserve its
-receiving-specific owner projection, Telegram ingress and Reports
-behavior. A direct merge of the serving lineage and master still has
-26 conflicting paths. The source is integrated; the live checkpoint
-canary and actual paired room use remain separate acceptance work.
+`d6594d06`. The exact binary passed separate Claude Telegram attachment
+and quoted-original fixtures. The active Gateway process on Ítaca reads
+back `5c7c6faa`; `06965d97` identifies its separate Telegram poller.
+The live Gateway binary passed read-only preflight of its selected profile
+and Reports record. In the same environment, the merged candidate rejected
+the profile's `agy_cli` field before reaching Reports. The Reports store
+and private projection source trees themselves match. A raw source merge
+with the actual serving lineage has 12 conflicting paths. Portability's
+receiving composition must keep the current Antigravity, Goose, Claude
+attachment and scoped interruption behavior. Keep the selected profile
+intact and repeat the read-only preflight on that composition before the
+live checkpoint canary.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
