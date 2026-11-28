@@ -57,8 +57,14 @@ or reuses the bare repository for that UUID and clones it into the selected
 workspace. All collaborators using this route need access to the same
 absolute mount. The helper inherits the mount's group, checks the workspace
 marker and refuses a different repository at the selected path. It never
-stages project files. Use ordinary Git to commit the first useful files and,
-if shared, push the first revision. On a filesystem where Git requires
+stages project files. On Linux and macOS it prepares and checks Git directories
+before publishing them atomically without replacing an existing directory.
+If checkout preparation fails after the bare repository is published, use
+the same UUID to continue with the retained repository. A process killed
+during preparation may leave a hidden staging directory. The ordinary
+project path is never assigned to that incomplete directory.
+Use ordinary Git to commit the first useful files and, if shared, push the
+first revision. On a filesystem where Git requires
 explicit trust for a collaborator-owned bare repository, use its exact
 authorized path with `git -c safe.directory=/path/to/repository.git` for the
 Git operation. Existing SSH and HTTP repositories can use ordinary Git

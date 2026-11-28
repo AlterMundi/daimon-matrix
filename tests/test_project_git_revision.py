@@ -1,11 +1,13 @@
 """Exercise the project revision probe against real, isolated Git workspaces."""
 
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 from uuid import uuid4
 
+from tools import prepare_project_git as preparation
 from tools.prepare_project_git import prepare_project_git
 from tools.verify_project_git import verify_project_revision
 
@@ -78,6 +80,72 @@ class ProjectGitRevisionTest(unittest.TestCase):
             self.assertEqual(list(draft.iterdir()), [draft / "chapter.md"])
             with self.assertRaisesRegex(ValueError, "project directory"):
                 prepare_project_git(workspace, "current", "../outside", uuid4())
+
+    def test_failed_git_steps_leave_a_retryable_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            workspace = root / "workspace"
+            workspace.mkdir()
+            (workspace / ".daimon-topic").write_text("current")
+            shared = root / "shared"
+            shared.mkdir()
+            shared.chmod(0o2770)
+            repository = uuid4()
+            remote = shared / f"{repository}.git"
+            real_git = preparation.git
+
+            def fail_config(path, *args, **kwargs):
+                if args == ("config", "--local", "daimon.project-id", str(repository)):
+                    raise ValueError("simulated config failure")
+                return real_git(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(preparation, "git", side_effect=fail_config),
+                self.assertRaisesRegex(ValueError, "simulated config failure"),
+            ):
+                prepare_project_git(workspace, "current", "story", repository, shared)
+            self.assertEqual(list(shared.iterdir()), [])
+
+            def fail_clone(path, *args, **kwargs):
+                if "clone" in args:
+                    (path / "story").mkdir()
+                    raise ValueError("simulated partial clone")
+                return real_git(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(preparation, "git", side_effect=fail_clone),
+                self.assertRaisesRegex(ValueError, "simulated partial clone"),
+            ):
+                prepare_project_git(workspace, "current", "story", repository, shared)
+            self.assertEqual(list(shared.iterdir()), [remote])
+            self.assertEqual(list(workspace.iterdir()), [workspace / ".daimon-topic"])
+            inode = remote.stat().st_ino
+            result = prepare_project_git(
+                workspace, "current", "story", repository, shared
+            )
+            self.assertTrue(result["created_checkout"])
+            self.assertEqual(remote.stat().st_ino, inode)
+
+    def test_publication_does_not_replace_concurrent_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            (workspace / ".daimon-topic").write_text("current")
+            checkout = workspace / "story"
+            real_publish = preparation.publish_directory
+
+            def occupy_then_publish(staged, destination):
+                destination.mkdir()
+                real_publish(staged, destination)
+
+            with (
+                mock.patch.object(
+                    preparation, "publish_directory", occupy_then_publish
+                ),
+                self.assertRaises(FileExistsError),
+            ):
+                prepare_project_git(workspace, "current", "story", uuid4())
+            self.assertEqual(list(checkout.iterdir()), [])
+
 
     def test_moved_workspace_recovers_commit_without_changing_local_drafts(self):
         with tempfile.TemporaryDirectory() as temp:

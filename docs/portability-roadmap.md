@@ -242,8 +242,12 @@ The Gateway fixture verifies real Git objects, a separate project's
 exclusion and rejection of an unregistered object. Chromium verifies the
 mission with a synthetic room authority, then drops the hash when the
 reader withdraws that historical evidence. The two compositions are
-qualified separately. Production adoption and a live shared remote remain
-open.
+qualified separately. The Git preparer now verifies an initialized bare
+repository and checkout before publishing either directory. In an isolated
+real-Git run, a failure during initialization left no published remote, a
+failure during cloning left the verified remote reusable under the same UUID,
+and a concurrently created checkout kept its original directory. Production
+adoption and a live shared remote used by both participants remain open.
 
 An authorized visitor can [create the first mission from the Questbook](https://github.com/AlterMundi/holodeck/commit/70b176fb43014a0f4554c283c5d8376525791209).
 The human and native daimon paths use the same typed create command. If the

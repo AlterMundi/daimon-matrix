@@ -1,13 +1,16 @@
 """Prepare a project checkout and optional shared bare Git repository on an existing mount."""
 
 import argparse
-from contextlib import contextmanager
+import ctypes
 import fcntl
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import UUID
 
 
@@ -19,6 +22,40 @@ def locked_directory(directory: Path):
         yield
     finally:
         os.close(fd)
+
+
+def publish_directory(staged: Path, destination: Path) -> None:
+    """Publish a prepared directory without replacing a concurrent occupant."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(staged)
+    target = os.fsencode(destination)
+    if sys.platform == "linux" and hasattr(libc, "renameat2"):
+        at_current_directory = -100
+        rename_no_replace = 1
+        rename = libc.renameat2
+        rename.argtypes = (
+            ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint
+        )
+        result = rename(
+            at_current_directory, source, at_current_directory, target, rename_no_replace
+        )
+    elif sys.platform == "darwin" and hasattr(libc, "renamex_np"):
+        rename_exclusive = 4
+        rename = libc.renamex_np
+        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+        result = rename(source, target, rename_exclusive)
+    else:
+        raise ValueError("Atomic project directory publication is unavailable.")
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+
+
+def require_claim(workspace: Path, claim: str) -> None:
+    marker = workspace / ".daimon-topic"
+    if (marker.is_symlink() or not marker.is_file()
+            or marker.stat().st_size != len(claim.encode()) or marker.read_text() != claim):
+        raise ValueError("The workspace claim changed.")
 
 
 def git(directory: Path, *args: str, absent_ok: bool = False) -> str | None:
@@ -48,6 +85,16 @@ def require_directory(path: Path) -> Path:
     return path.resolve(strict=True)
 
 
+def bare_binding(remote: Path, repository: str) -> None:
+    trust = ("-c", f"safe.directory={remote}")
+    if (
+        git(remote, *trust, "rev-parse", "--is-bare-repository") != "true"
+        or git(remote, *trust, "config", "--local", "--get-all",
+               "daimon.project-id", absent_ok=True) != repository
+    ):
+        raise ValueError("The selected shared repository has a different identity.")
+
+
 def checkout_binding(checkout: Path, repository: str, remote: Path | None) -> None:
     root = git(checkout, "rev-parse", "--show-toplevel")
     if root != str(checkout):
@@ -75,10 +122,7 @@ def prepare_project_git(
     repository_id = str(repository)
     remote = None
     with locked_directory(workspace):
-        marker = workspace / ".daimon-topic"
-        if (marker.is_symlink() or not marker.is_file()
-                or marker.stat().st_size != len(claim.encode()) or marker.read_text() != claim):
-            raise ValueError("The workspace claim changed.")
+        require_claim(workspace, claim)
         exists = checkout.exists() or checkout.is_symlink()
         if exists:
             require_directory(checkout)
@@ -96,22 +140,34 @@ def prepare_project_git(
                 if remote.exists() or remote.is_symlink():
                     require_directory(remote)
                 else:
-                    remote.mkdir(mode=0o2770)
-                    remote.chmod(0o2770)
-                    git(remote, "init", "--bare", "--shared=group", "--initial-branch=main", "--template=")
-                    git(remote, "config", "--local", "daimon.project-id", repository_id)
-                trust = ("-c", f"safe.directory={remote}")
-                if (git(remote, *trust, "rev-parse", "--is-bare-repository") != "true"
-                        or git(remote, *trust, "config", "--local", "--get-all", "daimon.project-id",
-                               absent_ok=True) != repository_id):
-                    raise ValueError("The selected shared repository has a different identity.")
-            if not exists:
-                git(workspace, *trust, "clone", "--no-local", "--template=",
-                    "--", str(remote), checkout_name)
-        elif not exists:
-            checkout.mkdir(mode=0o700)
-            git(checkout, "init", "--initial-branch=main", "--template=")
-            git(checkout, "config", "--local", "daimon.project-id", repository_id)
+                    with TemporaryDirectory(
+                        prefix=".daimon-git-", dir=shared_root
+                    ) as directory:
+                        staged = Path(directory) / remote.name
+                        staged.mkdir(mode=0o2770)
+                        staged.chmod(0o2770)
+                        git(staged, "init", "--bare", "--shared=group",
+                            "--initial-branch=main", "--template=")
+                        git(staged, "config", "--local", "daimon.project-id", repository_id)
+                        bare_binding(staged, repository_id)
+                        require_claim(workspace, claim)
+                        publish_directory(staged, remote)
+                bare_binding(remote, repository_id)
+        if not exists:
+            with TemporaryDirectory(prefix=".daimon-git-", dir=workspace) as directory:
+                stage_root = Path(directory)
+                staged = stage_root / checkout_name
+                if remote is None:
+                    staged.mkdir(mode=0o700)
+                    git(staged, "init", "--initial-branch=main", "--template=")
+                    git(staged, "config", "--local", "daimon.project-id", repository_id)
+                else:
+                    git(stage_root, "-c", f"safe.directory={remote}",
+                        "clone", "--no-local", "--template=",
+                        "--", str(remote), checkout_name)
+                checkout_binding(staged, repository_id, remote)
+                require_claim(workspace, claim)
+                publish_directory(staged, checkout)
 
         checkout_binding(checkout, repository_id, remote)
         return {
