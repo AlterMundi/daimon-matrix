@@ -357,9 +357,22 @@ bridge mission at revision three, with the exact Git revision and an
 uncredited Room objective. All three authoring receipts were read back.
 The operator record holds the project and repository identities, locator
 and receipts. This verifies the owner-side Git and card state. The
-project still needs its actual Gateway topic binding, matching Home view
-and edit grants, live Holodeck selection, and a second participant using
-their own access.
+project still needs its actual Gateway topic binding, live Holodeck
+selection, and a second participant using their own access.
+
+The [paired project receiver](https://github.com/AlterMundi/holodeck/commit/245e4490dfc544e8d7b9cd4bec56720114df89f4)
+can use the existing Home pair for this private pilot. The protected bridge
+verifies the current pairing for each browser and native access. Projects
+with a wider audience continue to use the registered view and edit grants.
+The installed Home API confirmed the current pair and its Interaction route.
+The Home verifier accepted all 65 files of the updated 29,265,920-byte
+candidate, SHA-256
+`efc52d8ee3d53f6d23dfb57d78fd5153f8f81847baa5a1a0d5a208fde302700e`.
+The exact Node 24 package fixture allowed the paired user's write and own
+receipt, refused anonymous access and denied receipt access after revocation.
+The paired native policy test refused an unrelated human and being and
+rechecked a changed pairing. The exact pilot selections and staged seed
+remain in the private operator record. Use by the real pair is still open.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
