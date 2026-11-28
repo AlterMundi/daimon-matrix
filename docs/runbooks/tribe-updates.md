@@ -45,6 +45,12 @@ ID and publication classification. A successful earlier transfer of a
 different Source does not confer access. Record the receiver's own pull and
 readback before any adoption claim.
 
+On the native owner route, read the current projection with the observer
+client that grants `source.projection`. The Source writer authorizes the
+publication and import operations. Check the method on the selected
+descriptor before preparing a request. An exit-3 CLI authentication
+refusal is local and happens before dispatch, with no retry token.
+
 Source project publications are attributed learning references, not species or
 ancestry selectors. The foundation's ancestry `/source.pull` and
 `/species.pull.name` must keep their lineage meaning; species release/live

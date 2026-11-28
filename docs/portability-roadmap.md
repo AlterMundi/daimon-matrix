@@ -645,7 +645,16 @@ activity distinct from who receives the next human intervention.
    (`1f21e3d7-6f43-4adf-a0ab-c3d550fb9535`) and then returned an
    active external-reference projection for the original publication under
    decision `4875eb48-d3c9-4e90-9967-072a068200e5`. This confirms operator
-   review and Source adoption with zero model calls. The same selective
+   review and Source adoption with zero model calls. A later authenticated
+   Antigravity read confirmed that the active external reference still
+   resolves to that exact publication, content and decision. The serving
+   Claude body independently confirmed the exact Weave offer and Source
+   publication hashes through its current read grants. The five
+   installed Gateway skill files matched the signed locator's pinned Skills
+   commit byte-for-byte, and this Codex turn used its project guidance.
+   Antigravity's model uptake remains unobserved. The Source writer profile
+   correctly refused a projection read before dispatch, and the CLI now
+   returns the documented authentication exit for that case. The same selective
    publisher read for Oliva returned `source_disclosure_denied`. A current
    claim and `tribe-shared` read grant for this exact source have not been
    established. Oliva received the public, immutable Skills locator in a

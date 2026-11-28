@@ -23,7 +23,7 @@ from .client import (
     store_prepared_request,
 )
 from .human_review import DECISION_REASONS
-from .local_api import MAX_FRAME_BYTES
+from .local_api import MAX_FRAME_BYTES, LocalApiError
 
 EXIT_OK: Final = 0
 EXIT_USAGE: Final = 2
@@ -906,6 +906,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         response = client.send(request)
         _write_result(method, request, response, json_output=args.json_output)
         return EXIT_OK if response["ok"] else EXIT_REFUSED
+    except LocalApiError as exception:
+        print(str(exception), file=sys.stderr)
+        return EXIT_AUTH
     except ClientError as exception:
         code = str(exception)
         print(code, file=sys.stderr)
