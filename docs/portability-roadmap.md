@@ -293,10 +293,14 @@ Each item names the behavior to deliver and what to observe in the pilot.
    authorized topic catalogue and moves the visitor into the selected virtual
    room. Use the logical topic reference from the existing Session Workspace
    reader. The [Gateway candidate](https://github.com/AlterMundi/DaimonApp/pull/1137)
-   has a tested read-only catalogue and exact-room lookup. Connect the
-   Holodeck reader and entry control and check direct opening after ownership
-   changes. A pair with no house can enter a new empty topic on desktop and
-   a narrow touch screen without laying anything out.
+   has the read-only catalogue and exact-room lookup. The
+   [Holodeck candidate](https://github.com/AlterMundi/holodeck/pull/40)
+   connects the explorer through the bound Conversation frame. A narrow
+   Chromium fixture with no house verifies discovery, exact-room readback
+   and refusal after access is withdrawn, with no original submitted.
+   The generated spatial room and its live receiving acceptance remain
+   open. Verify entry to a new empty topic on desktop and touch with no
+   authored layout.
 2. **Rooms that grow with the work.** Derive doors, tables and the shared
    questbook from authorized project links and work records. Start with an
    empty room, add two projects and observe the appropriate surfaces appear.
