@@ -536,6 +536,18 @@ first, then the matching bridge and Holodeck candidate through their
 existing owners. Keep the current pair and use the then-serving release
 as the rollback reference. The pilot has no accepted topic checkpoint yet.
 
+The first pilot deliverable is the bridge mission playtest guide. The
+existing Home publisher accepted a paired-human HTML edition of
+`README.md` from the pilot's exact Git commit. The private pilot record
+binds the Git commit, rendered byte digest, immutable Home version,
+and its normal shared-login entry. The publisher store retained matching
+bytes; anonymous and owner-as-being HTTP requests to the human-only
+artifact returned 404, and the authenticated-entry route initiated shared
+SSO. Paired browser readback and opening this edition from the topic room
+are still required. Keep the selected edition while later work is a
+draft. The private locator stays with the existing pilot, outside this
+public roadmap.
+
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
    commit with the checkout verifier. Keep the existing project UUID,
