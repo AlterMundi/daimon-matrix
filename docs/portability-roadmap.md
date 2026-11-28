@@ -570,9 +570,15 @@ permits attaching that permanent folder during an existing owned turn.
 It preserves the active turn, native thread, exact logical binding and
 execution directory, and still refuses maintenance, Stop and incomplete
 creation holds. Independent review found no blocking regression. Five
-targeted workspace tests and the shadow checkpoint integration passed.
-The locked Rust 1.95 release candidate on serving baseline `19bff073`
-has SHA-256 `fb5238bad398b59399027ecf1f9ff5d0b00822eca93f1bf1982e6891b0e3682c`.
+targeted workspace tests passed. The [owner-socket integration fixture](https://github.com/AlterMundi/DaimonApp/commit/9f5f026637d07bbd1796feff5bfab08deaef7c0e)
+started an active synthetic native turn before workspace adoption. It
+compared the same local turn, native thread, working directory and busy
+state on both sides of the call. The prior serving binary refused that
+call. The corrected binary adopted the folder and continued through the
+exact revision, source, repeat and revocation checks, with no additional
+dispatches or model calls. The locked Rust 1.95 release candidate on
+serving baseline `19bff073` has SHA-256
+`fb5238bad398b59399027ecf1f9ff5d0b00822eca93f1bf1982e6891b0e3682c`.
 Portability owns the receiving selection. Pilot workspace adoption and
 the live bridge, Holodeck and paired-browser acceptance remain open.
 
