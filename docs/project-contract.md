@@ -80,7 +80,20 @@ return to the work. Bind the room to the existing logical topic. Entering it
 situates the current conversation and work in that topic with the visitor's
 current access. Room decoration and position belong to Holodeck. Topic history,
 checkpoints and project links retain their existing authorities and identities.
-A topic can start with an empty room and gain surfaces as its work develops.
+Holodeck's topic explorer is available from the ordinary entrance, including
+when a daimon has no house. It lists the visitor's current accessible topics.
+Choosing one opens its default virtual room. Derive that room from the existing
+topic, its authorized project links and the maintained default layout and
+workflow. Show conversation and the current state of the work, with project
+doors, worktables and the questbook as the available work calls for them. An
+empty topic is usable for conversation and gains project surfaces as links and
+shared work are recorded. Reads and ordinary updates use those existing
+records without a setup step or an extra model turn.
+
+A house, a custom layout or a handcrafted topic space is optional. Apply such
+customizations to the presentation of the same logical topic and work. A
+visitor can still find the topic through the explorer and use the default
+presentation when a custom room has not been configured.
 
 Arrange the room around what participants do with its linked projects. A door
 can lead to a game's world, a walkable design or another substantial project

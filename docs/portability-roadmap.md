@@ -208,12 +208,21 @@ and workflow support we need to maintain locally.
    human and daimon participants. Show assignment, attributed review, offline
    project edits, card state synchronization and recovery across two workspaces.
    Verify the Rust writer and A2UI projection using that same journey.
-   In Holodeck, use a room bound to the selected logical topic. Link at least
-   two projects in the same room. Exercise a door into one project space and
-   a worktable that opens or combines linked material, with every edit
-   resolving to its source project and revision. Re-enter from Holodeck and
-   a non-spatial client. Verify that unauthorized project links stay private
-   and that the questbook uses the same shared cards on both sides.
+   In Holodeck, deliver the topic explorer from the ordinary entrance.
+   Start the acceptance run with a daimon and human pair that has no house
+   or authored rooms. Open an accessible topic and use its automatically
+   generated virtual room. Begin with conversation, then link two projects
+   and verify that the default room gains the appropriate surfaces as work
+   appears. Use a door into one project space, a worktable that opens or
+   combines linked material, and the shared questbook. Verify that edits
+   reach the selected project and revision, and that ordinary updates and
+   navigation require no model turn or manual room setup.
+
+   Add a custom room layout and a house entrance to the same topic during
+   the pilot. Re-enter from the explorer, the house and a non-spatial
+   client. Verify the same topic identity, conversation, project revisions
+   and shared cards at each entry. Verify that unauthorized topics and
+   project links stay private both in discovery and on direct opening.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
