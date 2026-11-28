@@ -178,6 +178,26 @@ class ProjectGitRevisionTest(unittest.TestCase):
             self.assertEqual(expected["commit"], commit)
             self.assertEqual(verify_project_revision(moved, commit), expected)
             self.assertEqual(_git(moved, "show", f"{commit}:story.md"), "A visit to the patio.")
+            self.assertTrue(expected["checkout_at_selected_commit"])
+            _git(
+                moved, "-c", "user.name=Fixture",
+                "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false",
+                "commit", "--allow-empty", "-qm", "Separate branch tip",
+            )
+            tip = _git(moved, "rev-parse", "HEAD")
+            old_link = verify_project_revision(moved, commit)
+            self.assertEqual(old_link["commit"], commit)
+            self.assertEqual(old_link["checkout_head"], tip)
+            self.assertFalse(old_link["checkout_at_selected_commit"])
+            self.assertEqual(_git(moved, "rev-parse", "HEAD"), tip)
+            _git(moved, "symbolic-ref", "HEAD", "refs/heads/untouched")
+            unopened = verify_project_revision(moved, commit)
+            self.assertIsNone(unopened["checkout_head"])
+            self.assertFalse(unopened["checkout_at_selected_commit"])
+            self.assertEqual(
+                _git(moved, "symbolic-ref", "HEAD"), "refs/heads/untouched"
+            )
 
             absent = ("0" if commit[0] != "0" else "1") + commit[1:]
             with self.assertRaisesRegex(ValueError, "unavailable"):

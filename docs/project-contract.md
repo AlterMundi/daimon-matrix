@@ -73,8 +73,12 @@ checkout's Git configuration.
 
 Use `python tools/verify_project_git.py REPO COMMIT`
 on the already authorized checkout. The probe only verifies the exact local
-Git object. Gateway remains responsible for the topic binding, access to
-the referenced source and publishing a checkpoint revision.
+Git object and reports whether the checkout's HEAD is at that commit. Use
+that distinction during cold recovery: an older checkpoint commit may be
+available while the checkout contains a later or separate line of work.
+The probe leaves the checkout and index alone. Gateway remains responsible
+for the topic binding, access to the referenced source and publishing a
+checkpoint revision.
 
 The project records its purpose, how to open or run it, and the next action
 when that would let someone else continue. Use shared cards when there is

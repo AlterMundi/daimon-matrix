@@ -409,8 +409,12 @@ own-native Questbook command. It read the exact original live receipt and
 current open card at revision three, with the original Git link still
 current. A modified receipt and a checkout with the same commit under a
 different origin were refused. This result exercises the receiving Git
-and card readers. The live harness switch and its dispatch accounting
-are still open.
+and card readers. A later read of the existing checkout also verified that
+its HEAD matched the linked commit at the time of the receipt readback. The
+probe now reports that check separately from finding the Git object. A
+separate branch tip and an unborn HEAD both preserve access to the object
+without satisfying checkout alignment. The live harness switch and its
+dispatch accounting are still open.
 
 [Gateway PR1137][direct-gateway] merged on 2026-11-28 at
 [`cec753ad`](https://github.com/AlterMundi/DaimonApp/commit/cec753ad1acdee7d467830ac0533584f47840f54).
@@ -674,7 +678,11 @@ activity distinct from who receives the next human intervention.
    `aa6cbcc2-3423-468f-9696-bc634e1718c4` retained two origin events, zero
    unrelated events, and invoked zero model calls. This is Source intake
    for the Codex body. The installed skill and existing Source adoption
-   in Antigravity are separately evidenced above.
+   in Antigravity are separately evidenced above. The Codex cursor and
+   Antigravity's retained assessment name the same Source assessor.
+   Selected-source intake carries claims and publications. Reuse the
+   original signed assessment when reconciling across bodies, without
+   opening a competing first assessment in the same series.
    Ítaca preflight found a 1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an
