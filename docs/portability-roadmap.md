@@ -329,8 +329,12 @@ Each item names the behavior to deliver and what to observe in the pilot.
    per project on the first catalogue page. A mobile Chromium visitor taps
    the rendered door, opens the same scoped project view and leaves the
    room without retaining its door geometry. Additional projects are
-   available through the table pages. Separate project interiors, editing
-   across both projects and live acceptance remain open. See
+   available through the table pages. The project view opens the receiving
+   questbook for the matching card project. The isolated mobile fixture
+   reads a daimon-authored mission, accepts it through A2UI, and reads the
+   same updated revision through the card writer. A mismatched project
+   and a revoked room link are refused. Separate project interiors,
+   editing across both projects and live acceptance remain open. See
    [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 3. **General Conversation in context.** Keep general Conversation selected
    when the visitor enters. Show the current room and recipient. Send a
