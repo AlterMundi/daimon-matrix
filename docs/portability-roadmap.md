@@ -312,7 +312,15 @@ Each item names the behavior to deliver and what to observe in the pilot.
    from both projects, with each edit reaching its actual project revision.
    Open a mission from the same DaimonCards state seen outside Holodeck.
    Keep denied project links private and confirm that ordinary changes and
-   re-entry require neither setup work nor a model turn.
+   re-entry require neither setup work nor a model turn. The candidate
+   project table reads the current topic catalogue on opening, groups recent
+   repositories by project, and shows their exact Git revisions without
+   exposing raw repository locators. The isolated Gateway owner fixture
+   checks three links across two projects and omission after correction of
+   the cited source. The mobile browser fixture verifies an empty room,
+   new links, a changed revision and an omitted repository. Project entry,
+   pagination, editing across both projects and live acceptance remain
+   open. See [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 3. **General Conversation in context.** Keep general Conversation selected
    when the visitor enters. Show the current room and recipient. Send a
    human intervention and verify that general Conversation receives the
