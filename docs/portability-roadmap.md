@@ -385,8 +385,15 @@ the same card later read in a separate mobile browser context. The current toroi
 terrain keeps the traditional workshop bridge out of the live surface.
 The private pilot now also holds an open Git-review mission linked to the
 same exact commit; the bridge mission and its uncredited objective remain.
-This composition provides the exterior journal. Topic-room binding, live
-selection and use by the real pair remain separate acceptance work.
+Ítaca selected the composition through the existing Home release writer.
+The live archive is `b19c7b66ac3b` and the compatible rollback is
+`6fd9cd26732d`. The loaded bridge checked the existing Home pair.
+Before any browser action, the current CompAII own-native lane read the
+Git-review mission and its exact Git revision, changed its title once
+and recovered the original receipt on a separate request. The card is
+open at revision three. Anonymous journal access was denied. The private
+operator record retains the exact native receipt and release request.
+The paired human's actual use and the topic-room binding remain open.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
