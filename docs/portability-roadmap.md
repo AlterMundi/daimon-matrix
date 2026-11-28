@@ -361,18 +361,28 @@ Each item names the behavior to deliver and what to observe in the pilot.
 
 ## Additional harness pilots on ITACA
 
-After the current continuity and coordination repairs pass live acceptance,
-enroll one topic each for Antigravity and Goose. Use real work that suits the
-topic. Qualify both before adding separate Qwen and MiniMax CLI topics. Verify
-each selected profile and portable embodiment through the existing admission
-path before treating its topic as ready.
+Antigravity is the next receiving pilot. Bind its existing topic to the
+selected `agy` CLI and qualify the actual end-to-end route. The Antigravity
+SDK with a local model is a separate qualification. Then qualify Muse Code
+in its existing topic with the selected subscription. Goose remains the
+minimum Rust harness candidate. Continue with Qwen and MiniMax CLI after
+these pilots. Verify each selected profile and portable embodiment through
+the existing admission path before treating the harness binding as ready.
+
+Compare `muse serve` using the Muse Session Protocol with Muse's experimental
+ACP v1 route. The native protocol offers exact-turn steering, command IDs,
+targeted interruption and session replay. Use these through the same Gateway
+harness contract where ACP cannot meet the receiving acceptance test.
+[Muse protocol](https://meta-models.github.io/muse-code-sdk/1.4/guides/msp-concepts/)
+and [Muse ACP](https://meta-models.github.io/muse-code-sdk/1.4/guides/editors-acp/)
+define the provider surfaces.
 
 Portability owns operational repairs, live qualification and these additional
 topic admissions. The contract work consumes their attributed evidence and uses
 the existing Gateway deployment route. Isolated shadow work can proceed before
 those live checks finish.
 
-Use the same test across all four topics and the existing Codex and Claude
+Use the same test across the pilot topics and the existing Codex and Claude
 topics. Admit a request, observe its attributed progress and final return,
 recover useful context after a restart, and exercise the available native
 steering or queued-input behavior. Verify the actual recipient and visibility
