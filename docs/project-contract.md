@@ -82,6 +82,18 @@ work to coordinate. Record decisions and meaningful changes where future
 collaborators can retrieve them from the project and conversation. Reuse the
 topic checkpoint and existing receipts to recover after a harness change.
 
+For the Git-linked Questbook pilot, run
+`python tools/verify_questbook_checkout.py CHECKOUT PROJECT_RECORD ORIGINAL_RECEIPT`
+from the receiving body's existing own-native access. The private project
+record supplies its project/repository IDs, origin and exact commit. The
+probe checks the checkout and re-reads the original receipt and current
+card through the installed Holodeck command. It reports a later card
+revision separately and indicates whether the original Git link is still
+current. A mismatched origin or receipt fails even when the commit ID
+matches. This read dispatches no work and does not replay a card action.
+It checks the recovered project state; native startup and prior dispatch
+accounting are still verified through Gateway's receipts.
+
 ## Make project state usable from tools and surfaces
 
 Represent project data with stable IDs and enough structure for a daimon to

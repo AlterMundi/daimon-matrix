@@ -403,6 +403,15 @@ PR1137 is ready for integration and identifies this exact private pilot
 as the first live checkpoint consumer. Its serving selection remains
 with Portability.
 
+A [read-only recovery probe](project-contract.md#repository-and-revision-binding)
+now verifies the real pilot with a fresh SSH checkout and the installed
+own-native Questbook command. It read the exact original live receipt and
+current open card at revision three, with the original Git link still
+current. A modified receipt and a checkout with the same commit under a
+different origin were refused. This result exercises the receiving Git
+and card readers. The live harness switch and its dispatch accounting
+are still open.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Git owns project

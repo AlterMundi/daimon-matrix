@@ -8,7 +8,9 @@ import re
 import subprocess
 
 
-def verify_project_revision(directory: Path, commit: str) -> dict[str, str]:
+def verify_project_revision(
+    directory: Path, commit: str, *, expected_origin: str | None = None,
+) -> dict[str, str]:
     """Check an already authorized checkout and full commit object ID locally."""
     if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit) is None:
         raise ValueError("Expected a full Git commit object ID.")
@@ -34,6 +36,10 @@ def verify_project_revision(directory: Path, commit: str) -> dict[str, str]:
         raise ValueError("Select the exact project Git root.")
     if git("rev-parse", "--verify", f"{commit}^{{commit}}") != commit:
         raise ValueError("The reference does not identify the exact commit.")
+    if expected_origin is not None and (
+        not expected_origin or git("config", "--local", "--get-all", "remote.origin.url") != expected_origin
+    ):
+        raise ValueError("The checkout has a different Git origin.")
     return {"commit": commit, "object_format": git("rev-parse", "--show-object-format")}
 
 
