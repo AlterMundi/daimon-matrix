@@ -129,9 +129,17 @@ The [authenticated retry reservation](https://github.com/AlterMundi/DaimonApp/co
 revalidates the selected Git checkout, authority and checkpoint digest. The
 existing input writer saves one reservation for the original in the same
 transaction as requeue. The fixture verified that equivalent retries
-reuse it, a Gateway restart preserves it, and the original remains unsent
-while Codex refuses to load the saved history. The native creator and binding
-transition still need to consume this reservation.
+reuse it and a Gateway restart preserves it.
+
+The [Gateway successor first turn](https://github.com/AlterMundi/DaimonApp/commit/1bcd8d99df064b6b410476c78b28e6bf2f3b20d7)
+consumes the reservation after a definite missing-history reply. The
+controller fixture checked that creation is recorded before the native
+write, the original is accepted once on the creating connection with the
+same checkpoint and receipts, and the canonical answer appears in
+Conversation. The saved binding and logical generation remained intact.
+A second fixture withheld the creation acknowledgment. A repeated retry
+and a Gateway restart kept the attempt held with no second native creation
+or submission.
 
 The [real Codex App Server boundary fixture](https://github.com/AlterMundi/DaimonApp/blob/e5c4f1625eaa8b2f295bfb54969f94d1a249e262/docs/project-checkpoint-shadow.md#native-codex-successor-boundary)
 verified that a new native ID cannot resume before its first saved turn.
@@ -147,8 +155,8 @@ retains the logical generation and keeps earlier originals and receipts
 on their native lineage. Reserve the native creation and input stages
 separately. The selected successor's first submission must stay on the
 creating connection with revalidated authority and checkpoint. Enable
-ordinary resume only after observing materialization. The combined Gateway
-cold path and live receiving qualification in both directions remain open.
+ordinary resume only after observing materialization. Selecting the materialized successor for subsequent Gateway turns and live
+receiving qualification in both directions remain open.
 
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
