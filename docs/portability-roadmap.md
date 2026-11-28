@@ -528,7 +528,7 @@ receipts. The running profile already has its workspace root. The private
 Holodeck project has its own Git origin, a verified commit and a retained
 DaimonCards receipt. The live own-native reader in this cut confirmed the
 same receipt and card revision three with the original Git link current.
-The combined Holodeck candidate below preserves the serving world.
+The first combined Holodeck candidate preserved its then-current world baseline.
 The loaded bridge now supports the topic-room operation. The current shared
 Home profile enables workspace access and the selected Gateway serves the
 project reader. Select the matching Holodeck package through its existing
@@ -566,6 +566,27 @@ the pair, Conversation route and Questbook read grant, and refused an
 unrelated actor. Gateway's process and executable were unchanged. The
 topic's project catalogue remains empty until the workspace and
 checkpoint are linked.
+
+The serving Holodeck release had advanced to Casa Linterna
+`e8448d2404f9` (world source `407aa50`). The
+[receiving integration](https://github.com/AlterMundi/holodeck/commit/8b5589851daa260e1833bddc4dd225f83a1fb24c)
+includes that world lineage, retains the authorized exterior art route, and
+adds the project route and topic rendering. Node 24 passed 617 tests. The
+exact 41,881,600-byte package passed all 11 packed Questbook and Conversation
+tests using the Conversation client from the serving Dashboard, including the
+house-free room, shared issue, pinned edition across a later draft and access
+revocation. The packed Casa Linterna tour also read its authorized art and
+refused an unrelated actor.
+
+The existing Home release writer selected
+`cf6ad0088bff9e27d8a071e30d7c02c45df120c13db5e24df2dd88ad6d1ce425`,
+with `e8448d2404f9` as rollback. The operation receipt, active runtime,
+health endpoint and all 99 installed files matched. The Topic and Project
+routes denied unauthenticated requests and Gateway continued serving the
+same executable. The older superseded Home archive was retired through the
+existing rotation while protecting both recent predecessors. These checks
+establish the serving package and access enforcement. The paired human
+browser and the real topic's linked project remain to be exercised.
 Portability selected Gateway `d4253a6c` and its matching Dashboard
 on Ítaca. The active Matrix topic controller advertised
 `project_checkpoint_shadow` and confirmed that the topic had no claimed
@@ -587,8 +608,8 @@ exact revision, source, repeat and revocation checks, with no additional
 dispatches or model calls. The locked Rust 1.95 release candidate on
 serving baseline `19bff073` has SHA-256
 `fb5238bad398b59399027ecf1f9ff5d0b00822eca93f1bf1982e6891b0e3682c`.
-Portability owns the receiving selection. Pilot workspace adoption, the Holodeck package selection and
-paired-browser acceptance remain open.
+Portability owns the Gateway selection. Pilot workspace adoption and the
+paired-browser opening of the same release through both surfaces remain open.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
