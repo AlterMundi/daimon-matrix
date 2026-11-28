@@ -220,7 +220,12 @@ The mobile Chromium fixture creates Git objects locally, reads the exact hash
 from the mission, excludes evidence from another project, and verifies that
 moving the registered revision hides the old hash while the native card
 retains its evidence. This read opens no model turn and exposes no repository
-locator. Historical Git verification and a live shared remote remain open.
+locator. The [Gateway historical reader](https://github.com/AlterMundi/DaimonApp/commit/71374efc409d049dd6a1f964992250015a88c4ff)
+allows an owned topic with a selected checkout to resolve the exact registered
+commit after a newer checkpoint. It requires current link authority, matching
+repository identity, retained citation and the actual local Git object.
+Holodeck consumption of historical verification and a live shared remote
+remain open.
 
 Daimons read the card model and submit typed operations programmatically.
 An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
