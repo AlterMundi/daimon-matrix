@@ -720,10 +720,17 @@ Each item names the behavior to deliver and what to observe in the pilot.
    loses the first creation response and its initial receipt read. The same
    browser creates a different mission in the second project, returns to the
    first journal, and confirms the original creation from its exact receipt.
-   The first project records one POST and one creation event. Pending browser
-   operations remain scoped to their original room, project and repository
-   while that page remains open. Separate project interiors and live
-   acceptance remain open. See
+   The first project records one POST and one creation event. The
+   [reload recovery fixture](https://github.com/AlterMundi/holodeck/commit/b92fcd78decfc50df8fd155ae9e1d03da70c8bdf)
+   extends the same recovery to a reload of the original browser tab. It
+   drops the creation response and the first receipt read, then removes
+   write access before reload. Chromium recovers the original receipt with
+   read access. The real DaimonCards writer reports the same mission at
+   revision one and the browser observes a single creation POST. The
+   authenticated HTTP fixture refuses a changed actor or default project.
+   The local tab retains up to eight entries scoped to actor, project and
+   the original linked room and repository. Separate project interiors,
+   selected production deployment and real paired human use remain open. See
    [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 3. **General Conversation in context.** Keep general Conversation selected
    when the visitor enters. Show the current room and recipient. Send a
