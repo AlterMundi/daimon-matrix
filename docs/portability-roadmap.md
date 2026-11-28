@@ -396,10 +396,15 @@ activity distinct from who receives the next human intervention.
    combined recovery now proves renewed runtime publication, refusal of the
    stale signed visibility installation, rebound visibility load, and an
    authenticated `scope.we` read. Rebinding retains the disclosure and
-   publication configuration. An exact retry adds no new generation. Keep the serving
-   process running until the owning lifecycle has an expired-profile
-   predecessor path and verifies the combined recovery. No peer publication
-   or model wakeup was issued.
+   publication configuration. An exact retry adds no new generation. The
+   [Cluster predecessor observation](https://github.com/nicoechaniz/daimon-cluster/pull/576)
+   pins the same-owner socket peer and the exact systemd parent, unit
+   fingerprint and invocation before any renewal. Its read-only live run on
+   Ítaca identified the existing native child and service parent without
+   sending a native RPC. The owning lifecycle still needs this observation
+   wired into the signed original-profile transaction, matching visibility
+   activation and authenticated post-start read. The service kept running
+   throughout. No peer publication or model wakeup was issued.
 5. **Migrate existing work and tidy the environment.** After the contract pilot
    passes, migrate one existing topic and its linked work. Compare a shadow
    migration first. Reuse its logical ID, native binding, repositories, trackers
