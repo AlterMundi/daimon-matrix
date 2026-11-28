@@ -325,8 +325,12 @@ Each item names the behavior to deliver and what to observe in the pilot.
    The table can open a project-scoped repository view inside the room.
    The owner fixture opens a project whose links are on a later catalogue
    page. Mobile Chromium verifies opening from the table, returning to it,
-   and refusal after the selected link is revoked. Spatial project doors,
-   editing across both projects and live acceptance remain open. See
+   and refusal after the selected link is revoked. Holodeck projects a door
+   per project on the first catalogue page. A mobile Chromium visitor taps
+   the rendered door, opens the same scoped project view and leaves the
+   room without retaining its door geometry. Additional projects are
+   available through the table pages. Separate project interiors, editing
+   across both projects and live acceptance remain open. See
    [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 3. **General Conversation in context.** Keep general Conversation selected
    when the visitor enters. Show the current room and recipient. Send a
