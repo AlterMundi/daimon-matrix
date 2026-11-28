@@ -383,9 +383,17 @@ activity distinct from who receives the next human intervention.
    candidate preserves the exact inventory digest, as verified with an
    equal-sized disposable ledger file. A separate signed SQLite fixture
    stages and publishes expired-profile renewal while retaining ledger bytes.
-   The live writer was left serving; the candidate and actual renewal still
-   require receiving qualification. The install initiated no peer publication
-   or model wakeup.
+   The [streaming operator](https://github.com/AlterMundi/daimon-matrix/commit/074468fdb97d8eb18f291d904b1212c990ca8672)
+   also passed all 24 capability-upgrade tests on an isolated copy of
+   Ítaca's selected Matrix SDK (`e7e5822d`). The selected wheel's operator
+   matched the patch preimage byte for byte. Ítaca's active visibility
+   installation pins the SHA-256 of its current runtime bundle. The live
+   renewal must republish that installation through the owning signer and
+   verify the new load under the same fence. The existing Cluster Source
+   lifecycle's controller-only renewal refuses expired original roles.
+   Preserve the serving process until the original-role renewal and matching
+   visibility rebind can run as one bounded recovery. No peer publication
+   or model wakeup was issued.
 5. **Migrate existing work and tidy the environment.** After the contract pilot
    passes, migrate one existing topic and its linked work. Compare a shadow
    migration first. Reuse its logical ID, native binding, repositories, trackers
