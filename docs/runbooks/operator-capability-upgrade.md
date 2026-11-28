@@ -136,7 +136,7 @@ and signs the successor capability-set binding with the existing authenticated
 embodiment key. All capability keys, validity windows, unrelated profiles and
 history stay intact. The encrypted store advances its counter once without
 changing its secrets. Selected client descriptors change coherently with the
-bundle. Validation runs on disposable copies; the source is untouched.
+bundle. Validation runs on disposable copies beside the bundle, on the selected storage volume. The source is untouched.
 
 Inspect the owner-local `ready.json` and candidate. Keep failed stages for
 diagnosis; do not infer acceptance from their presence. Pin the exact ready-file

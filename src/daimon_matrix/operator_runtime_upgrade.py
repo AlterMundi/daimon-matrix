@@ -307,9 +307,12 @@ except ModuleNotFoundError as exc:
         raise
 else:
     options['egress']=closed_visibility(clock=clock,catalog_mode='migrate')
-with tempfile.TemporaryDirectory(prefix='dm-runtime-validate-') as scratch:
+runtime_root=Path(sys.argv[2])
+with tempfile.TemporaryDirectory(
+    prefix='.dm-runtime-validate-', dir=runtime_root.parent
+) as scratch:
     clone=Path(scratch)/'runtime'
-    shutil.copytree(Path(sys.argv[2]),clone)
+    shutil.copytree(runtime_root,clone)
     load_runtime(
         clone,
         'runtime.json',
