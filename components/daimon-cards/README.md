@@ -38,6 +38,17 @@ typed command to the writer. The response carries the canonical revision
 or the conflict. The owner retains the same operation ID when the outcome
 is unconfirmed. Close standard input to finish each request.
 
+### Holodeck questbook
+
+Use `mount_questbook` with the current project, selected card and list cursor.
+The spatial catalog presents available, active and completed quests, their
+selected objective, and the actions that apply. A `select_quest` event changes
+the host's selection. It writes no card event. The existing `claim` and
+`done` surface actions map to `Claim` and `Complete`. Acceptance assigns the
+actor and enters progress in one revision; completion requires an active card.
+The same commands work from a daimon tool. Apply world-backed progress from
+the owning Room's verified receipt when the Holodeck host is connected.
+
 The event model uses
 [Lattice v2's event-system design](https://github.com/Stage-11-Agentics/lattice/blob/8736575d11853b1b90c4e49685747a53f13a9e6c/docs/architecture/event-system.md)
 as a reference for attributed events and derived state. This cut uses SQLite

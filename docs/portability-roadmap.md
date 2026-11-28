@@ -150,8 +150,19 @@ result from their respective surfaces.
 
 For A2UI, send ordinary card actions to the same writer and re-read its result
 for the displayed revision. A stale assignment refreshes the card from that
-writer while preserving the viewer's selection or unsaved draft. Holodeck uses
-the same project and action identifiers for the game or place it projects.
+writer while preserving the viewer's selection or unsaved draft.
+
+Inside Holodeck, the A2UI view is an MMORPG-style questbook. Players browse
+available, active and completed quests, read the selected objective, and
+accept a quest or finish an active one. Accepting records the actor and moves
+the card into progress in the same write. Selecting another entry is local
+view state. A quest keeps the same project and card identity across human and
+daimon views. When progress depends on exploring, interacting or changing
+the world, show the affected place or object and observe the corresponding
+Holodeck receipt before counting that objective. Finish the whole quest only
+after its required objectives are satisfied. The initial fixture covers the
+journal and its shared claim and completion lifecycle; the room-backed
+objective and its receiving proof belong to the actual Holodeck pilot.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and

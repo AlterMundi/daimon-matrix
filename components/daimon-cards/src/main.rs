@@ -35,6 +35,13 @@ enum Operation {
         card: Uuid,
         labels: ProjectionLabels,
     },
+    MountQuestbook {
+        selected: Uuid,
+        after: Option<Uuid>,
+        labels: ProjectionLabels,
+        journal: String,
+        missions: String,
+    },
     ApplySurface {
         operation: Uuid,
         mounted_card: Uuid,
@@ -54,6 +61,20 @@ struct ProjectionLabels {
     unassigned: String,
 }
 
+impl ProjectionLabels {
+    fn labels(&self) -> a2ui::Labels<'_> {
+        a2ui::Labels {
+            claim: &self.claim,
+            mark_done: &self.mark_done,
+            open: &self.open,
+            in_progress: &self.in_progress,
+            done: &self.done,
+            assigned: &self.assigned,
+            unassigned: &self.unassigned,
+        }
+    }
+}
+
 fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
     let access = BoardAccess {
         project: request.project,
@@ -67,23 +88,31 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
         Operation::Apply { command } => json!(cards.apply(&access, command)?),
         Operation::MountCard { card, labels } => {
             let card = cards.read(&access, card)?.ok_or(Error::Missing)?;
-            let labels = a2ui::Labels {
-                claim: &labels.claim,
-                mark_done: &labels.mark_done,
-                open: &labels.open,
-                in_progress: &labels.in_progress,
-                done: &labels.done,
-                assigned: &labels.assigned,
-                unassigned: &labels.unassigned,
-            };
-            json!(a2ui::mount(&card, &access, &labels)?)
+            json!(a2ui::mount(&card, &access, &labels.labels())?)
+        }
+        Operation::MountQuestbook {
+            selected,
+            after,
+            labels,
+            journal,
+            missions,
+        } => {
+            let cards = cards.list(&access, after)?;
+            json!(a2ui::questbook::mount(
+                &cards,
+                selected,
+                &access,
+                &labels.labels(),
+                &journal,
+                &missions
+            )?)
         }
         Operation::ApplySurface {
             operation,
             mounted_card,
             event,
         } => {
-            let command = a2ui::command(event, mounted_card, operation)?;
+            let command = a2ui::command(event, access.project, mounted_card, operation)?;
             json!(cards.apply(&access, command)?)
         }
     })

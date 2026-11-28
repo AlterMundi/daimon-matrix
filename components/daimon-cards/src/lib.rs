@@ -71,6 +71,7 @@ pub enum Action {
     EditTitle { title: String },
     Assign { assignee: Option<Actor> },
     Claim,
+    Complete,
     SetStatus { status: Status },
     LinkRevision { revision: GitRevision },
 }
@@ -124,6 +125,8 @@ pub enum Conflict {
     StaleRevision,
     OperationChanged,
     AlreadyAssigned,
+    AlreadyCompleted,
+    NotInProgress,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -268,14 +271,20 @@ impl Cards {
                 card.assignee.clone_from(assignee);
             }
             Action::Claim => {
-                if card
-                    .assignee
-                    .as_ref()
-                    .is_some_and(|assignee| assignee != access.actor)
-                {
+                if card.status == Status::Done {
+                    return Ok(conflict(Conflict::AlreadyCompleted));
+                }
+                if card.status != Status::Open || card.assignee.is_some() {
                     return Ok(conflict(Conflict::AlreadyAssigned));
                 }
                 card.assignee = Some(access.actor.clone());
+                card.status = Status::InProgress;
+            }
+            Action::Complete => {
+                if card.status != Status::InProgress {
+                    return Ok(conflict(Conflict::NotInProgress));
+                }
+                card.status = Status::Done;
             }
             Action::SetStatus { status } => card.status = *status,
             Action::LinkRevision { revision } => {

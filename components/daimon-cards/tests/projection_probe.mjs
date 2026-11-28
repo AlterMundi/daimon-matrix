@@ -22,7 +22,7 @@ await withBrowser(async (browser, origin) => {
     });
     for (const message of messages) hud.receive(message);
     hud.update();
-    const button = mount.querySelector('button[aria-label="Take card"]');
+    const button = mount.querySelector('button[aria-label="Accept quest"]');
     if (!button || button.disabled) throw Error('The selected card is not actionable');
     button.click();
     if (actions.length !== 1) throw Error('Expected one user action');

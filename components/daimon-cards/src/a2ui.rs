@@ -5,6 +5,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+pub mod questbook;
+
 const CATALOG: &str = "https://altermundi.github.io/proyeccion/catalogs/spatial-hud/1.0";
 
 pub struct Labels<'a> {
@@ -62,8 +64,8 @@ pub fn update(card: &Card, access: &BoardAccess<'_>, labels: &Labels<'_>) -> sup
             "id":card.id, "revision":card.revision, "title":card.title,
             "status": match card.status { Status::Open => labels.open, Status::InProgress => labels.in_progress, Status::Done => labels.done },
             "assignment": if card.assignee.is_some() { labels.assigned } else { labels.unassigned },
-            "claimDisabled":!access.can_write || card.assignee.is_some(),
-            "doneDisabled":!access.can_write || card.status == Status::Done,
+            "claimDisabled":!access.can_write || card.status != Status::Open || card.assignee.is_some(),
+            "doneDisabled":!access.can_write || card.status != Status::InProgress,
         }
     }}))
 }
@@ -84,15 +86,21 @@ pub struct Context {
 }
 
 /// `mounted_card` comes from the host's retained surface selection.
-pub fn command(event: Event, mounted_card: Uuid, operation: Uuid) -> super::Result<Command> {
-    if event.surface_id != surface_id(mounted_card) || event.context.card != mounted_card {
+pub fn command(
+    event: Event,
+    project: Uuid,
+    mounted_card: Uuid,
+    operation: Uuid,
+) -> super::Result<Command> {
+    if (event.surface_id != surface_id(mounted_card)
+        && event.surface_id != questbook::surface_id(project))
+        || event.context.card != mounted_card
+    {
         return Err(Error::Access);
     }
     let action = match event.name.as_str() {
         "claim" => Action::Claim,
-        "done" => Action::SetStatus {
-            status: Status::Done,
-        },
+        "done" => Action::Complete,
         _ => return Err(Error::Invalid),
     };
     Ok(Command {

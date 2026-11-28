@@ -120,7 +120,7 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         can_write: true,
     };
     let labels = a2ui::Labels {
-        claim: "Take card",
+        claim: "Accept quest",
         mark_done: "Mark done",
         open: "Open",
         in_progress: "In progress",
@@ -165,7 +165,7 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         &db,
         &human_access,
         json!({
-            "type":"mount_card","card":card,"labels":{
+            "type":"mount_questbook","selected":card,"journal":"Questbook","missions":"Missions","labels":{
                 "claim":labels.claim,"mark_done":labels.mark_done,"open":labels.open,
                 "in_progress":labels.in_progress,"done":labels.done,
                 "assigned":labels.assigned,"unassigned":labels.unassigned,
@@ -174,6 +174,17 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
     );
     let surface_id = surface[0]["createSurface"]["surfaceId"].clone();
     assert_eq!(surface[2]["updateDataModel"]["value"]["revision"], 2);
+    assert_eq!(surface[2]["updateDataModel"]["value"]["doneDisabled"], true);
+    let premature = store
+        .apply(&human_access, action(90, card, 2, Action::Complete))
+        .unwrap();
+    assert!(matches!(
+        premature,
+        Outcome::Conflict {
+            current_revision: 2,
+            reason: Conflict::NotInProgress,
+        }
+    ));
     assert_eq!(
         surface[2]["updateDataModel"]["value"]["title"],
         edited.card.title
@@ -204,6 +215,7 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
     };
     let human_claim = a2ui::command(
         serde_json::from_value(human_event.clone()).unwrap(),
+        project,
         card,
         id(3),
     )
@@ -248,12 +260,17 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         unexpected => panic!("expected exactly one claim to commit: {unexpected:?}"),
     };
     assert_eq!(accepted.card.assignee.as_ref(), Some(winner.actor));
+    assert_eq!(accepted.card.status, Status::InProgress);
     assert_eq!(
         store.read(&daimon_access, card).unwrap(),
         Some(accepted.card.clone())
     );
     let refresh = a2ui::update(&accepted.card, &human_access, &labels).unwrap();
-    assert_eq!(refresh["updateDataModel"]["surfaceId"], surface_id);
+    assert_eq!(surface_id, format!("questbook-{project}"));
+    assert_eq!(
+        refresh["updateDataModel"]["value"]["status"],
+        labels.in_progress
+    );
     assert_eq!(refresh["updateDataModel"]["value"]["claimDisabled"], true);
     assert!(refresh["updateDataModel"]["value"].get("draft").is_none());
 
@@ -323,7 +340,57 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
         "context":{"card":id(80),"revision":5}}))
     .unwrap();
     assert!(matches!(
-        a2ui::command(mismatched, card, id(81)),
+        a2ui::command(mismatched, project, card, id(81)),
         Err(Error::Access)
     ));
+
+    let another = id(91);
+    reopened
+        .apply(
+            &human_access,
+            action(
+                92,
+                another,
+                0,
+                Action::Create {
+                    title: "Find the map".into(),
+                },
+            ),
+        )
+        .unwrap();
+    let cards = reopened.list(&daimon_access, None).unwrap();
+    let journal = a2ui::questbook::mount(
+        &cards,
+        card,
+        &human_access,
+        &labels,
+        "Questbook",
+        "Missions",
+    )
+    .unwrap();
+    let state = &journal[2]["updateDataModel"]["value"];
+    assert_eq!(state["selection"], json!(card));
+    assert_eq!(state["quests"][0]["label"], "Open · Find the map");
+    assert_eq!(
+        state["quests"][1]["label"],
+        "Done · Run the beacon playtest"
+    );
+    let changed = a2ui::questbook::mount(
+        &cards,
+        another,
+        &human_access,
+        &labels,
+        "Questbook",
+        "Missions",
+    )
+    .unwrap();
+    assert_eq!(journal[0], changed[0]);
+    assert_eq!(
+        changed[2]["updateDataModel"]["value"]["selection"],
+        json!(another)
+    );
+    assert_eq!(
+        reopened.history(&human_access, another, 0).unwrap().len(),
+        1
+    );
 }
