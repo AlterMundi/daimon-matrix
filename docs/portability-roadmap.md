@@ -636,7 +636,16 @@ exact revision, source, repeat and revocation checks, with no additional
 dispatches or model calls. The locked Rust 1.95 release candidate on
 serving baseline `19bff073` has SHA-256
 `fb5238bad398b59399027ecf1f9ff5d0b00822eca93f1bf1982e6891b0e3682c`.
-Portability owns the Gateway selection. Pilot workspace adoption and the
+The [pinned SSH checkout journey](https://github.com/AlterMundi/DaimonApp/commit/357be307)
+also passed on those exact binary bytes. The private pilot's Git revision and
+SSH locator were used in a separately owned fixture workspace. The active
+worker accepted the cited link and read it back. Changing just the origin
+made the same commit unreadable, and restoring the original origin recovered
+the existing revision. The room reader exposed the approved label and exact
+commit without the SSH locator. The normal local-Git journey still passed.
+Both used synthetic Conversation and Codex peers with zero model calls or
+extra dispatches. The installed Gateway and the real pilot topic were
+untouched. Portability owns the Gateway selection. Pilot workspace adoption and the
 paired-browser opening of the same release through both surfaces remain open.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
