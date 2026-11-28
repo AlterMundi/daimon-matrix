@@ -487,6 +487,24 @@ single native input for the album, a separate late original, and no duplicate
 admission of a redelivered member after restarting with the previous binary.
 The production selection remains with Portability.
 
+The next receiving build, `bf770dd36657d6ab5909c5d1dfc5734c5f8fd283`,
+composes that checkpoint candidate with the observed serving
+`ef7e91f2` lineage. It retains exact outcomes for a declined Antigravity
+tool and unsupported Claude goal controls. Its locked Rust 1.95 build
+has SHA-256 `fb2e5a963ab2031cc1ee36be88a1b53cec069582e413615ec77d8696bcd2019a`.
+The shadow test qualified attributed source correction, multiple
+repository links, historical revision read and exact operation retry.
+The external Telegram adapter fixture also passed with the same binary,
+including paused delivery, lost acknowledgments and unchanged originals.
+The Conversation and Workspace UI checks and 13 dashboard view tests
+passed. Repository-wide format drift was already present in the same
+files across the two parents. The cold round trip stopped at native
+acceptance in this fixture environment on both this build and the
+previous checkpoint binary. That repeat does not qualify cold recovery.
+Ítaca advanced to `1c651fe4` during the check; its later scoped model and
+tool changes still need composition before this becomes a candidate for
+that serving profile.
+
 #### Owner handoff for the live checkpoint canary
 
 Portability owns selecting the compatible Gateway package and its dashboard
