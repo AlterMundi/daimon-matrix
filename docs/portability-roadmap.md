@@ -585,7 +585,13 @@ Each item names the behavior to deliver and what to observe in the pilot.
    read-only: it refuses that project's card from the first journal, and
    denies access after revocation. The protected native fixture independently
    checks explicit project selection, read-only access and denial of a write.
-   Separate project interiors, editing across both projects and live
+   The [journal recovery fixture](https://github.com/AlterMundi/holodeck/commit/9b1f947c2fe00299b3759c16cf73837ad125e25f)
+   loses the first creation response and its initial receipt read. The same
+   browser creates a different mission in the second project, returns to the
+   first journal, and confirms the original creation from its exact receipt.
+   The first project records one POST and one creation event. Pending browser
+   operations remain scoped to their original room, project and repository
+   while that page remains open. Separate project interiors and live
    acceptance remain open. See
    [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 3. **General Conversation in context.** Keep general Conversation selected
