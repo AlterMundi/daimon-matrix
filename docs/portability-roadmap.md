@@ -107,7 +107,15 @@ selected repository revisions across two projects and the same two original
 receipt references. One request had a retained result and one remained
 unresolved. The recovery used one loopback provider call and zero duplicate
 dispatches. A subsequent turn on the existing Codex thread received both
-retained Claude exchanges and the same checkpoint.
+retained Claude exchanges and the same checkpoint. The [reproducible metric
+report](https://github.com/AlterMundi/DaimonApp/blob/72f9d7c2697dcf2a25cfd439b5eeca3a9fe73803/docs/project-checkpoint-shadow.md#selected-cold-recovery)
+measured 2,901 ms from paired input to the visible cold-recovery answer. The
+exact Claude transcript recorded eight simulated input tokens and four
+simulated output tokens. The report excludes transcript contents, account
+details and native identifiers. It records one loopback call and zero real
+provider calls. On 2026-11-28, the active Ítaca worker's scoped capability
+read did not advertise the project checkpoint action. The candidate's live
+selection stays with Portability and still needs receiving verification.
 
 A separate run simulated Codex Core's missing-rollout error at the first
 Claude-to-Codex input. The [Gateway adapter](https://github.com/AlterMundi/DaimonApp/commit/02130aa04d6923e7b4c7f1b393d76843fd74496e)
