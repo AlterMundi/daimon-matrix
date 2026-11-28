@@ -366,6 +366,19 @@ activity distinct from who receives the next human intervention.
    resource access. Verify a distinct authorized Tribe participant can retrieve
    and use the selected guide revision and shared card within that audience.
    Their view must not expose private topic or being-level memory.
+
+   The [portable Gateway guide](https://github.com/AlterMundi/Skills/pull/402)
+   is integrated as Skills commit
+   [754d2cf](https://github.com/AlterMundi/Skills/commit/754d2cf9f406c4669eb0d23376fa789f2b86d598).
+   Selective installation and rollback passed in an isolated receiving root.
+   On 2026-11-28, the existing Ítaca skill binding installed `daimon-gateway`
+   1.0.4 from that exact commit and its surface check passed. This records
+   installed bytes before any fresh harness uptake. On the same date, native
+   Foundation scope and the existing Source owner reader returned
+   `authentication_failed`; the selected local capability descriptors
+   expired at 07:31 UTC. Source/Weave publication and remote reception
+   remain to be verified through the maintained owner renewal and adoption
+   paths. No peer publication or model wakeup was requested by the install.
 5. **Migrate existing work and tidy the environment.** After the contract pilot
    passes, migrate one existing topic and its linked work. Compare a shadow
    migration first. Reuse its logical ID, native binding, repositories, trackers
