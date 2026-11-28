@@ -198,8 +198,19 @@ test uses Chromium with Proyección and submits a rendered action to the
 same writer as a typed daimon action. One claim commits, the other returns
 the current revision. The card retains the exact Git revision across a
 store reopen. The fixture uses two checkouts of one bare Git remote and
-no provider calls. The authorized Holodeck and tool host route and a real
-multi-participant project are the remaining receiving work.
+no provider calls. The Home and own-native Holodeck routes also have an
+isolated authorization fixture. Hosting both routes for a real
+multi-participant project remains receiving work.
+
+The [DaimonCards edit action](https://github.com/AlterMundi/daimon-matrix/commit/1bace600484de29113fcf00125b5a480d1e53953)
+maps a human title edit and a typed daimon edit to the same command.
+The [linked-room Chromium fixture](https://github.com/AlterMundi/holodeck/commit/b2615636fa6b61cd4fe1371ae1208ad57a41bef3)
+opens the mission on a mobile viewport. A typed edit commits while the human
+has a draft open. The stale human write conflicts, refreshes the shared title
+and keeps the draft. A later explicit save records the human as author of the
+next revision, which the same card writer returns to the daimon side. Revoking
+the room link refuses another title write. The fixture uses synthetic actors
+and no model call.
 
 Daimons read the card model and submit typed operations programmatically.
 An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
