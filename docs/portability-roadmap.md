@@ -117,12 +117,22 @@ original as unsent, preserved the saved Codex binding and topic generation,
 and submitted no native thread or turn. The Telegram fixture also preserved
 the original and presented the specific missing-history notice.
 
+The [real Codex App Server boundary fixture](https://github.com/AlterMundi/DaimonApp/blob/e5c4f1625eaa8b2f295bfb54969f94d1a249e262/docs/project-checkpoint-shadow.md#native-codex-successor-boundary)
+verified that a new native ID cannot resume before its first saved turn.
+On the creating connection, one first turn carried the fixture checkpoint,
+both receipt IDs and the new original to a loopback provider. The next
+connection recovered that exact native turn. The fixture used one loopback
+request and observed 218 simulated tokens. It did not exercise Gateway's
+logical binding writer or any live account.
+
 The ordinary Codex replacement advances the topic generation and retires
-old-bound inputs. Cold continuation needs a lineage change in the existing
-owner writer that retains the logical generation and leaves earlier originals
-and receipts on their native lineage. Then the next turn can consume a
-revalidated checkpoint. The useful first turn in cold Codex and live
-receiving qualification in both directions remain open.
+old-bound inputs. The existing owner writer needs a lineage transition that
+retains the logical generation and keeps earlier originals and receipts
+on their native lineage. Reserve the native creation and input stages
+separately. The selected successor's first submission must stay on the
+creating connection with revalidated authority and checkpoint. Enable
+ordinary resume only after observing materialization. The combined Gateway
+cold path and live receiving qualification in both directions remain open.
 
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
