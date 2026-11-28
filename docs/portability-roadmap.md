@@ -322,8 +322,12 @@ Each item names the behavior to deliver and what to observe in the pilot.
    can be browsed across pages. The isolated owner fixture verifies ten
    links and the stale-cursor restart. Mobile Chromium verifies forward,
    back and return to the current first page after a catalogue change.
-   Project entry, editing across both projects and live acceptance remain
-   open. See [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
+   The table can open a project-scoped repository view inside the room.
+   The owner fixture opens a project whose links are on a later catalogue
+   page. Mobile Chromium verifies opening from the table, returning to it,
+   and refusal after the selected link is revoked. Spatial project doors,
+   editing across both projects and live acceptance remain open. See
+   [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 3. **General Conversation in context.** Keep general Conversation selected
    when the visitor enters. Show the current room and recipient. Send a
    human intervention and verify that general Conversation receives the
