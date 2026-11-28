@@ -428,6 +428,36 @@ attachment and scoped interruption behavior. Keep the selected profile
 intact and repeat the read-only preflight on that composition before the
 live checkpoint canary.
 
+A staged composition on 2026-11-28 also includes the next serving Gateway
+revision, `fc5e8dce`, which adds voice transcription to portable Telegram
+topics. Candidate source `eb86c2f5a77a0b40f27e125357e6abd734ebf10d` combines
+that serving lineage with PR1137. Binary SHA-256
+`b895cd4158cb2c76764ba6af7c1a4ae84abb99791d3b5458718b6b15a1f88c14`
+passed read-only preflight with the actual Ítaca profile and Reports record.
+The serving process kept its PID and its selected binary. The composition and
+restricted test evidence are retained on Ítaca for the owning deployment route.
+
+The same binary passed the signed Codex–Claude–Codex journey using native
+Claude Code 2.1.332 and Codex App Server 0.167.0 with loopback inference.
+An unavailable Claude transcript led to a visible answer in 3,381 ms and a
+missing Codex rollout led to a resumable successor and visible answer in
+672 ms after the explicit retry. Each stage made one loopback inference call,
+zero real provider calls and zero redispatches of prior instructions. Claude
+reported 8 fixture input and 4 output tokens. Codex reported 218 fixture tokens.
+These are local fixture measurements. A separate run passed direct Telegram
+voice ingress with simulated transcription and preserved the native Claude
+session and original audio digest.
+
+The broader goal-control fixture stopped at the first synthetic
+`goal_prepare` with a routing refusal. The Antigravity SDK fixture worker
+exited before exposure where the test expected a provider-unavailable receipt.
+Neither outcome qualifies those paths on this candidate. The Antigravity
+configuration preflight covers profile loading only. Portability owns live
+selection and comparison against the serving behavior, then the private
+checkpoint canary against a linked project. Live provider measurements,
+receiving replies in both directions and the paired human questbook edit
+remain open.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Git owns project
