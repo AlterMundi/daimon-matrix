@@ -57,13 +57,17 @@ source references. Gateway derives the actor from the owning session, resolves
 the references under their existing audiences, and projects the validated
 result. An exact repeated proposal reads its original result. A competing
 proposal against an older revision returns a conflict and the current revision.
+Reusing an operation ID with different content returns a conflict without a
+new revision. Reads and repeats recheck current source access, including after
+a workspace rebind or revocation.
 Unavailable or unverifiable evidence leaves the proposal unresolved. A reference
 to an uncertain effect remains a reference to its owning receipt.
 
 Qualify with two shadow writers, a moved checkout, duplicate delivery, a
-missing commit, and a source outside the topic's audience. A passing fixture
-shows the same project revision in both workspaces and one accepted revision
-after competing proposals. Cold recovery and live receiving acceptance are
+missing commit, and a source whose audience excludes the reader initially or
+after revocation. A passing fixture resolves the selected project and commit
+through the topic after moving its checkout, preserves an unrelated staged
+edit and records one accepted revision after competing proposals. Cold recovery and live receiving acceptance are
 subsequent tests. The workspace owner supplies the current binding; Observer
 and the general conversation may supply existing attributed evidence. This
 cut requires no model call and no Gateway deployment.
@@ -117,7 +121,9 @@ the same project and action identifiers for the game or place it projects.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
-return results. One authoritative writer advances each card. Existing projects
+return results. One authoritative writer advances each card. Git owns project
+files and commit references and may carry card exports. Imported or offline
+project edits do not act as a second card writer. Existing projects
 keep their selected tracker, and shared views link to it by stable identity.
 Run the pilot with a real remote and multiple participants to learn which UI
 and workflow support we need to maintain locally.
@@ -137,8 +143,10 @@ and workflow support we need to maintain locally.
    Compare the checkpoint against retained evidence before consuming it.
    Qualify cold recovery in both directions with Codex and Claude, then with
    other adapters. With native history removed in an isolated fixture, the first
-   useful turn finds the right workspace and reconciles an uncertain effect
-   without reissuing it.
+   useful turn finds the right workspace and checks the original effect receipt.
+   Cover both a receipt that resolves the effect and an outcome that remains
+   uncertain. Preserve the original ID, continue independent work, and verify
+   zero duplicate dispatches at the component that owns the effect.
 3. **Shared project collaboration.** Pilot versioned cards and commit-based
    review in a real non-code Git project with a shared remote and a mix of
    human and daimon participants. Show assignment, attributed review, offline
@@ -157,7 +165,21 @@ and workflow support we need to maintain locally.
    orient continuity. The project checkpoint retains work and
    commitments; being-level learning stays with the selected memory and
    skills. `/tribe` project collaboration follows authorized relationships and
-   resource access.
+   resource access. Verify a distinct authorized Tribe participant can retrieve
+   and use the selected guide revision and shared card within that audience.
+   Their view must not expose private topic or being-level memory.
+5. **Migrate existing work.** After the pilot acceptance, inventory every owned
+   topic and its linked work using the current Gateway and owning project records.
+   Compare a shadow migration first. Reuse logical topic IDs, native bindings,
+   existing repos, active trackers and original sources. Backfill only the
+   project links, checkpoints and card references that the retained evidence
+   supports. Preserve original dates, authorship, permissions, uncommitted work
+   and uncertain effects. Choose one outcome per topic, including an intentional
+   absence of a project when there is no continuing project work. Record missing
+   evidence explicitly. Adopt in bounded batches and reconcile each batch with
+   the inventory. The final check resolves the current revision and next
+   actionable work from the migrated topics, without relying on private native
+   history or duplicating an earlier effect.
 
 ## Additional harness pilots on ITACA
 
@@ -166,6 +188,11 @@ enroll one topic each for Antigravity and Goose. Use real work that suits the
 topic. Qualify both before adding separate Qwen and MiniMax CLI topics. Verify
 each selected profile and portable embodiment through the existing admission
 path before treating its topic as ready.
+
+Portability owns operational repairs, live qualification and these additional
+topic admissions. The contract work consumes their attributed evidence and uses
+the existing Gateway deployment route. Isolated shadow work can proceed before
+those live checks finish.
 
 Use the same test across all four topics and the existing Codex and Claude
 topics. Admit a request, observe its attributed progress and final return,
