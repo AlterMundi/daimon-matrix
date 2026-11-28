@@ -35,7 +35,8 @@ The authenticated host supplies `project`, `actor`, `can_write` and a typed
 permission. `apply` accepts a tool command. `apply_surface` resolves a
 normalized A2UI event against the host's mounted card and passes the same
 typed command to the writer. The response carries the canonical revision
-or the conflict. The owner retains the same operation ID when the outcome
+or the conflict. `receipt` reads the current caller’s committed event by
+operation ID under current project access. The owner retains the same operation ID when the outcome
 is unconfirmed. Close standard input to finish each request.
 
 ### Holodeck questbook

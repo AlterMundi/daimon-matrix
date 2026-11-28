@@ -24,6 +24,9 @@ enum Operation {
     Read {
         card: Uuid,
     },
+    Receipt {
+        operation: Uuid,
+    },
     History {
         card: Uuid,
         after: i64,
@@ -87,6 +90,7 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
     Ok(match request.input {
         Operation::List { after } => json!(cards.list(&access, after)?),
         Operation::Read { card } => json!(cards.read(&access, card)?),
+        Operation::Receipt { operation } => json!(cards.receipt(&access, operation)?),
         Operation::History { card, after } => json!(cards.history(&access, card, after)?),
         Operation::Apply { command } => json!(cards.apply(&access, command)?),
         Operation::RecordWorld { command } => json!(cards.record_world(&access, command)?),

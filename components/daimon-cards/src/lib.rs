@@ -263,6 +263,16 @@ impl Cards {
         )
     }
 
+    /// Read the caller's original committed event without resubmitting a command.
+    pub fn receipt(&self, access: &BoardAccess<'_>, operation: Uuid) -> Result<Option<Event>> {
+        authorized(access, false)?;
+        if operation.is_nil() {
+            return Err(Error::Invalid);
+        }
+        Ok(operation_event(&self.0, access.project, operation)?
+            .filter(|event| event.card.revised_by == *access.actor))
+    }
+
     pub fn apply(&mut self, access: &BoardAccess<'_>, command: Command) -> Result<Outcome> {
         if matches!(command.action, Action::RecordWorld { .. }) {
             return Err(Error::Access);
@@ -293,15 +303,7 @@ impl Cards {
             current_revision,
             reason,
         };
-        let original: Option<String> = tx
-            .query_row(
-                "SELECT doc FROM card_events WHERE project=?1 AND operation=?2",
-                params![access.project.to_string(), command.operation.to_string()],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(original) = original {
-            let event: Event = serde_json::from_str(&original)?;
+        if let Some(event) = operation_event(&tx, access.project, command.operation)? {
             if event.card.revised_by == *access.actor && event.command == command {
                 return Ok(Outcome::Retained { event });
             }
@@ -485,6 +487,17 @@ fn identifier(value: &str, max: usize) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_@.".contains(&b))
+}
+
+fn operation_event(db: &Connection, project: Uuid, operation: Uuid) -> Result<Option<Event>> {
+    let document: Option<String> = db
+        .query_row(
+            "SELECT doc FROM card_events WHERE project=?1 AND operation=?2",
+            params![project.to_string(), operation.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(document.as_deref().map(serde_json::from_str).transpose()?)
 }
 
 fn current(db: &Connection, project: Uuid, card: Uuid) -> Result<Option<Card>> {

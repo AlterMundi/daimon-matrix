@@ -169,8 +169,11 @@ reset. The Holodeck candidate mounts the journal in the workshop with the
 existing Proyección renderer. A Chromium visitor accepts a quest, changes
 the bridge through ordinary world controls and receives progress. The typed
 writer completes that quest and a second narrow Chromium view reads the
-same result. Live profile selection, the signed daimon action path and
-reciprocal verification with real project participants remain open.
+same result. The isolated owner path also uses the existing native Unix
+return lane and fresh, project-specific permission checks. The fixture
+verifies typed completion, read-only receipt recovery, refusal after grant
+revocation and same-key conflicts. Live profile selection and reciprocal
+verification with real project participants remain open.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
@@ -204,8 +207,13 @@ and workflow support we need to maintain locally.
    review in a real non-code Git project with a shared remote and a mix of
    human and daimon participants. Show assignment, attributed review, offline
    project edits, card state synchronization and recovery across two workspaces.
-   Verify the Rust writer and A2UI projection using that same journey. Add
-   further features when the pilot demonstrates a concrete need.
+   Verify the Rust writer and A2UI projection using that same journey.
+   In Holodeck, use a room bound to the selected logical topic. Link at least
+   two projects in the same room. Exercise a door into one project space and
+   a worktable that opens or combines linked material, with every edit
+   resolving to its source project and revision. Re-enter from Holodeck and
+   a non-spatial client. Verify that unauthorized project links stay private
+   and that the questbook uses the same shared cards on both sides.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
@@ -225,7 +233,8 @@ and workflow support we need to maintain locally.
    passes, migrate one existing topic and its linked work. Compare a shadow
    migration first. Reuse its logical ID, native binding, repositories, trackers
    and original sources. Backfill links and checkpoints supported by retained
-   evidence. Verify that the selected project revision, next action, local
+   evidence. Preserve the topic-to-room binding and any existing spatial
+   work. Verify that the selected project revision, next action, local
    drafts, permissions and uncertain outcomes remain usable. Use the pilot to
    refine the workflow. Once it works in ordinary use, apply it to a few more
    topics, then to the full inventory in bounded batches.

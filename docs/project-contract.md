@@ -73,6 +73,30 @@ can go directly through the project operations. Use model turns for design,
 interpretation and novel work. Start with the smallest useful state and
 surface, and extend them as the project develops.
 
+## Enter a topic as a room
+
+In Holodeck, represent a Matrix topic as a room where people and daimons can
+return to the work. Bind the room to the existing logical topic. Entering it
+situates the current conversation and work in that topic with the visitor's
+current access. Room decoration and position belong to Holodeck. Topic history,
+checkpoints and project links retain their existing authorities and identities.
+A topic can start with an empty room and gain surfaces as its work develops.
+
+Arrange the room around what participants do with its linked projects. A door
+can lead to a game's world, a walkable design or another substantial project
+experience. A worktable can open a project at its selected revision or bring
+several linked projects together for comparison or composition. A questbook
+shows shared missions and opens work at the relevant project or place. These
+are options the host can combine. The same project can appear in different
+rooms through its existing link and writer. A table may keep its own selection
+or drafts. A committed edit still targets the actual project and its revision.
+
+Resolve each link against the visitor's access before showing or opening it.
+Admission to a room does not grant access to every linked project. Reuse the
+same typed project actions in the room, in a project space and in non-spatial
+clients. Changing the room layout or switching harnesses preserves the topic
+and its work.
+
 ## Let the person create through the medium
 
 For a playable game or place, prefer Holodeck as the primary projection when
