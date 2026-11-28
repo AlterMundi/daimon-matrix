@@ -111,13 +111,19 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
             project_revisions,
             include_revision_candidates,
         } => {
-            let cards = cards.list(&access, after)?;
-            let selected = selected.or_else(|| cards.first().map(|card| card.id));
+            let mut page = cards.list(&access, after)?;
+            let next = (page.len() == 32)
+                .then(|| page.last().map(|card| card.id))
+                .flatten();
+            let selected = selected.or_else(|| page.first().map(|card| card.id));
             let Some(selected) = selected else {
                 return Ok(Value::Null);
             };
+            if !page.iter().any(|card| card.id == selected) {
+                page.push(cards.read(&access, selected)?.ok_or(Error::Missing)?);
+            }
             let mut surface = a2ui::questbook::mount(
-                &cards,
+                &page,
                 selected,
                 &access,
                 &labels.labels(),
@@ -125,12 +131,14 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
                 &missions,
                 &project_revisions,
             )?;
+            let model = &mut surface[2]["updateDataModel"]["value"];
+            model["next"] = json!(next);
             if include_revision_candidates {
-                let card = cards
+                let card = page
                     .iter()
                     .find(|card| card.id == selected)
                     .ok_or(Error::Missing)?;
-                surface[2]["updateDataModel"]["value"]["revisionCandidates"] =
+                model["revisionCandidates"] =
                     json!(card.evidence.iter().rev().take(8).collect::<Vec<_>>());
             }
             json!(surface)
