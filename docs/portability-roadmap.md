@@ -149,14 +149,16 @@ connection recovered that exact native turn. The fixture used one loopback
 request and observed 218 simulated tokens. It did not exercise Gateway's
 logical binding writer or any live account.
 
-The ordinary Codex replacement advances the topic generation and retires
-old-bound inputs. The existing owner writer needs a lineage transition that
-retains the logical generation and keeps earlier originals and receipts
-on their native lineage. Reserve the native creation and input stages
-separately. The selected successor's first submission must stay on the
-creating connection with revalidated authority and checkpoint. Enable
-ordinary resume only after observing materialization. Selecting the materialized successor for subsequent Gateway turns and live
-receiving qualification in both directions remain open.
+The [owner lineage transition](https://github.com/AlterMundi/DaimonApp/commit/acac086a30422f5ac9aa3ace2041ce5e12f42aab)
+advances the topic's native pointer in the same transaction that records the
+successor turn's completion. It retains the logical generation and keeps
+earlier originals and receipts on their native lineage. The isolated Gateway
+fixture restarted the writer, submitted one new original on the same successor,
+read the exact old repository checkpoint with its attributed work and
+original citation, and observed the new answer in Conversation. The original
+effect records were unchanged. An ordinary replacement, explicit clear or
+owner revocation still fences the previous generation. Review of the
+binding change and live receiving qualification in both directions remain open.
 
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
