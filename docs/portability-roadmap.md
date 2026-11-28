@@ -803,8 +803,18 @@ Each item names the behavior to deliver and what to observe in the pilot.
    stale observation. The HTTP and browser fixture exercises the same-room
    read, a different-room refusal, a new result after activity becomes
    unknown, and omission of private native metadata. This path reads no
-   transcript and sends no model input. Opening and answering the exact
-   retained item, spatial cues, and live receiving acceptance remain open.
+   transcript and sends no model input. The
+   [result action](https://github.com/AlterMundi/holodeck/commit/98caff0)
+   opens the current result inside Conversation from the same table.
+   [The Gateway reader](https://github.com/AlterMundi/DaimonApp/commit/d5637b8b)
+   revalidates the room and uses the ordinary selected-session page. It
+   declines a mismatched Codex result revision and keeps the result body
+   inside Conversation. The Workspace fixture checks the result match and
+   refusal after cancellation. Chromium checks the host-to-frame journey,
+   unchanged general recipient and dismissal when closing Conversation,
+   with a controlled result response. A result outside the current bounded
+   page remains unavailable through this shortcut. Answering a retained
+   question, spatial cues, and live receiving acceptance remain open.
 5. **Explicit direct mode.** Add an in-room choice to address the topic
    directly. Show the topic history in canonical Conversation and make the
    active recipient unmistakable. The general avatar can step aside or
