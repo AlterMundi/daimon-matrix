@@ -74,7 +74,11 @@ quiescent source inventory:
 Staging retains complete checkpoint and successor trees, including all history.
 It copies those trees from one immutable snapshot with at most two joined I/O
 workers. Each file is synced before the final bottom-up directory sync; the
-ready receipt follows both complete copies and the normal runtime validations.
+ready receipt follows both complete copies and the normal runtime validations. A
+sealed `ledger.sqlite` larger than 512 MiB is hashed and copied in bounded
+chunks, up to 4 GiB per ledger. The copy must match the original size and
+content digest, which also keeps the inventory digest independent of file
+size. Other files keep the existing limits and ownership checks.
 A failed worker is joined before the operation returns. Partial private trees
 stay with the existing recovery record and never establish publication. These
 copy optimizations change no grant, expiry, validation or recovery requirement.
@@ -132,7 +136,7 @@ and signs the successor capability-set binding with the existing authenticated
 embodiment key. All capability keys, validity windows, unrelated profiles and
 history stay intact. The encrypted store advances its counter once without
 changing its secrets. Selected client descriptors change coherently with the
-bundle. Validation runs on disposable copies; the source is untouched.
+bundle. Validation runs on disposable copies beside the bundle, on the selected storage volume. The source is untouched.
 
 Inspect the owner-local `ready.json` and candidate. Keep failed stages for
 diagnosis; do not infer acceptance from their presence. Pin the exact ready-file

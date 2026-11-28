@@ -2631,14 +2631,17 @@ class SourceRegistry:
             event = self._event(event_id)
             if event is None:
                 raise SourceError("source_event_closure_incomplete", incomplete=True)
-            closure_source = (
-                str(event["subject"])
-                if event["kind"] in SOURCE_EVENT_KINDS
-                else selected_source
-            )
+            source_event = event["kind"] in SOURCE_EVENT_KINDS
+            closure_source = str(event["subject"]) if source_event else selected_source
+            # A Source grant cannot reclassify an unrelated Weave event.
             if (
-                event["kind"] not in SOURCE_EVENT_KINDS
-                or event["subject"] != selected_source
+                not source_event
+                and requester_me_id != self.local_me_id
+                and event["sensitivity"] != "shareable"
+            ):
+                raise SourceError("source_disclosure_denied")
+            if (
+                not source_event or closure_source != selected_source
             ) and not self._disclosure_allowed(
                 requester_me_id, closure_source, "origin-closure"
             ):

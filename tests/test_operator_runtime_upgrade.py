@@ -13,6 +13,7 @@ import unittest
 import uuid
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from daimon_matrix import operator_runtime_upgrade as upgrade
 from daimon_matrix.keystore import EncryptedKeystore
@@ -365,6 +366,143 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
             add_methods={},
             profile_renewal_not_after_ms=now + 86400000,
         )
+
+    def test_owner_renewal_streams_large_ledger_and_preserves_exact_digest(self):
+        import sqlite3
+        from contextlib import closing
+
+        self.expire_profiles()
+        ledger = self.source / "ledger.sqlite"
+        with closing(sqlite3.connect(ledger)) as connection, connection:
+            connection.execute("CREATE TABLE fixture_payload (bytes BLOB NOT NULL)")
+            connection.execute("INSERT INTO fixture_payload VALUES (zeroblob(2097152))")
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        original = hashlib.sha256(ledger.read_bytes()).hexdigest()
+        with mock.patch.object(upgrade, "MAX_FILE", 1024 * 1024):
+            before = upgrade._snapshot(self.source)
+            self.assertEqual(before["ledger.sqlite"].sha256, original)
+            self.assertEqual(
+                upgrade._inventory(before), self.args["expected_source_sha256"]
+            )
+            prepared = self.stage()
+            self.assertEqual(self.publish()["state"], "published")
+            self.assertEqual(self.publish()["state"], "published")
+            self.assertEqual(
+                prepared["successor_sha256"], upgrade.inventory_digest(self.source)
+            )
+            for tree in (self.source, self.transaction / "checkpoint"):
+                self.assertEqual(
+                    upgrade._snapshot(tree)["ledger.sqlite"], before["ledger.sqlite"]
+                )
+
+    def test_streamed_ledger_copy_refuses_same_size_replacement(self):
+        ledger = self.source / "ledger.sqlite"
+        ledger.write_bytes(b"original")
+        with mock.patch.object(upgrade, "MAX_FILE", 4):
+            # Capture the ledger alone so the ordinary config ceiling remains unchanged.
+            folder = self.parent / "ledger-only"
+            folder.mkdir(mode=0o700)
+            isolated = folder / ledger.name
+            isolated.write_bytes(ledger.read_bytes())
+            isolated.chmod(0o600)
+            snapshot = upgrade._snapshot(folder)
+            isolated.write_bytes(b"modified")
+            with self.assertRaisesRegex(
+                upgrade.UpgradeError, "upgrade_streamed_ledger_changed"
+            ):
+                upgrade._copy(snapshot, self.parent / "failed-copy")
+
+    def test_expired_owner_renewal_requires_matching_signed_visibility_rebind(self):
+        from daimon_matrix.daemon import _visibility_factory
+        from daimon_matrix.local_api import LocalCapability, create_request
+        from daimon_matrix.messaging_config import config_digest
+        from daimon_matrix.native_egress import (
+            VISIBILITY_SCHEMA_VERSION,
+            NativeEgressError,
+            closed_visibility,
+        )
+        from daimon_matrix.operator_messaging import _reissue_installation
+        from daimon_matrix.runtime import load_runtime
+        from tests.test_closed_visibility_provisioning import (
+            ClosedVisibilityProvisioningTests,
+        )
+
+        def clock():
+            return time.time_ns() // 1_000_000
+
+        self.expire_profiles()
+
+        def load(installation=None, *, migrate=False):
+            options = (
+                {"egress": closed_visibility(clock=clock, catalog_mode="migrate")}
+                if installation is None
+                else {
+                    "egress_factory": _visibility_factory(
+                        installation,
+                        clock=clock,
+                        catalog_mode="migrate" if migrate else "validate",
+                    )
+                }
+            )
+            return load_runtime(
+                self.source,
+                "runtime.json",
+                lambda: bytearray(PASSWORD),
+                clock=clock,
+                **options,
+            )
+
+        fixture = ClosedVisibilityProvisioningTests()
+        self.addCleanup(fixture.doCleanups)
+        closed = load()
+        closed.egress.migrate_registered_catalogs(version=VISIBILITY_SCHEMA_VERSION)
+        installation = fixture.installation(self.source, closed)
+        old = json.loads(installation.read_bytes())["document"]
+        predecessor = load(installation, migrate=True)
+        predecessor.egress.adopt_closed_visibility_catalogs(
+            version=VISIBILITY_SCHEMA_VERSION
+        )
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        ready = self.stage()
+        published = self.publish()
+        self.assertEqual(published["successor_sha256"], ready["successor_sha256"])
+
+        with self.assertRaisesRegex(NativeEgressError, "egress_installation_invalid"):
+            load(installation)
+        owner = load()
+        new_digest = config_digest(
+            json.loads((self.source / "runtime.json").read_bytes())
+        )
+        result = _reissue_installation(
+            owner, installation, application_sha256=new_digest
+        )
+        self.assertTrue(result["reissued"])
+        rebound = json.loads(installation.read_bytes())["document"]
+        self.assertEqual(rebound["application_sha256"], new_digest)
+        for field in ("disclosure", "secrets", "telegram_qualification"):
+            self.assertEqual(old[field], rebound[field])
+        self.assertFalse(
+            _reissue_installation(owner, installation, application_sha256=new_digest)[
+                "reissued"
+            ]
+        )
+        loaded = load(installation)
+        client = json.loads((self.source / "client.json").read_bytes())
+        capability = LocalCapability.from_value(
+            client["capability"], (self.source / "client.key").read_bytes()
+        )
+        result = loaded.service.handle(
+            create_request(
+                capability,
+                request_id=str(uuid.uuid4()),
+                issued_at_ms=clock(),
+                nonce=os.urandom(16),
+                method="scope.we",
+                params={},
+            )
+        )
+        self.assertIsNone(result["error"])
+        self.assertIsInstance(result["result"], dict)
 
     def test_owner_renewal_restores_read_preserving_secrets_and_history(
         self,

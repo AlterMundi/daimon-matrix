@@ -61,6 +61,7 @@ from daimon_matrix.sources import (
     validate_source_selector,
 )
 from daimon_matrix.sources import _canonical as source_canonical
+from daimon_matrix.synthetic_sources import NOW as SOURCE_JOURNEY_NOW
 from daimon_matrix.synthetic_sources import _Journey, run_synthetic_sources
 from tests.test_dm022_ledger import NOW, RootLedgerFixture
 from tests.test_dm024_runtime import PASSWORD, RuntimeFixture
@@ -546,6 +547,64 @@ class SourceCASTests(unittest.TestCase):
                 self.assertEqual(cas.get(reference), hostile)
             self.assertFalse((root / "escape").exists())
             self.assertFalse((root / "pwned").exists())
+
+
+class SourceDisclosureTests(unittest.TestCase):
+    @staticmethod
+    def _offered_event_ids(journey: _Journey, requester: str) -> set[str]:
+        bundle = journey.publisher_registry.diff(
+            selector=journey.selector,
+            request_event_id=str(uuid.uuid4()),
+            requester_me_id=requester,
+            requester_cursor={
+                "schema": "dm.source-empty-cursor/v0",
+                "observer_me_id": requester,
+                "source_id": journey.selector["source_id"],
+            },
+            max_items=8,
+            max_bytes=1_048_576,
+        )
+        return {
+            event["event_id"] for item in bundle["items"] for event in item["events"]
+        }
+
+    def test_foreign_source_grant_preserves_weave_ancestor_sensitivity(self) -> None:
+        for sensitivity in ("personal", "private", "shareable"):
+            with (
+                self.subTest(sensitivity=sensitivity),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                journey = _Journey(Path(directory))
+                we_event = journey.publisher_ledger.append_local(
+                    kind="experience.observed",
+                    subject="unrelated-work",
+                    payload={"summary": "independent observation"},
+                    signer=journey.publisher.signer,
+                    sensitivity=sensitivity,
+                    occurred_at_ms=SOURCE_JOURNEY_NOW,
+                )
+                claim, _, _ = journey.claim(
+                    sequence=0,
+                    predecessor=None,
+                    action="assert",
+                    issued_at_ms=SOURCE_JOURNEY_NOW,
+                )
+                publication, _ = journey.publish(claim)
+                registry = journey.publisher_registry
+                registry.create_cursor(
+                    journey.selector, signer=journey.publisher.signer
+                )
+
+                local = self._offered_event_ids(journey, registry.local_me_id)
+                self.assertIn(we_event["event_id"], local)
+                foreign = self._offered_event_ids(
+                    journey, journey.receiver_registry.local_me_id
+                )
+                if sensitivity == "shareable":
+                    self.assertIn(publication["event_id"], foreign)
+                    self.assertIn(we_event["event_id"], foreign)
+                else:
+                    self.assertEqual(foreign, set())
 
 
 class SourceRegistryTests(RootLedgerFixture):

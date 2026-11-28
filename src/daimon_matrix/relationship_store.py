@@ -429,35 +429,83 @@ class RelationshipStore:
             raise RelationshipStoreError("relationship_event_rejected")
         return copy.deepcopy(event)
 
+    @staticmethod
+    def _insert_event(database: sqlite3.Connection, event: Mapping[str, Any]) -> None:
+        database.execute(
+            "INSERT OR IGNORE INTO events "
+            "(event_id, content_hash, being_ref, embodiment_id, "
+            "incarnation_id, sequence, kind, subject, event_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event["event_id"],
+                event["content_hash"],
+                event["being_ref"],
+                event["origin"]["embodiment_id"],
+                event["origin"]["incarnation_id"],
+                event["sequence"],
+                event["kind"],
+                event["subject"],
+                canonical_bytes(event),
+            ),
+        )
+
     def ingest(self, value: Any) -> dict[str, Any]:
         event = self._validated_event(value)
-        raw = canonical_bytes(event)
         self.initialize()
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
             try:
-                database.execute(
-                    "INSERT OR IGNORE INTO events "
-                    "(event_id, content_hash, being_ref, embodiment_id, "
-                    "incarnation_id, sequence, kind, subject, event_json) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        event["event_id"],
-                        event["content_hash"],
-                        event["being_ref"],
-                        event["origin"]["embodiment_id"],
-                        event["origin"]["incarnation_id"],
-                        event["sequence"],
-                        event["kind"],
-                        event["subject"],
-                        raw,
-                    ),
-                )
+                self._insert_event(database, event)
                 database.commit()
             except BaseException:
                 database.rollback()
                 raise
         return copy.deepcopy(event)
+
+    def publish_card(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        at_ms: int,
+        card_verifier: CardVerifier,
+        already_authored: Callable[[], bool],
+        append: Callable[[], Any],
+    ) -> dict[str, Any]:
+        """Keep predecessor validation, local authoring and observation ordered."""
+        self.initialize()
+        with self._database() as database:
+            database.execute("BEGIN IMMEDIATE")
+            try:
+                if not already_authored():
+                    view = self._current_view(
+                        database, at_ms=at_ms, card_verifier=card_verifier
+                    )
+                    being = payload["being_ref"]
+                    latest = view.cards.get(being, {}).get("latest")
+                    if latest is None:
+                        has_history = any(
+                            row["kind"] == "matrix/relationship-card"
+                            and row["being_ref"] == being
+                            for row in view.all_events
+                        )
+                        matches = not has_history and payload["sequence"] == 0
+                    else:
+                        matches = (
+                            payload["previous_card_event_id"] == latest["event_id"]
+                            and payload["sequence"] == latest["payload"]["sequence"] + 1
+                        )
+                    if not matches:
+                        raise RelationshipStoreError(
+                            "relationship_card_revision_conflict"
+                        )
+                    card_verifier(payload, at_ms)
+                event = self._validated_event(append())
+                self._insert_event(database, event)
+                database.commit()
+            except BaseException:
+                database.rollback()
+                raise
+        return event
 
     def ingest_idempotent(
         self, *, request_id: str, request_hash: str, event: Any
@@ -471,7 +519,6 @@ class RelationshipStore:
         ):
             raise RelationshipStoreError("invalid_relationship_request")
         validated = self._validated_event(event)
-        raw = canonical_bytes(validated)
         self.initialize()
         with self._database() as database:
             database.execute("BEGIN IMMEDIATE")
@@ -493,23 +540,7 @@ class RelationshipStore:
                         raise RelationshipStoreError("relationship_operation_corrupt")
                     result = json.loads(bytes(row["event_json"]))
                 else:
-                    database.execute(
-                        "INSERT OR IGNORE INTO events "
-                        "(event_id, content_hash, being_ref, embodiment_id, "
-                        "incarnation_id, sequence, kind, subject, event_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        (
-                            validated["event_id"],
-                            validated["content_hash"],
-                            validated["being_ref"],
-                            validated["origin"]["embodiment_id"],
-                            validated["origin"]["incarnation_id"],
-                            validated["sequence"],
-                            validated["kind"],
-                            validated["subject"],
-                            raw,
-                        ),
-                    )
+                    self._insert_event(database, validated)
                     database.execute(
                         "INSERT INTO operations VALUES (?, ?, ?, ?)",
                         (

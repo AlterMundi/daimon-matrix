@@ -37,6 +37,40 @@ and expired SourceReview contracts never select a target or renew attention.
 | Apply native memory/behavior deltas within one being | Existing same-being integration operator with exact proposals, decisions, owning adapters and effect receipts | Cross-being autobiography, arbitrary app deployment and consumed model context |
 | Deploy app/backend/SDK software | Owning repository release and receiver maintenance route, current placement, qualified candidate and compatible rollback | Publication/notification is not deployment; service health is not device acceptance |
 
+For a selected guide, use [Source V1](../../specs/source-selective-learning.md)
+on the current publisher and receiving body. Use the receiver's signed cursor
+for a durable pull. The selective page carries Source evidence without
+traversing unrelated body history. Reuse current grants for the exact Source
+ID and publication classification. A successful earlier transfer of a
+different Source does not confer access. Record the receiver's own pull and
+readback before any adoption claim.
+
+When registering a guide on a relationship card, base the publication on the
+current signed card and keep its other resource descriptors. The guarded
+card writer compares the predecessor and sequence before signing. A competing
+publication returns `relationship_card_revision_conflict`; re-read the current
+card before preparing a successor. If the ledger committed the original card
+before its relationship-store write, continue the original request and keep
+its event ID. A second request must never sign another event at that position.
+
+On the native owner route, read the current projection with the observer
+client that grants `source.projection`. The Source writer authorizes the
+publication and import operations. Check the method on the selected
+descriptor before preparing a request. An exit-3 CLI authentication
+refusal is local and happens before dispatch, with no retry token.
+
+After an owner descriptor renewal, an already-open Foundation MCP connector
+can keep the earlier capability. Compare one read through a fresh foreground
+instance of the installed connector before treating its authentication error
+as a daemon outage. Check the typed payload and its signed result. An MCP
+transport response alone proves neither. A successful fresh read establishes
+the current descriptor and tool route. Codex app-server MCP reload schedules a
+refresh for loaded threads, so use the foreground comparison for this scoped
+inspection. Keep the original Source assessment and adoption decision when
+reconciling across same-being bodies. A published Source status and
+`source_projection_not_promoted` can coexist while a receiving body's
+projection has yet to incorporate that decision.
+
 Source project publications are attributed learning references, not species or
 ancestry selectors. The foundation's ancestry `/source.pull` and
 `/species.pull.name` must keep their lineage meaning; species release/live

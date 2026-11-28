@@ -19,6 +19,11 @@ and local reconciliation. Current all-participant publication coupling and the
 manual rollout gates. Existing services and old proof meanings remain authoritative
 until their compatible successors are actually selected.
 
+The [portability roadmap](portability-roadmap.md) defines acceptance for
+topic continuity, cross-harness coordination and cold recovery.
+The [technical project contract](project-contract.md) describes how daimons
+start, preserve and present projects across those conversations.
+
 ## Physical placement and fleet maintenance
 
 A signed body can move without re-enrollment or identity recreation. Current

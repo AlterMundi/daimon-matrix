@@ -596,6 +596,31 @@ class InstalledSurfaceTests(RuntimeFixture):
         self.assertEqual(token.stat().st_mode & 0o777, 0o600)
         self.assertEqual(len(self.runtime.service.ledger.events()), 1)
 
+    def test_source_projection_rejects_writer_role_before_dispatch(self) -> None:
+        self.capability = self.operator_capabilities["sources"]
+        config = json.loads(self.config_path.read_bytes())
+        config["capability"] = self.capability.descriptor
+        self.config_path.write_bytes(canonical_bytes(config))
+        token = self.state_root / "projection.retry.json"
+
+        result = self.run_surface(
+            "daimon_matrix.cli",
+            [
+                "--json",
+                "--request-file",
+                str(token),
+                "source",
+                "projection",
+                "--publication-id",
+                "c8f576de-d4a4-4a6d-9d7f-21ccbd17cbbb",
+            ],
+        )
+
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(result.stderr, b"authentication_failed\n")
+        self.assertEqual(result.stdout, b"")
+        self.assertFalse(token.exists())
+
     def test_proposal_cli_and_mcp_use_real_daemon_with_exact_retry_and_read(
         self,
     ) -> None:
