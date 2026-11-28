@@ -334,6 +334,21 @@ actor can recover the original operation receipt. The protected HTTP/native
 suite and mounted Chromium fixture pass. Live profile selection and
 reciprocal verification with real project participants remain open.
 
+The private receiver candidate pairs [Holodeck `9b1f947`](https://github.com/AlterMundi/holodeck/commit/9b1f947c2fe00299b3759c16cf73837ad125e25f)
+with [DaimonCards at Matrix `bf40d7a`](https://github.com/AlterMundi/daimon-matrix/tree/bf40d7a08b13e1f3c9fed199603a3ec409f9c3e9/components/daimon-cards).
+The installed Home archive validator accepted all 65 files in the
+29,265,920-byte package, with SHA-256
+`73640c945dc9a4338c7568ac1ca054cb375e98d784f1db2012bd96fa17f209bf`.
+The packaged production entry ran in an isolated receiving state on the
+installed Node 24.21.0. With a synthetic Home identity it served the exact
+health and decoded client bytes, refused anonymous requests, created a
+mission, returned its original receipt after restart and refused that receipt
+after revoking the view grant. The separately built release card writer
+(`e13392eae0b36f9102ff7d71a4b0ad1d075f98443fd7900eb6a382bae266162e`)
+passed the protected HTTP and native concurrency fixture. The package and
+writer are retained for the existing deployment owner. There was no live
+selection or real participant action in this qualification.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Git owns project
