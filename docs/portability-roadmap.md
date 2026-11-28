@@ -24,6 +24,29 @@ Keep the owning source, contract, receiving configuration and regression
 test aligned. Record the tested source and runtime revisions in the owning
 project. Distinguish queued, incorporated, answered and visible.
 
+## Topic state contract
+
+Each logical topic has a stable identifier, its own workspace and links to
+the projects it works on. A workspace provides a base for topic records and
+can link to several project repositories. The checkpoint records current
+roles, work in progress, decisions, explicit next actions and open
+dependencies. It links to the exact project revisions, original messages,
+attachments and outcome receipts that support it. Its scope follows the topic
+and the source audiences.
+
+At the close of a meaningful iteration, the worker can propose a delta with
+source references. Observer and the general conversation can contribute their
+own attributed observations. Gateway checks the topic, sources and prior
+revision before accepting the delta. Conflicting or stale observations remain
+inspectable. The system that performed an action is the source for its outcome.
+
+On a cold start, use the current turn's authority, the topic workspace, the
+latest checkpoint and the relevant retained originals. Read back unfinished
+or uncertain effects through their owning systems before continuing. On a warm
+start, resume the native session and provide the missing context. A harness
+change keeps the logical topic and its work intact. Validate these rules in
+the shadow and cold-recovery milestones below before migrating existing topics.
+
 ## Milestones
 
 1. **One conversation across surfaces.** Use Holodeck to Char Design as the
