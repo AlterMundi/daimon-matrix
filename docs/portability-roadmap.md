@@ -165,9 +165,12 @@ journal and shared claim and completion. The [Holodeck receiving fixture](https:
 uses protected HTTP and the same Rust writer to credit a workshop bridge
 objective from its original Room receipt. It verifies pending and credited
 progress, refusal of early completion, and stable confirmation after a room
-reset. The live pilot still needs the A2UI journal mounted for the selected
-profile, the signed daimon action path, and reciprocal verification with
-real project participants.
+reset. The Holodeck candidate mounts the journal in the workshop with the
+existing Proyección renderer. A Chromium visitor accepts a quest, changes
+the bridge through ordinary world controls and receives progress. The typed
+writer completes that quest and a second narrow Chromium view reads the
+same result. Live profile selection, the signed daimon action path and
+reciprocal verification with real project participants remain open.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and

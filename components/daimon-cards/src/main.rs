@@ -39,7 +39,7 @@ enum Operation {
         labels: ProjectionLabels,
     },
     MountQuestbook {
-        selected: Uuid,
+        selected: Option<Uuid>,
         after: Option<Uuid>,
         labels: ProjectionLabels,
         journal: String,
@@ -102,6 +102,10 @@ fn execute(cards: &mut Cards, request: Request) -> Result<Value, Error> {
             missions,
         } => {
             let cards = cards.list(&access, after)?;
+            let selected = selected.or_else(|| cards.first().map(|card| card.id));
+            let Some(selected) = selected else {
+                return Ok(Value::Null);
+            };
             json!(a2ui::questbook::mount(
                 &cards,
                 selected,

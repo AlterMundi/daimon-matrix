@@ -40,7 +40,8 @@ is unconfirmed. Close standard input to finish each request.
 
 ### Holodeck questbook
 
-Use `mount_questbook` with the current project, selected card and list cursor.
+Use `mount_questbook` with the current project and optional selected card and
+list cursor. Omitting selection opens the first card on the requested page.
 The spatial catalog presents available, active and completed quests, their
 selected objective, and the actions that apply. A `select_quest` event changes
 the host's selection. It writes no card event. The existing `claim` and
