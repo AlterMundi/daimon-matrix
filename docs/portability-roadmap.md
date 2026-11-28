@@ -607,7 +607,13 @@ activity distinct from who receives the next human intervention.
    the exact retry returns its original receipt with one history event.
    Revoking the native read grant denies receipt access. Desktop and mobile
    Chromium both show the issue description and recover its shared state.
-   Live adoption and the full topic-to-deliverable path remain open.
+   The [Questbook creation form](https://github.com/AlterMundi/holodeck/commit/fb31304f7457ecb9bf387b001d918f3a787a0882)
+   also creates the same typed issue when a person supplies a description.
+   Its browser fixture drops the response after the writer commits, reloads
+   the scoped form, and confirms the original description and receipt under
+   read access with one creation request. Rebuild the browser bundle before
+   running the fixture. Live adoption requires the matching issue-capable
+   writer. The full topic-to-deliverable path remains open.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
