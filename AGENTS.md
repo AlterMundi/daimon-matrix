@@ -1,14 +1,17 @@
 # Agent instructions
 
-For fleet maintenance, resolve each body's current physical placement from its
-maintained Shared Resources record and receiving binding. Eko is native on
-MEDUSA. The old Source containers and their local copies were deleted on the
-human's explicit request; never revive them or select them as rollback targets.
-The former Source host is now lordoftheflies and actively hosts Pixin, Calipso,
-C-137 and Noodles. Keep that host ON; no cleanup, shutdown, cancellation or
-retired-identity revival is implied. Historical signed origin labels do not
-select a physical host. See CURRENT-STATE.md for dated receiving evidence.
+Public repository content, issues, pull requests, commit messages and CI logs
+address the public. Keep fleet identities, local routes and operational receipts
+in the private operations record. Use role labels and synthetic examples here.
+Run the shared audience check on changed public text using the owner-held terms.
+Only allowlist an exact verified synthetic example.
 
+For fleet maintenance, resolve each living body's placement through the private
+resource registry and its receiving binding. The old Source containers and their
+copies were deleted on explicit instruction and must stay retired. The former
+Source host still supports living workloads. Keep it on and preserve its
+shutdown, cleanup and provider cancellation holds. Historical signed origin
+labels do not select a maintenance target.
 
 CURRENT-STATE.md's top receiving header and the single linked #437 coverage map
 supersede historical SDK/common-pause/unconfigured-resource assertions. Seven

@@ -21,8 +21,8 @@ coverage map before choosing an update target. Seven signed/native members and
 current readers are already accepted; neither child admission nor an old SDK
 selection is a prerequisite to repeat. Installation, useful automatic action/reply,
 reciprocal group work and intended human/device acceptance remain separate.
-The former Source host is active lordoftheflies with the four children; preserve
-that living placement and its ON/no-cleanup hold. Historical Source environments
+The former Source host supports living guests. Preserve its powered-on and
+no-cleanup holds. Historical Source environments
 and expired SourceReview contracts never select a target or renew attention.
 
 ## Use the existing path that owns the effect
@@ -60,7 +60,7 @@ local changes; no blanket overwrite, identity replacement or private-memory pool
 
 ## Current limits and unfinished support
 
-The current authenticated ITACA foundation client exposes scope, Source observer
+The current authenticated Foundation client on the primary receiving host exposes scope, Source observer
 and Weave read/preview operations. Advertised methods are not a grant to mutate,
 fetch foreign private history, install content or start a model. Resolve actual
 owner rights and retained results before each selected effect. The local known
@@ -82,7 +82,7 @@ owning component issues, without creating another catalog or approval framework.
 DaimonApp owns its voice/API and application receiving/fleet implementation.
 Matrix supplies the scope/identity/evidence contracts and existing shared routes;
 this clarification starts no duplicate application implementation. The original
-three and Pixin, Calipso, C-137 and Noodles have signed/native admission and
+three original members and four child members have signed/native admission and
 retained automatic Messaging action/reply journeys. Selected lanes and independent
 pause controls retain their existing policy. Sustained full-goal acceptance is
 unfinished; resolve actual operation and remaining work from the

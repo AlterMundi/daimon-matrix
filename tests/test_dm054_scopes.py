@@ -914,7 +914,7 @@ class NativeSurfaceTests(ScopeFixture):
             {"observed_at_ms": True},
             {"state": "unavailable"},
             {"domain": "physical-hypervisor"},
-            {"surface_ref": "host:itaca"},
+            {"surface_ref": "host:example-host"},
             {"surface_ref": "dm:surface:v1:" + "g" * 64},
             {"private": "/private/machine-id"},
         ]
@@ -1106,7 +1106,7 @@ class ClusterDiscoveryTests(ScopeFixture):
                     (
                         "dm:being:independent-eko",
                         dict(
-                            body_ref="codex:medusa:eko",
+                            body_ref="codex:example-host:eko",
                             embodiment_id="embodiment:eko",
                             incarnation_id="incarnation:eko",
                         ),

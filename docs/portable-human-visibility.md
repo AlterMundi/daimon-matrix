@@ -3,7 +3,7 @@
 The four children are signed members with full portable Conversation publication
 and selected native group readers. All seven readers were authenticated after
 publication. A real ordinary request to each child produced an automatic native
-execution and a signed reply received on ITACA, preserving original parents and
+execution and a signed reply received on primary receiving host, preserving original parents and
 threads. The first technical probe and its initial refusal/deferral remain
 historical evidence; they are not the current service state. No Telegram account
 or Tribu viewing was required.

@@ -240,7 +240,7 @@ Codex compatibility/profile follow-up in this repository:
 - `tests/test_dm040_codex_body.py`, future `codex_review.py` and runner tests.
 
 The parent's read-only genuine public bundle is
-`/home/debian/dm-milestone2-codex-probe/schema/`. Exact protocol files needed for
+`\$HOME/dm-milestone2-codex-probe/schema/`. Exact protocol files needed for
 registered-session follow-up are `v2/TurnStartParams.json`,
 `v2/TurnStartResponse.json`, `v2/TurnStartedNotification.json`,
 `v2/TurnCompletedNotification.json`, `v2/TurnInterruptParams.json` and

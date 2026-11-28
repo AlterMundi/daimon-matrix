@@ -7,7 +7,7 @@ This record does not close #138 or certify installed Codex/Hermes integration.
 
 ## Scope and provenance
 
-- Worktree: `/home/debian/dm-milestone2-issue138`.
+- Worktree: `\$HOME/dm-milestone2-issue138`.
 - Base: `acb131f18c200bb028ee86fa3a8ef9a2f6c040a3`.
 - Supplied accepted claim: `2835e208-9e56-4fd9-9cfe-4eec996615ba`.
 - Shared core, execution schema, focused tests and documentation only; plus the
@@ -42,10 +42,10 @@ pytest; tests use the repository's unittest style without installing anything.
 
 ## Verification commands and outcomes
 
-With `/home/debian/dm-milestone2-test-venv/bin/python`:
+With `\$HOME/dm-milestone2-test-venv/bin/python`:
 
 ```sh
-CODEX_GENERATED_SCHEMA_ROOT=/home/debian/dm-milestone2-codex-probe/schema \
+CODEX_GENERATED_SCHEMA_ROOT=\$HOME/dm-milestone2-codex-probe/schema \
 PYTHONPATH=src python -m unittest tests.test_execution_instruction \
   tests.test_execution_store tests.test_passive_messaging_execution \
   tests.test_dm040_codex_body -v
@@ -170,7 +170,7 @@ See `docs/bounded-human-execution.md` for the complete supported slice and gates
 ### Verified follow-up evidence
 
 Using the read-only shared test venv, exact pinned native binary and public
-text-only fixture catalog from `/home/debian/dm-milestone2-codex-probe`:
+text-only fixture catalog from `\$HOME/dm-milestone2-codex-probe`:
 
 - Combined Codex adapter, instruction, store, passive-core and DM-040 suite:
   **77 tests, OK, 2 existing private/live smokes skipped**. The real-binary adapter
@@ -338,7 +338,7 @@ The permanent regression uses the real `ReviewController.cancel_active`, real
 terminal cycle rows. Before production changes, this exact command was run:
 
 ```sh
-PYTHONPATH=src /home/debian/dm-milestone2-test-venv/bin/python -m unittest tests.test_execution_store.IndependentReviewRegressions.test_cancel_large_terminal_history_finishes_final_audit_within_budget -v
+PYTHONPATH=src \$HOME/dm-milestone2-test-venv/bin/python -m unittest tests.test_execution_store.IndependentReviewRegressions.test_cancel_large_terminal_history_finishes_final_audit_within_budget -v
 ```
 
 Exact RED output:
@@ -350,7 +350,7 @@ test_cancel_large_terminal_history_finishes_final_audit_within_budget (tests.tes
 FAIL: test_cancel_large_terminal_history_finishes_final_audit_within_budget (tests.test_execution_store.IndependentReviewRegressions.test_cancel_large_terminal_history_finishes_final_audit_within_budget)
 ----------------------------------------------------------------------
 Traceback (most recent call last):
-  File "/home/debian/dm-milestone2-issue138/tests/test_execution_store.py", line 716, in test_cancel_large_terminal_history_finishes_final_audit_within_budget
+  File "\$HOME/dm-milestone2-issue138/tests/test_execution_store.py", line 716, in test_cancel_large_terminal_history_finishes_final_audit_within_budget
     self.assertLess(
     ~~~~~~~~~~~~~~~^
         elapsed,
@@ -429,7 +429,7 @@ source-repair evidence above and is not an independent approval.
   `c48c9307-1c11-4d3b-81a9-00043ab0b74b`, state `in_progress`, 32 exact
   resources, lease through `2026-09-20T06:05:40.925244Z`. Every package
   candidate path below is claim-covered.
-- Interpreter: `/home/debian/dm-milestone2-test-venv/bin/python`, Python
+- Interpreter: `\$HOME/dm-milestone2-test-venv/bin/python`, Python
   3.13.5. No generator logic, `src/daimon_matrix/*.py`, dependency metadata,
   service, credential, live message, paid model, or deployment state was changed.
 
@@ -438,7 +438,7 @@ source-repair evidence above and is not an independent approval.
 The following exact command ran first against the clean base:
 
 ```sh
-PYTHONPATH=src /home/debian/dm-milestone2-test-venv/bin/python \
+PYTHONPATH=src \$HOME/dm-milestone2-test-venv/bin/python \
   -W error::ResourceWarning -m unittest \
   tests.test_dm041_hermes_body.ContractAndProfileTests.test_profile_is_deterministic_exclusive_and_native_memory_free \
   tests.test_dm041_hermes_body.PublicContractTests.test_vectors_schemas_templates_and_provenance_are_deterministic \

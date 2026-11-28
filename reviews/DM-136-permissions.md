@@ -4,7 +4,7 @@
 
 ## Exact review boundary
 
-- Worktree: `/home/debian/dm-milestone2-issue136`
+- Worktree: `\$HOME/dm-milestone2-issue136`
 - Active claim: `6267e9c6-fa42-4d8f-81be-02e5f5873895` (57 resources; supplied lease through `2026-09-20T08:14:27.960308Z`)
 - Branch HEAD: `d8e496fc10245f6b4285e102ff0ea2773553751f`
 - HEAD tree: `1cb00263e5806c302c09f8416e70bce41e3af9de`
@@ -12,7 +12,7 @@
 - merge base with `origin/main`: `e1df21e5e35c74875fbcc9b43f202b0899be8b24`
 - commits over base: `b097bd9`, `1fb0fd2`, `d8e496f`
 - Initial tracked+untracked serialization SHA-256 supplied and reproduced before this repair: `0778828f92678eb57a5fb80fb6ab2b27a3909013f8a810f7230f3baec47322a4`
-- Independent F1/F2 report: `/home/debian/agents/compaii-daimonmatrix/work/messaging-rollout/reviews/DM-136-F1F2-INDEPENDENT.md`
+- Independent F1/F2 report: `\$HOME/agents/compaii-daimonmatrix/work/messaging-rollout/reviews/DM-136-F1F2-INDEPENDENT.md`
 - Independent report SHA-256: `2837a09e8dcc02f777f21f718a32a7b51d5cdb95444b537fb554fd57209e89bb`
 - F2 disposition: the report's expected base was stale/nonexistent. The correct boundary is the one above; no F2 code repair was made.
 

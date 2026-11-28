@@ -505,10 +505,10 @@ class StartupDiagnosticTests(unittest.TestCase):
 
     def test_anything_that_is_not_a_bare_code_is_withheld(self) -> None:
         for exception in (
-            OSError(2, "No such file", "/home/owner/.local/state/body/custody.json"),
-            KeyError("/home/owner/.config/daimon-matrix/body.password"),
+            OSError(2, "No such file", "/home/example/.local/state/body/custody.json"),
+            KeyError("/home/example/.config/daimon-matrix/body.password"),
             ValueError("password is hunter2 and the key is AAEC"),
-            RuntimeError("http://10.0.0.7:8686/dm-peer/v1 refused"),
+            RuntimeError("http://192.0.2.77:8686/dm-peer/v1 refused"),
             NativeEgressError("egress_catalog_invalid /etc/secret"),
         ):
             detail = _safe_detail(exception)
@@ -518,7 +518,7 @@ class StartupDiagnosticTests(unittest.TestCase):
                 "/etc",
                 "hunter2",
                 "AAEC",
-                "10.0.0.7",
+                "192.0.2.77",
                 "custody",
                 "password",
                 " ",

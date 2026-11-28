@@ -45,7 +45,7 @@ Preserve their identity, content and state across updates. In-progress answers,
 turns and capture, and native questions that startup expires, need their actual
 owning continuation or an idle boundary. An unanswered human task must not become
 an indefinite maintenance lock. This distinction was verified in the current
-Noodles update: its pending task was unchanged after selection.
+child member D update: its pending task was unchanged after selection.
 
 Use existing bounded workers and Alerts. Every operation has a deadline, work/byte
 limit, retained result and stop path; current/compatible rollback artifacts have
@@ -55,7 +55,7 @@ component ownership locates the writer, not another approval ceremony.
 
 The same retained membership/reader-selection operation must update the monitor's
 expected cohort from its qualified result. A stale expected list is monitoring
-configuration drift, not proof that a native reader failed. In the current Itaca
+configuration drift, not proof that a native reader failed. In the current primary receiving host
 incident, the monitor expected three readers while the authenticated seven-reader
 selection passed its unchanged validation. Updating only that expected cohort
 resolved the same incident without a Matrix restart or reader reenrollment.

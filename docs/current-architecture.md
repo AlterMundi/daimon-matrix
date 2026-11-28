@@ -21,24 +21,17 @@ until their compatible successors are actually selected.
 
 ## Physical placement and fleet maintenance
 
-A signed body can move without re-enrollment or identity recreation. Current
-hosting belongs to Cluster and the maintained resource record, rather than the
-historical host component of body_ref or a display label. Fleet operations must
-select each receiver's current maintenance route: CompAII runs natively on ITACA,
-Eko natively on MEDUSA, and Oliva in the active ITACA KVM `vm-dm-oliva` (local
-Incus name `dm-oliva`). Nicolas explicitly requested deletion of all seven old
-Source Incus containers, their old home volumes and local historical copies on
-2026-10-31. They are not recovery or update targets; do not recreate them.
-Continuity lives in the active bodies' history, memory, identity, working files
-and dependencies. See CURRENT-STATE.md and Shared Resources' maintained host and
-VM records for actual placement and remaining dependency closure.
+A signed body can move while keeping its identity, history, memory and working
+files. Fleet operators resolve the current placement and maintenance writer
+through Cluster's private resource registry and the affected body's binding.
+Dated topology, machine paths and exact deployment receipts live in the
+private operations record. The old Source containers and their copies were
+deleted on explicit instruction and remain retired.
 
-The former physical daimonmatrix host is now lordoftheflies and actively hosts
-Pixin, Calipso, C-137 and Noodles in their existing guests. This is living child
-infrastructure, not a retired-host cleanup target. Keep it powered on until
-Nicolas explicitly orders shutdown. Do not arm a shutdown timer, run a host-off
-drill or clean up that host. Only stop selected services whose operation is confirmed on ITACA;
-provider cancellation is not authorized.
+The former Source host supports living guests. Keep it powered on until
+explicitly directed otherwise. Do not arm a shutdown timer, run a host-off
+drill, clean up the host or cancel its provider. Stop only a selected service
+whose operation is confirmed on its receiving host.
 
 ## Identity and resource authority
 

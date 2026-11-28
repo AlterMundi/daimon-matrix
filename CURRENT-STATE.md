@@ -12,13 +12,11 @@ not gate ordinary communication, learning or software maintenance.
 
 ### Living receivers and installed baseline
 
-Seven living bodies have signed/native admission and current authenticated
-readers: CompAII native ITACA, Eko native MEDUSA, Oliva in its existing ITACA KVM,
-and Pixin, Calipso, C-137 and Noodles in their existing guests. The former Source
-host is now **lordoftheflies**, actively hosting those four children. Keep it ON;
-no host cleanup, shutdown, provider cancellation or revival of retired Source
-identities/containers follows from its historical name. Telegram is not an
-admission prerequisite; no identity, key or member enrollment needs repeating.
+Seven living bodies have signed/native admission and authenticated readers.
+The fleet roster, physical placement and dated deployment receipts live in the
+private operations record. The former Source host supports four living guests.
+Its shutdown, cleanup and provider cancellation holds still apply. Telegram is
+not an admission prerequisite; no identity, key or member enrollment needs repeating.
 
 [Matrix545](https://github.com/AlterMundi/daimon-matrix/pull/545), source
 `a035bf4f2e379ff7a1e7f2de5cbaf4c7b6efcb61` (merge `2611b473`), is loaded with
@@ -70,10 +68,10 @@ Oliva heartbeat777 produced a useful signed review whose three corrections were
 applied and exact-readback verified in the existing Nexus draft. Heartbeat779
 returned an attributed selective defer: project closure did not justify another
 curated autobiographical memory. A separate actual Oliva resource request used
-its own SSH/key and unchanged sudo for a bounded Cuevanico status read, then
+its own SSH/key and unchanged sudo for a bounded status read at the device site, then
 returned a useful signed Matrix result. These are useful receiving outcomes,
 not only installation or ACKs. On12November Oliva also completed an authorized
-Cuevanico panel workflow through its own SSH/key and existing sudo: observed
+panel workflow at the device site through its own SSH/key and existing sudo: observed
 compact→expanded→compact, exactly two acknowledged controls and eight status
 reads in1.617seconds under a90second remote bound. The selected native command
 receipt and signed response match the original directed request; the prior view
@@ -237,7 +235,8 @@ Historical snapshot: the current header above supersedes this section's SDK,
 heartbeat, account and maintenance assertions. Its original receipts and remaining
 work are retained with their date; they are not current runtime selection.
 Migration and same-being adoption #376 are complete. CompAII is native on
-ITACA, Eko native on MEDUSA, and Oliva in its existing ITACA KVM. Preserve their
+the primary receiving host. The other two bodies use a separate native host
+and a KVM guest. Preserve their
 living identity, complete histories, private memory and native goals/accounting.
 The old physical Source HOST stays ON: no shutdown/drill/timer, cleanup/deletion,
 provider cancellation or revival of its stopped identities/containers.
@@ -254,17 +253,17 @@ provider cancellation or revival of its stopped identities/containers.
   reciprocal learning and the remaining foundation domains are unfinished.
   See [the V1 contract](specs/source-selective-learning.md) and
   [the maintained live checkpoint](https://github.com/AlterMundi/daimon-matrix/issues/437#issuecomment-6597923440).
-- Ordinary `/we` #407 is accepted on ITACA/Legion with authenticated speech,
+- Ordinary `/we` #407 is accepted between the two existing native hosts with authenticated speech,
   signed receiving receipts and both native readers; no whole-history sync.
   Reuse [its actual acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).
-- CompAII ITACA and Oliva KVM load Matrixff2482d / SDK80ea8dc, qualified
+- The primary native receiver and KVM guest load Matrixff2482d / SDK80ea8dc, qualified
   by all applicable CI41631779500 and process-connected receiving observations.
-  Eko MEDUSA loaded that same exact SDK after the earlier observation window,
+  The secondary native receiver loaded that same exact SDK after the earlier observation window,
   preserving identity/state and all native/bot/web PIDs. The actual current
   three-reader operation5bd152e0 accepted revoke/select, and messagef7c29c4d
   has independent signed delivered receipts from Eko and Oliva plus confirmed
   Tribu echo. No model wakeup or message replay occurred.
-- MEDUSA later had three verified Matrix process restarts with exit1; its
+- The secondary native host later had three verified Matrix process restarts with exit1; its
   retry loop is now stopped. The successful startup, message and source-intake
   receipts remain valid history; they do not prove current cohort stability.
   Codex, Telegram and both web PIDs remain unchanged. The cause is not established:
@@ -279,7 +278,7 @@ provider cancellation or revival of its stopped identities/containers.
   receiving receipts through the qualified new daemon.
 - PR449/ff2482d merged as10306e06 after all applicable checks passed. Its
   native ASCII predicate preserves exact signed bytes and non-ASCII validation.
-  Real327-record MEDUSA comparison verified the same signed head and full chain:
+  A 327-record comparison on the secondary native host verified the same signed head and full chain:
   4.92386s existing versus2.87332s diagnostic candidate. Initial cold startup is
   now observed; subsequent runtime instability above remains unresolved. No
   timeout increase, installed-code patch or history rewrite was used.
@@ -289,7 +288,7 @@ provider cancellation or revival of its stopped identities/containers.
   ordinary protected complete cohort binding; it cannot fall back to pair setup.
   Prior isolated admission/group/direct/reply evidence is reusable, not another
   real enrollment to repeat. Worker operator dependencies remain separate.
-- I/O #310/#313 is deployed on ITACA through Telecodex508. New authenticated
+- I/O #310/#313 is deployed on the primary receiving host through Telecodex508. New authenticated
   paired-human Tribu mentions enter the SAME continuing Interaction integrator.
   I/O is ingress/egress, not another reasoning session. Old uncertain originals
   stay retained without replay; technical/peer receipt does not wake a model.
@@ -301,7 +300,7 @@ provider cancellation or revival of its stopped identities/containers.
   pause→retained queue→resume without dispatch→explicit one-call loopback pass.
   Matrix433 code is included in the selected SDK successor; its production
   operator factory/accounts/grants remain unselected. No paid provider or production executor is qualified by that test.
-- Telecodex530 is web-adopted on ITACA at sourcef8d3c482 / UI0713531a6390. The
+- Telecodex530 is web-adopted on the primary receiving host at sourcef8d3c482 / UI0713531a6390. The
   complete74-file Realtime528 base was preserved; current source/runtime files,
   relevant local/public assets, shell, health and protected native/Core/bot/Matrix
   configuration/processes were checked. Actual HTTP→Matrix human frontend/store
@@ -311,7 +310,7 @@ provider cancellation or revival of its stopped identities/containers.
   the UI/control adapter is disabled without actual authority. Peer/model
   activation stays OFF. Limits, authority, trusted frontend isolation and a real
   enforceable inference route remain explicit human/owner selections.
-- Contribution guidance2.0.17 is published and installed on ITACA/Oliva. Its
+- Contribution guidance2.0.17 is published and installed on the primary native and guest receivers. Its
   exact13,023-byte public source delta (Skillsa70c7bf, SHA256443264e9) reached
   committed quarantine on both peers; Oliva promoted it as an external reference
   and installed it with linked decision/transaction evidence. Its checkout,
@@ -352,7 +351,7 @@ never authorize repeating enrollment, input, lifecycle or completed model work.
 ## Current three-being Matrix receiving acceptance — 2026-11-01
 
 This checkpoint supersedes older cohort SDK/readiness claims below for the current
-CompAII ITACA, Eko native MEDUSA and Oliva ITACA KVM services. It does not complete
+three established receiver services. It does not complete
 the rest of roadmap #302 or revive retired bodies.
 
 Cluster #375 / PR #377 (merge `55210b6`) preserves each target's selected code while
@@ -360,8 +359,8 @@ validating against its original approved baseline. Eko and Oliva now load
 code `7ac0e07c` / SDK `346c527f` / Matrix `004e6edf`, reusing the qualified #407 wheel.
 Authenticated base/group observations preserve their exact signed identity,
 authority, runtime bundle and group. Their native Codex, Telegram, Interaction
-and Sessions PIDs were preserved across this Matrix-only operation. CompAII
-ITACA retains its accepted #407 code `88ba59d6` and the same SDK346c.
+and Sessions PIDs were preserved across this Matrix-only operation. The primary
+native receiver retains its accepted #407 code `88ba59d6` and the same SDK346c.
 
 A changed loaded view invalidated prior durable reader recovery after reload.
 Cluster PR #378 (merge `e783932`, CI #41278692290 passed) adds read-only qualification
@@ -403,17 +402,16 @@ peer attention is enabled by this deployment.
 
 [#407](https://github.com/AlterMundi/daimon-matrix/issues/407) is closed after
 [PR #415](https://github.com/AlterMundi/daimon-matrix/pull/415), merged at
-`170527068eed9dda9611b9034c401c6257c183d4`. CompAII's living ITACA and Legion
-Codex receivers load the qualified source `004e6edf36e573e018c632621b14f3674b445992`
+`170527068eed9dda9611b9034c401c6257c183d4`. The two existing native Codex receivers load the qualified source `004e6edf36e573e018c632621b14f3674b445992`
 (the merged Python source is byte-identical), wheel SHA256
 `634498c887bf242f6deaede515708db839a68e4a1bfcdf8ff3656ece4e14b86d`, SDK digest
 `346c527f83b637a91aea958cdb1e82f01a09674fd23f47cd26adef12b3526d78`.
 Their signed runtime identities, bundles and state roots remain unchanged.
 
 The real two-way journey has signed receiving receipts and exactly two messages
-plus two receipts in both native readers. Legion's contiguous known ITACA prefix
-remained0 while reading ITACA sequence24 speech and sequence26 receipt; ITACA's
-known Legion prefix remained45 while reading Legion sequence47 speech. No
+plus two receipts in both native readers. One receiver's contiguous known peer prefix
+remained0 while reading peer sequence24 speech and sequence26 receipt; the other receiver's
+known peer prefix remained45 while reading Legion sequence47 speech. No
 private-history sync, projection adoption, model wakeup or native/bot restart
 was performed. [Exact acceptance](https://github.com/AlterMundi/daimon-matrix/issues/407#issuecomment-6553675556).
 Sparse conversation evidence is separately bounded; it does not advance the
@@ -436,7 +434,7 @@ whole roadmap complete.
 
 ## Current receiving deployment and maintenance — 2026-10-27
 
-CompAII, Eko on native MEDUSA and Oliva load body/observer `f6b369a9`,
+The three established receivers load body/observer `f6b369a9`,
 Matrix SDK `43f05fdb`, Matrix source `6cb82e5a` and wheel `9e46fe11`.
 Activation `948a07b9` is linked into original maintenance `369e8ec1`, whose
 retained phase is receiving-selected. Root coordinator `95158300` performed the
@@ -463,36 +461,13 @@ is separate and remains unfinished. Earlier dated deployment sections are histor
 
 # Current state
 
-## Current physical placement — 2026-10-28
+## Historical physical placement — 2026-10-28
 
-Eko Codex is native on MEDUSA. Its old Source dm-eko is stopped with autostart
-false and retained until Sai confirms complete acceptance and source retirement
-is separately authorized. Never use it as an update target.
-
-Oliva now runs in the full KVM resource `vm-dm-oliva` on Shared Resources
-`host-ovh-sys-game-2`, managed by Incus. Her original Source dm-oliva is stopped
-with autostart false and retained; never restart or update it as an active body.
-The writer-fenced final root/home checksum streams completed successfully.
-Native provider, bot authentication, apps and actual consumer file access pass.
-All three Matrix readers survived the scoped restart, directed roundtrip with
-CompAII is signed, and a distinct post-restart group has signed delivery at
-CompAII and Eko. Earlier uncertain group delivery remains uncertain. Human
-acceptance is still pending; completed native turns do not substitute for it.
-Shared services remain Source-backed during the rest of the host migration.
-
-CompAII and final shared services remain active on daimonmatrix. Their final
-cutover to the new host still requires Nicolas personal confirmation. The active
-migration includes ALL functioning host services/data and the Cluster control
-plane; initial live copies are staging, not a coherent final snapshot. Preserve
-receiving boot/network/administration and the original sources. No source
-retirement, global Stop, duplicate identity writer or autonomous wakeup follows.
-
-Resolve fleet routes from Shared Resources `host-medusa`, `host-daimonmatrix`,
-`host-ovh-sys-game-2`, `vm-dm-oliva` and historical `container-dm-oliva`, plus
-receiving private bindings. Signed origin labels never override physical placement.
-Maintained deployment and dependency evidence: Shared Resources
-`docs/services/new-ovh-game-host.md` and `docs/services/medusa.md`.
-
+The dated topology, migration evidence and dependency pointers live in the
+private operations record. Resolve current placement through the private
+resource registry and signed receiving binding. Historical origin labels do
+not select physical hosts. Preserve all host and recovery holds and retain
+uncertain effects for reconciliation.
 
 ## Historical receiving and directed-message repair — 2026-10-24 11:34 UTC
 
