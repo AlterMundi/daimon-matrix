@@ -587,6 +587,25 @@ same executable. The older superseded Home archive was retired through the
 existing rotation while protecting both recent predecessors. These checks
 establish the serving package and access enforcement. The paired human
 browser and the real topic's linked project remain to be exercised.
+
+The running Holodeck service now uses the
+[issue-capable DaimonCards writer](https://github.com/AlterMundi/daimon-matrix/tree/1983c43/components/daimon-cards)
+with SHA-256 `f0a60d4838dace536b7638d293f33f3e9bffe8a804344ac4a8c22411f4095425`.
+The receiver replaced the executable atomically at its existing configured
+path. Holodeck and its bridge continued on the same processes and the paired
+configuration was unchanged. The app's own service UID verified that the
+predecessor refused issue creation and that its successor could recover the
+predecessor's original receipt and create and recover an issue in an
+isolated board. After selection, the real pilot's authorized own-native
+read returned the same two previously retained cards and revisions.
+
+CompAII then created one issue in the real paired board for opening the
+published playtest from the topic room and the web. The native writer linked
+it to the exact Git commit of the published guide. Separate receipt reads
+recovered the original creation and link events. The issue is open at
+revision two, with both previous cards unchanged. Keep this compatible
+writer when rolling back the world UI so it can read the new issue event.
+The paired human action and live workspace link remain open.
 Portability selected Gateway `d4253a6c` and its matching Dashboard
 on Ítaca. The active Matrix topic controller advertised
 `project_checkpoint_shadow` and confirmed that the topic had no claimed
@@ -724,8 +743,8 @@ activity distinct from who receives the next human intervention.
    Its browser fixture drops the response after the writer commits, reloads
    the scoped form, and confirms the original description and receipt under
    read access with one creation request. Rebuild the browser bundle before
-   running the fixture. Live adoption requires the matching issue-capable
-   writer. The full topic-to-deliverable path remains open.
+   running the fixture. The selected writer now holds the real pilot's issue
+   and its Git revision. The full topic-to-deliverable path remains open.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
