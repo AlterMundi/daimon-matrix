@@ -489,8 +489,13 @@ receipts. The running profile already has its workspace root. The private
 Holodeck project has its own Git origin, a verified commit and a retained
 DaimonCards receipt. The live own-native reader in this cut confirmed the
 same receipt and card revision three with the original Git link current.
-The room branch and protected workshop lineage still need a combined
-Holodeck release. The pilot has no accepted topic checkpoint yet.
+The combined Holodeck candidate below preserves the serving world.
+The loaded bridge lacks the topic-room operation, and the loaded Gateway
+does not serve the project reader. The current shared Home profile already
+enables workspace access. Select the compatible Gateway and Dashboard
+first, then the matching bridge and Holodeck candidate through their
+existing owners. Keep the current pair and use the then-serving release
+as the rollback reference. The pilot has no accepted topic checkpoint yet.
 
 1. Select an existing authorized workspace for the pilot, or adopt its
    folder through Session Workspace. Confirm the exact Git origin and
@@ -738,6 +743,31 @@ passed on the integration branch. This branch is a candidate on the pilot
 release base. Live adoption and paired use of the composed surfaces
 remain open.
 
+
+A production comparison on 2026-11-28 found Holodeck archive
+`c7a92cd8a6aa` serving source `0679a01`. The [updated topic-room
+composition](https://github.com/AlterMundi/holodeck/commit/2486d45e3816080b641bbdad06d2205e1c73e2f5)
+includes that source and keeps its flight, locomotion and terrain modules
+byte-identical. The installed Home verifier accepted the 96-file,
+40,448,000-byte candidate archive, SHA-256
+`c3e809dece1c4e0cce996c81009e4b6a1c6851f26579fb650809f142129ad85d`.
+Eleven Node 24.21.0 tests passed across the mobile room and shared
+Questbook journeys and their HTTP and frame checks. The predecessor
+topic candidate also booted from its exact package on Node 24.21.0
+against fixture Home and bridge sockets. It checked health, protected
+HTML, room entry, Git revision projection and revocation with zero
+model calls.
+
+The current own-native route re-read the real Git-review mission at
+revision three with its original receipt and Git link. The unselected
+bridge source from the updated composition read the current Matrix room
+and work status using the existing Home pair and the running Gateway.
+The same read could not obtain a project catalogue from the loaded
+Gateway at `61c01d15`. The loaded bridge also uses a provider without
+the topic reader. The compatible bridge source SHA-256 is
+`f5aa77fb00c7e4641269a6738fa40336e92614412af9ca9527d28889944dbfbd`.
+The existing pair and workspace grant were sufficient for the room
+read. The checks submitted no originals and changed no active services.
 
 1. **Explorer and default rooms.** Add an entry widget that opens the current
    authorized topic catalogue and moves the visitor into the selected virtual
