@@ -335,7 +335,16 @@ Each item names the behavior to deliver and what to observe in the pilot.
    visibly yield. Send one original and confirm receipt in that topic.
    Return to general Conversation while staying in the room, then leave.
    Recover both drafts and unresolved receipts without changing their
-   destinations or replaying the original.
+   destinations or replaying the original. Gateway's candidate uses the
+   existing Session Workspace selector with the current owned destination
+   and keeps direct drafts and unresolved original references in a separate
+   tab scope. The Holodeck candidate verifies the actual frame protocol in
+   mobile Chromium with a controlled destination reader: direct selection,
+   confirmed audience, return on departure and a refusal after revocation.
+   A new Conversation document returns to the general audience. Live native
+   admission and receipt for a direct original, and the avatar's visible
+   handoff, remain open. See [Gateway PR1137][direct-gateway] and
+   [Holodeck PR40][direct-holodeck].
 6. **Optional return to general Conversation.** Offer a way to speak to the
    general conversation after a visit or share a selected attributed update.
    An automatic handoff is an optional setting using that same route. Check
@@ -388,3 +397,6 @@ Compare checkpoint overhead with a warm resume and a cold recovery. Track
 tokens and provider calls per useful iteration, including retries and manual
 reconstruction. Keep a checkpoint step when it measurably reduces repeated
 work, lost context or unresolved effects.
+
+[direct-gateway]: https://github.com/AlterMundi/DaimonApp/pull/1137
+[direct-holodeck]: https://github.com/AlterMundi/holodeck/pull/40
