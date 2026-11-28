@@ -412,6 +412,16 @@ different origin were refused. This result exercises the receiving Git
 and card readers. The live harness switch and its dispatch accounting
 are still open.
 
+[Gateway PR1137][direct-gateway] merged on 2026-11-28 at
+[`cec753ad`](https://github.com/AlterMundi/DaimonApp/commit/cec753ad1acdee7d467830ac0533584f47840f54).
+The merge tree is byte-for-byte identical to the qualified candidate
+`d6594d06`. Ítaca's selected Gateway still read back as `06965d97`.
+Use the ordinary Portability release composition to preserve its
+receiving-specific owner projection, Telegram ingress and Reports
+behavior. A direct merge of the serving lineage and master still has
+26 conflicting paths. The source is integrated; the live checkpoint
+canary and actual paired room use remain separate acceptance work.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Git owns project
