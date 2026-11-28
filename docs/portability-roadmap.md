@@ -86,6 +86,16 @@ source, read and repeat fail while the worker's workspace stays available.
 The catalog fixture reads three repositories across two projects from the
 same topic. Updating one link keeps the other links independently readable.
 
+The [cited work snapshot](https://github.com/AlterMundi/DaimonApp/blob/c2fc8386b922c57ec78a51d337321b7a887528f9/docs/project-checkpoint-shadow.md)
+adds decisions, dependencies and next actions on the same repository
+checkpoint revision. An exact Observer or general-conversation citation
+supports the snapshot. A different snapshot under an existing operation
+key conflicts. An edit that omits the existing work cannot silently remove
+it. The controller rechecks source access on reads and repeats, and the
+ordinary room catalogue still exposes repository metadata only. The selected
+cold fixture delivers the cited work and unchanged effect receipts toward
+Claude in one loopback provider call, with no duplicate dispatch.
+
 The [checkpoint recovery fixture](https://github.com/AlterMundi/DaimonApp/blob/4b78cd7dbed0ffe0f7a829471841c13a55608782/docs/project-checkpoint-shadow.md#selected-cold-recovery)
 uses the existing Codex and Claude startup paths for an
 explicitly selected set of verified repository revisions. An isolated
