@@ -95,6 +95,34 @@ customizations to the presentation of the same logical topic and work. A
 visitor can still find the topic through the explorer and use the default
 presentation when a custom room has not been configured.
 
+### Conversation and visible work in the room
+
+Entering a topic room keeps our general conversation as the default. The
+same CompAII avatar can accompany the person into the room. Freeze the current
+topic identity and relevant place or selection with each intervention at
+intake. The general conversation receives the original once with that
+attributed context. The room independently shows the daimon's work in that
+topic, including current activity, available results and pending questions
+the visitor may see and answer. These are projections of retained sources.
+Represent the same being at work in different conversations, with activity
+and attention grounded in observed state.
+
+Offer an explicit way to talk directly to the topic while staying in the
+room. The canonical Conversation view then shows that topic's history and
+routes input to it. Indicate the active recipient in the composer and in the
+room. The general conversation avatar can step aside, disappear or visibly
+yield the floor. The visual choice can vary with the layout. Keep a clear
+way back to general Conversation while staying situated.
+
+Moving between rooms can change the current context. A submitted original
+keeps its captured audience, destination and source references. Preserve
+drafts and in-flight receipts across the transition. Leaving direct mode or
+the room can offer a return to our general conversation with an optional
+handoff. A person can say what they want to bring back or select an attributed
+update. If automatic handoffs are explicitly configured, use the same
+attributed return path and preserve its audience. Movement itself has no
+send, approval or model effect.
+
 Arrange the room around what participants do with its linked projects. A door
 can lead to a game's world, a walkable design or another substantial project
 experience. A worktable can open a project at its selected revision or bring

@@ -218,6 +218,16 @@ and workflow support we need to maintain locally.
    reach the selected project and revision, and that ordinary updates and
    navigation require no model turn or manual room setup.
 
+   Verify situated Conversation in both modes. Enter an active topic room
+   while keeping the general conversation selected. Send an intervention
+   there with the actual topic and place attached. Observe the topic's
+   attributed work, a result and a pending question in the room. Choose
+   direct mode, verify the visible recipient changes, and send one original
+   to the topic with its own history in view. Leave and check that drafts,
+   original destination and unresolved effects remain recoverable. Verify
+   that an optional attributed handoff can reach general Conversation and
+   that an ordinary exit emits no handoff.
+
    Add a custom room layout and a house entrance to the same topic during
    the pilot. Re-enter from the explorer, the house and a non-spatial
    client. Verify the same topic identity, conversation, project revisions
