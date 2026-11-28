@@ -18,7 +18,7 @@ import stat
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
@@ -1736,6 +1736,15 @@ class MandatoryEgressController:
             path_id in SIBLING_CONVERSATION_PATHS
             and frozenset(embodiments) in self._private_siblings
         )
+
+    def private_sibling_addressee(
+        self, sender: str, addressees: Sequence[str]
+    ) -> str | None:
+        if len(addressees) == 1 and self.selects_private_sibling(
+            "peer-converse-request", (sender, addressees[0])
+        ):
+            return addressees[0]
+        return None
 
     def mixed_private_sibling_audience(
         self, sender: str, addressees: list[str]

@@ -10,7 +10,7 @@ from collections.abc import Callable
 from contextlib import closing
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from daimon_matrix.communication import RESOLUTION_PAYLOAD_SCHEMA
 from daimon_matrix.identity import (
@@ -854,6 +854,7 @@ class WeLaneTests(SealedFixture):
                     call=lambda payload, **_kwargs: receiver.intake(payload)
                 )
 
+            private_sibling_addressee = Mock(return_value=None)
             service = HostedWeave(
                 self.ledger_a,
                 self.signers["legion"],
@@ -866,6 +867,10 @@ class WeLaneTests(SealedFixture):
                     Any,
                     SimpleNamespace(
                         configured=configured,
+                        egress=Mock(
+                            mixed_private_sibling_audience=Mock(return_value=False),
+                            private_sibling_addressee=private_sibling_addressee,
+                        ),
                         authority=self.authority,
                         local_origin=self.origins["legion"],
                     ),
@@ -892,14 +897,6 @@ class WeLaneTests(SealedFixture):
             )
             self.assertEqual(attempts, [offline, REMOTE])
             self.assertEqual(result["audience"], [offline, REMOTE])
-            self.assertEqual(
-                result["deliveries"][0],
-                {
-                    "embodiment_id": offline,
-                    "state": state,
-                    "error": code,
-                },
-            )
             delivered = result["deliveries"][1]
             self.assertEqual(delivered["state"], "delivered")
             self.assertIn(
@@ -926,6 +923,32 @@ class WeLaneTests(SealedFixture):
                 self.assertEqual(result_for_wrong["state"], "unconfirmed")
                 self.assertNotIn("message_id", result_for_wrong)
             self.assertEqual(attempts, [offline, REMOTE])
+            private_sibling_addressee.return_value = REMOTE
+            attempts.clear()
+            private = service._we_converse(
+                {
+                    "text": "only the selected sibling can open this",
+                    "addressees": [REMOTE],
+                    "request_id": str(uuid.uuid4()),
+                    "thread_id": thread_id,
+                    "ttl_ms": 30_000,
+                }
+            )
+            self.assertEqual(attempts, [REMOTE])
+            self.assertEqual(private["audience"], [REMOTE])
+            self.assertEqual(
+                private["carrier"], sorted([sender.local_embodiment_id, REMOTE])
+            )
+            self.assertEqual(len(private["deliveries"]), 1)
+            self.assertEqual(private["deliveries"][0]["state"], "delivered")
+            self.assertEqual(
+                result["deliveries"][0],
+                {
+                    "embodiment_id": offline,
+                    "state": state,
+                    "error": code,
+                },
+            )
 
     def test_expired_saved_payload_refuses_before_another_delivery(self) -> None:
         request_id = str(uuid.uuid4())

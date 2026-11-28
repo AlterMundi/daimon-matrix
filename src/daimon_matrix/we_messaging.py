@@ -156,8 +156,9 @@ def we_addressable(
 
     The author is never an addressee of its own message, and an empty result fails
     closed rather than silently becoming a note to self, which belongs in the
-    ledger lane. This is the addressing audience, not the carrier set: DM-054
-    resolves the scope to every active embodiment and the seal follows that list.
+    ledger lane. The seal follows the signed communication target list. It
+    includes the author and all selected siblings, including when owner policy
+    restricts disclosure to a private pair.
     """
     local = _text(local_embodiment_id, "we_lane_origin_invalid")
     audience: list[dict[str, Any]] = []
@@ -253,9 +254,9 @@ def we_sealed_targets(
 ) -> tuple[RecipientTarget, ...]:
     """Every embodiment one signed `/we` resolution froze, the author included.
 
-    DM-054 resolves `/we` to all of a being's active embodiments and the sealed
-    profile authorizes exactly that list, so who can decrypt is not a choice this
-    lane makes. The author therefore holds a wrapped key for its own message and
+    The sealed profile authorizes the exact signed list, including when an
+    owner-selected private pair limits the ordinary DM-054 resolution. The
+    author therefore holds a wrapped key for its own message and
     is still refused intake: that refusal stays explicit instead of being smuggled
     in as a narrower seal the disclosure authorization would not match.
     """
