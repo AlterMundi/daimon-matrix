@@ -299,10 +299,12 @@ Each item names the behavior to deliver and what to observe in the pilot.
    Chromium fixture with no house verifies discovery, exact-room readback
    and refusal after access is withdrawn, with no original submitted.
    The same candidate generates an empty MML interior through the paired
-   owner bridge and checks current access on each exact-room read. Its
-   loopback HTTP test verifies the room markup and withdrawal.
-   Mounting that scene in the existing movement and presence flow, and
-   live receiving acceptance on desktop and touch, remain open.
+   owner bridge and mounts it in the existing movement and presence flow.
+   The narrow Chromium fixture enters from the plaza, renders the room,
+   returns to the plaza and refuses a revoked topic. A state test verifies
+   return to an authorized physical interior without changing its saved
+   location. Navigation sends no human original or model request.
+   Selection in the live receiver and use by real participants remain open.
 2. **Rooms that grow with the work.** Derive doors, tables and the shared
    questbook from authorized project links and work records. Start with an
    empty room, add two projects and observe the appropriate surfaces appear.
