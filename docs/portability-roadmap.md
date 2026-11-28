@@ -63,12 +63,16 @@ Humans and daimons need a shared view of open work, who is taking it, decisions
 and the exact revision under review. The pilot uses a shared Git remote for
 project artifacts and one maintained writer for shared cards. Each card has
 stable identity, attribution, revision, state and links to relevant branches
-or commits. Compare a Git-backed card writer with the self-hosted mode in
-[Stage 11's Lattice v2](https://github.com/Stage-11-Agentics/lattice/tree/8736575d11853b1b90c4e49685747a53f13a9e6c).
-The latter has an event log, task snapshots, a dashboard and an HTTP API. Check
-concurrent claims, authenticated attribution with our existing identities,
-state recovery and portable export before choosing a writer. Keep paid or
-model-driven review automation out of the pilot's ordinary card operations.
+or commits.
+
+Start with a narrow Rust implementation, provisionally named **DaimonCards**.
+Its first operations are create, list, read, assign, update status and link
+evidence. Use [Stage 11's Lattice v2](https://github.com/Stage-11-Agentics/lattice/tree/8736575d11853b1b90c4e49685747a53f13a9e6c)
+as a reference for an attributed event log, current card projections and one
+writer per board. Reuse upstream code if it fits the same contract and supports
+direct A2UI projection with a small maintained footprint. Use existing identity
+and project access. Check concurrent claims, state recovery and portable export.
+Keep the first implementation focused on the shared card journey.
 
 Daimons read the card model and submit typed operations programmatically.
 An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
@@ -108,7 +112,8 @@ and workflow support we need to maintain locally.
    review in a real non-code Git project with a shared remote and a mix of
    human and daimon participants. Show assignment, attributed review, offline
    project edits, card state synchronization and recovery across two workspaces.
-   Evaluate additional project-service features against the observed gaps.
+   Verify the Rust writer and A2UI projection using that same journey. Add
+   further features when the pilot demonstrates a concrete need.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
