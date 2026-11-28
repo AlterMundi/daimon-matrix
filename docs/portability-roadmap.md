@@ -717,28 +717,23 @@ activity distinct from who receives the next human intervention.
    request recovered its signed event without an additional ledger event
    and the competing request was refused. Live registration needs the
    compatible relationship writer; the unsigned candidate is still retained.
-   The serving SDK preimages required different compatibility adapters.
-   The Claude copy passed current disclosure and authoring tests with the
-   existing exact-operation reader backported. The Codex copy from
-   `017e5516` also needed the existing current relationship snapshot helper.
-   Its release-matched fixture verified one winner for two competing
-   requests and exact recovery after the ledger commits. The isolated
-   Claude and Codex patch digests are
-   `952eb5991305442a979186a3ccc1d5791af00101a2627d3fc3302f0f780eee6c` and
-   `def977c824bb9c2edc268c200f1e6a922ff7f86752013ece73d0304ac0f7cc08`.
-   Exact preimages and tested successor hashes are retained for the
-   respective service owners. Cluster's maintained builder sealed separate
-   31-wheel SDKs from the qualified Codex and Claude backport trees.
-   Codex source `6aca7f376039e349e73b6e02877c10cf9f47475c` selects wheel
-   SHA-256 `0c396a5390fb4abea9ef315f310497e7bfbd2a0bfa8e08b7130865aefe4860a2`.
-   Claude source `ee2698c58a82d65ccec9658e93cf21c25ac5a6cd` selects wheel
-   SHA-256 `d6e2018c5f7f33f30392a9938b2597dce1dab31e36993c21e0b98f87b6f28967`.
-   Each wheel retained the previously tested patched module bytes.
-   The hash-locked offline installer verified both dependency sets,
-   compared installed files to the wheels and imported the guarded writer
-   from a disposable Python 3.13 environment. The candidate SDKs and source
-   objects are retained privately on Ítaca. Both live services still use
-   their prior SDK. Use their existing scoped selection and rollback paths.
+   The first SDK packages qualified the supervisor import environments.
+   The authenticated Codex group responder has a separate process. Its
+   loaded SDK and the Claude responder's SDK both match all 90 Python
+   modules in `e7e5822d187adb3a519ab5750d7161a4749f052a`. Preparing an
+   SDK successor for the responder therefore needs a single common
+   candidate. Source `db8a086390ff00f420e94a05052b7233d652ff93` applies the
+   guard to that exact SDK and passes the signed publication and disclosure
+   fixtures. Cluster sealed the 31-wheel candidate with Matrix wheel
+   SHA-256 `a258b423c1947a6c4509f5e7bc7cad6fefe0f1245611071ffc61dc2bf3a8cd73`.
+   It retains the 30 dependency wheels of the previous qualified SDK.
+   Its installation was verified offline in a disposable environment.
+   The protected owner route targets the actual Codex group socket, and
+   the authenticated process reported the controlled reader active.
+   The retained maintenance route's expected values differ from that
+   process on all six selection fields. Reconcile the predecessor approval
+   with the current signed startup observation before using the scoped
+   selection and rollback route. Both responders still use the prior SDK.
    Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
