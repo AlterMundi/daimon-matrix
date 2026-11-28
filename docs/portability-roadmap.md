@@ -298,9 +298,11 @@ Each item names the behavior to deliver and what to observe in the pilot.
    connects the explorer through the bound Conversation frame. A narrow
    Chromium fixture with no house verifies discovery, exact-room readback
    and refusal after access is withdrawn, with no original submitted.
-   The generated spatial room and its live receiving acceptance remain
-   open. Verify entry to a new empty topic on desktop and touch with no
-   authored layout.
+   The same candidate generates an empty MML interior through the paired
+   owner bridge and checks current access on each exact-room read. Its
+   loopback HTTP test verifies the room markup and withdrawal.
+   Mounting that scene in the existing movement and presence flow, and
+   live receiving acceptance on desktop and touch, remain open.
 2. **Rooms that grow with the work.** Derive doors, tables and the shared
    questbook from authorized project links and work records. Start with an
    empty room, add two projects and observe the appropriate surfaces appear.
