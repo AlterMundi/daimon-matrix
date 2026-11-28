@@ -232,31 +232,8 @@ activity distinct from who receives the next human intervention.
    human and daimon participants. Show assignment, attributed review, offline
    project edits, card state synchronization and recovery across two workspaces.
    Verify the Rust writer and A2UI projection using that same journey.
-   In Holodeck, deliver the topic explorer from the ordinary entrance.
-   Start the acceptance run with a daimon and human pair that has no house
-   or authored rooms. Open an accessible topic and use its automatically
-   generated virtual room. Begin with conversation, then link two projects
-   and verify that the default room gains the appropriate surfaces as work
-   appears. Use a door into one project space, a worktable that opens or
-   combines linked material, and the shared questbook. Verify that edits
-   reach the selected project and revision, and that ordinary updates and
-   navigation require no model turn or manual room setup.
-
-   Verify situated Conversation in both modes. Enter an active topic room
-   while keeping the general conversation selected. Send an intervention
-   there with the actual topic and place attached. Observe the topic's
-   attributed work, a result and a pending question in the room. Choose
-   direct mode, verify the visible recipient changes, and send one original
-   to the topic with its own history in view. Leave and check that drafts,
-   original destination and unresolved effects remain recoverable. Verify
-   that an optional attributed handoff can reach general Conversation and
-   that an ordinary exit emits no handoff.
-
-   Add a custom room layout and a house entrance to the same topic during
-   the pilot. Re-enter from the explorer, the house and a non-spatial
-   client. Verify the same topic identity, conversation, project revisions
-   and shared cards at each entry. Verify that unauthorized topics and
-   project links stay private both in discovery and on direct opening.
+   Run the [Holodeck topic-room delivery sequence](#holodeck-topic-room-delivery)
+   in the same pilot with a pair that starts without a house or authored rooms.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
@@ -306,6 +283,57 @@ activity distinct from who receives the next human intervention.
    The final check resolves the current revision and next actionable work
    from the migrated topics without relying on private native history or
    duplicating an earlier effect.
+
+## Holodeck topic-room delivery
+
+This is the implementation sequence for the spatial part of milestone 3.
+Each item names the behavior to deliver and what to observe in the pilot.
+
+1. **Explorer and default rooms.** Add an entry widget that opens the current
+   authorized topic catalogue and moves the visitor into the selected virtual
+   room. Use the logical topic reference from the existing Session Workspace
+   reader. The [Gateway candidate](https://github.com/AlterMundi/DaimonApp/pull/1137)
+   has a tested read-only catalogue and exact-room lookup. Connect the
+   Holodeck reader and entry control and check direct opening after ownership
+   changes. A pair with no house can enter a new empty topic on desktop and
+   a narrow touch screen without laying anything out.
+2. **Rooms that grow with the work.** Derive doors, tables and the shared
+   questbook from authorized project links and work records. Start with an
+   empty room, add two projects and observe the appropriate surfaces appear.
+   Enter one project through a door. Use a table to open or combine material
+   from both projects, with each edit reaching its actual project revision.
+   Open a mission from the same DaimonCards state seen outside Holodeck.
+   Keep denied project links private and confirm that ordinary changes and
+   re-entry require neither setup work nor a model turn.
+3. **General Conversation in context.** Keep general Conversation selected
+   when the visitor enters. Show the current room and recipient. Send a
+   human intervention and verify that general Conversation receives the
+   exact original once, with the topic, place and selected object captured
+   at intake. Move while receipt is pending and verify the original keeps
+   its captured context and destination.
+4. **Visible work, results and questions.** Use authorized Observer states,
+   canonical results and human tasks to show the same daimon at work in the
+   room. Keep signals legible without reading a transcript. Observe a real
+   work-state change, open a result from its project table, and answer an
+   existing pending question through its original writer. Verify stale and
+   inaccessible states and retrieve the attributed history on demand.
+5. **Explicit direct mode.** Add an in-room choice to address the topic
+   directly. Show the topic history in canonical Conversation and make the
+   active recipient unmistakable. The general avatar can step aside or
+   visibly yield. Send one original and confirm receipt in that topic.
+   Return to general Conversation while staying in the room, then leave.
+   Recover both drafts and unresolved receipts without changing their
+   destinations or replaying the original.
+6. **Optional return to general Conversation.** Offer a way to speak to the
+   general conversation after a visit or share a selected attributed update.
+   An automatic handoff is an optional setting using that same route. Check
+   delivery and audience for a selected handoff and verify that crossing a
+   room boundary by itself produces no send or model turn.
+7. **Optional customization and re-entry.** Let the pair add a custom room,
+   a house entrance or both when they want them. Re-enter from the explorer,
+   the house and a non-spatial client. Check that the logical topic,
+   conversation, project revisions, missions and unfinished work are the same
+   across all entry points.
 
 ## Additional harness pilots on ITACA
 
