@@ -46,7 +46,26 @@ after one workspace moves. Returning to the first workspace leaves its local
 changes intact. Repeated observation produces the same revision without a new
 commit, network write or model call.
 
-For the isolated pilot, run `python tools/verify_project_git.py REPO COMMIT`
+For a new checkout, obtain the current permanent workspace claim through
+Gateway and run
+`python tools/prepare_project_git.py WORKSPACE CLAIM CHECKOUT REPOSITORY_UUID`.
+Choose a new child directory and keep the repository UUID to repeat the
+operation. The helper initializes an empty local repository and returns its
+locator. For a shared filesystem, add `--shared-root DIRECTORY` to select an
+existing authorized setgid, group-writable directory. The helper initializes
+or reuses the bare repository for that UUID and clones it into the selected
+workspace. All collaborators using this route need access to the same
+absolute mount. The helper inherits the mount's group, checks the workspace
+marker and refuses a different repository at the selected path. It never
+stages project files. Use ordinary Git to commit the first useful files and,
+if shared, push the first revision. On a filesystem where Git requires
+explicit trust for a collaborator-owned bare repository, use its exact
+authorized path with `git -c safe.directory=/path/to/repository.git` for the
+Git operation. Existing SSH and HTTP repositories can use ordinary Git
+directly. The helper does not create service access or edit an existing
+checkout's Git configuration.
+
+Use `python tools/verify_project_git.py REPO COMMIT`
 on the already authorized checkout. The probe only verifies the exact local
 Git object. Gateway remains responsible for the topic binding, access to
 the referenced source and publishing a checkpoint revision.

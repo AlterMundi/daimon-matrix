@@ -202,6 +202,15 @@ no provider calls. The Home and own-native Holodeck routes also have an
 isolated authorization fixture. Hosting both routes for a real
 multi-participant project remains receiving work.
 
+The project Git helper prepares a local checkout or a bare remote and
+checkout on an already authorized shared mount. The isolated story fixture
+publishes a first scene and opens the exact commit from another workspace.
+Reopening the first checkout preserves its staged draft. The same operation
+refuses a stale workspace claim or a differently bound checkout. See
+[repository preparation](project-contract.md#repository-and-revision-binding).
+A shared mount and participation by a real human and daimon remain to be
+verified in the pilot.
+
 The [DaimonCards edit action](https://github.com/AlterMundi/daimon-matrix/commit/1bace600484de29113fcf00125b5a480d1e53953)
 maps a human title edit and a typed daimon edit to the same command.
 The [linked-room Chromium fixture](https://github.com/AlterMundi/holodeck/commit/b2615636fa6b61cd4fe1371ae1208ad57a41bef3)
