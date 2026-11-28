@@ -13,6 +13,7 @@ import unittest
 import uuid
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from daimon_matrix import operator_runtime_upgrade as upgrade
 from daimon_matrix.keystore import EncryptedKeystore
@@ -365,6 +366,51 @@ class CurrentCapabilityUpgradeTests(unittest.TestCase):
             add_methods={},
             profile_renewal_not_after_ms=now + 86400000,
         )
+
+    def test_owner_renewal_streams_large_ledger_and_preserves_exact_digest(self):
+        import sqlite3
+        from contextlib import closing
+
+        self.expire_profiles()
+        ledger = self.source / "ledger.sqlite"
+        with closing(sqlite3.connect(ledger)) as connection, connection:
+            connection.execute("CREATE TABLE fixture_payload (bytes BLOB NOT NULL)")
+            connection.execute("INSERT INTO fixture_payload VALUES (zeroblob(2097152))")
+        self.args["expected_source_sha256"] = upgrade.inventory_digest(self.source)
+        original = hashlib.sha256(ledger.read_bytes()).hexdigest()
+        with mock.patch.object(upgrade, "MAX_FILE", 1024 * 1024):
+            before = upgrade._snapshot(self.source)
+            self.assertEqual(before["ledger.sqlite"].sha256, original)
+            self.assertEqual(
+                upgrade._inventory(before), self.args["expected_source_sha256"]
+            )
+            prepared = self.stage()
+            self.assertEqual(self.publish()["state"], "published")
+            self.assertEqual(self.publish()["state"], "published")
+            self.assertEqual(
+                prepared["successor_sha256"], upgrade.inventory_digest(self.source)
+            )
+            for tree in (self.source, self.transaction / "checkpoint"):
+                self.assertEqual(
+                    upgrade._snapshot(tree)["ledger.sqlite"], before["ledger.sqlite"]
+                )
+
+    def test_streamed_ledger_copy_refuses_same_size_replacement(self):
+        ledger = self.source / "ledger.sqlite"
+        ledger.write_bytes(b"original")
+        with mock.patch.object(upgrade, "MAX_FILE", 4):
+            # Capture the ledger alone so the ordinary config ceiling remains unchanged.
+            folder = self.parent / "ledger-only"
+            folder.mkdir(mode=0o700)
+            isolated = folder / ledger.name
+            isolated.write_bytes(ledger.read_bytes())
+            isolated.chmod(0o600)
+            snapshot = upgrade._snapshot(folder)
+            isolated.write_bytes(b"modified")
+            with self.assertRaisesRegex(
+                upgrade.UpgradeError, "upgrade_streamed_ledger_changed"
+            ):
+                upgrade._copy(snapshot, self.parent / "failed-copy")
 
     def test_owner_renewal_restores_read_preserving_secrets_and_history(
         self,

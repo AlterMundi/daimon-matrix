@@ -20,8 +20,9 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from . import operator_capabilities as profiles
 from .canonical import canonical_bytes
@@ -38,6 +39,8 @@ LEGACY_SOURCE_SHA256 = (
 )
 LOCK = ".daimon-matrixd.lock"
 MAX_FILE = 512 * 1024 * 1024
+MAX_LEDGER = 4 * 1024 * 1024 * 1024
+LEDGER_CHUNK = 1024 * 1024
 CONTROLLER_LIFETIME = "owner-profile-horizon/v1"
 
 
@@ -69,9 +72,43 @@ def _path(path: Path, *, private: bool = True) -> Path:
     return path
 
 
-def _snapshot(root: Path, *, private: bool = True) -> dict[str, bytes]:
+@dataclass(frozen=True)
+class _StreamedLedger:
+    source: Path = field(compare=False)
+    size: int
+    sha256: str
+
+
+_Snapshot = dict[str, bytes | _StreamedLedger]
+
+
+def _metadata(data: bytes | _StreamedLedger) -> bytes:
+    if not isinstance(data, bytes):
+        raise UpgradeError("upgrade_metadata_expected")
+    return data
+
+
+def _ledger_digest(fd: int, size: int, target: BinaryIO | None = None) -> str:
+    if not 0 <= size <= MAX_LEDGER:
+        raise UpgradeError("upgrade_file_too_large")
+    digest = hashlib.sha256()
+    remaining = size
+    while remaining:
+        data = os.read(fd, min(remaining, LEDGER_CHUNK))
+        if not data:
+            raise UpgradeError("upgrade_streamed_ledger_changed")
+        digest.update(data)
+        if target is not None:
+            target.write(data)
+        remaining -= len(data)
+    if os.read(fd, 1):
+        raise UpgradeError("upgrade_streamed_ledger_changed")
+    return digest.hexdigest()
+
+
+def _snapshot(root: Path, *, private: bool = True) -> _Snapshot:
     _path(root, private=private)
-    result: dict[str, bytes] = {}
+    result: _Snapshot = {}
 
     def walk(fd: int, prefix: str) -> None:
         for name in sorted(os.listdir(fd)):
@@ -94,11 +131,18 @@ def _snapshot(root: Path, *, private: bool = True) -> dict[str, bytes]:
                 elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                     if name.endswith(("-wal", "-shm", "-journal")):
                         raise UpgradeError("upgrade_sqlite_sidecar_requires_quiescence")
-                    with os.fdopen(os.dup(child), "rb") as stream:
-                        data = stream.read(MAX_FILE + 1)
-                    if len(data) > MAX_FILE:
-                        raise UpgradeError("upgrade_file_too_large")
-                    result[key] = data
+                    if private and name == "ledger.sqlite" and info.st_size > MAX_FILE:
+                        result[key] = _StreamedLedger(
+                            root / key,
+                            info.st_size,
+                            _ledger_digest(child, info.st_size),
+                        )
+                    else:
+                        with os.fdopen(os.dup(child), "rb") as stream:
+                            data = stream.read(MAX_FILE + 1)
+                        if len(data) > MAX_FILE:
+                            raise UpgradeError("upgrade_file_too_large")
+                        result[key] = data
                 else:
                     raise UpgradeError("upgrade_special_or_linked_file")
             finally:
@@ -112,8 +156,15 @@ def _snapshot(root: Path, *, private: bool = True) -> dict[str, bytes]:
     return result
 
 
-def _inventory(snapshot: dict[str, bytes]) -> str:
-    return _digest({k: hashlib.sha256(v).hexdigest() for k, v in snapshot.items()})
+def _inventory(snapshot: _Snapshot) -> str:
+    return _digest(
+        {
+            name: data.sha256
+            if isinstance(data, _StreamedLedger)
+            else hashlib.sha256(data).hexdigest()
+            for name, data in snapshot.items()
+        }
+    )
 
 
 def inventory_digest(root: Path) -> str:
@@ -142,7 +193,30 @@ def _write(path: Path, data: bytes) -> None:
     _sync(path.parent)
 
 
-def _copy(snapshot: dict[str, bytes], root: Path) -> None:
+def _copy_ledger(ledger: _StreamedLedger, path: Path) -> None:
+    _path(ledger.source.parent)
+    fd = os.open(ledger.source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or info.st_size != ledger.size
+        ):
+            raise UpgradeError("upgrade_streamed_ledger_changed")
+        out = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(out, "wb") as stream:
+            if _ledger_digest(fd, ledger.size, stream) != ledger.sha256:
+                raise UpgradeError("upgrade_streamed_ledger_changed")
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(fd)
+
+
+def _copy(snapshot: _Snapshot, root: Path) -> None:
     """Persist a private tree before returning, without per-file directory flushes.
 
     No caller publishes an incomplete tree. Each file is durable before the
@@ -164,6 +238,8 @@ def _copy(snapshot: dict[str, bytes], root: Path) -> None:
         if name.endswith("/"):
             path.mkdir(mode=0o700, exist_ok=True)
             directories.add(path)
+        elif isinstance(data, _StreamedLedger):
+            _copy_ledger(data, path)
         else:
             _write_file(path, data)
     for directory in sorted(
@@ -173,7 +249,7 @@ def _copy(snapshot: dict[str, bytes], root: Path) -> None:
     _sync(root.parent)
 
 
-def _copy_capability_trees(snapshot: dict[str, bytes], transaction: Path) -> Path:
+def _copy_capability_trees(snapshot: _Snapshot, transaction: Path) -> Path:
     """Copy the same immutable snapshot with two finite, joined I/O workers."""
     candidate = transaction / "successor"
     with ThreadPoolExecutor(
@@ -345,7 +421,7 @@ def stage(
         snapshot = _snapshot(source)
         if _inventory(snapshot) != expected_source_sha256:
             raise UpgradeError("upgrade_source_conflict")
-        bundle = json.loads(snapshot["runtime.json"])
+        bundle = json.loads(_metadata(snapshot["runtime.json"]))
         signing_slot = bundle["keystore"]["signing_slot"]
         label = signing_slot.removeprefix("runtime.signing.v1:")
         if (
@@ -513,8 +589,8 @@ def stage(
             "client.json",
             "client.key",
         }
-        for name, data in snapshot.items():
-            if name not in replaced and after.get(name) != data:
+        for name, original in snapshot.items():
+            if name not in replaced and after.get(name) != original:
                 raise UpgradeError("upgrade_history_changed")
         # Persist the generated directory entries as well as each private file.
         for name in reversed(sorted(after)):
@@ -542,7 +618,9 @@ def stage(
         )
         # The bundle above now contains successor rows; admit against the exact
         # original legacy descriptors, not the newly issued authority.
-        _forward_authorization(json.loads(snapshot["runtime.json"]), expires_at_ms)
+        _forward_authorization(
+            json.loads(_metadata(snapshot["runtime.json"])), expires_at_ms
+        )
         _write(transaction / "ready.json", canonical_bytes(receipt))
         return receipt
 
@@ -611,7 +689,7 @@ def _renewed_profile_expiry(
 
 
 def _profile_renewal_successor(
-    before: dict[str, bytes], after: dict[str, bytes], renewal: Any
+    before: _Snapshot, after: _Snapshot, renewal: Any
 ) -> None:
     """Permit only expired-role lifetimes and one monotonic custody advance."""
     if not isinstance(renewal, dict) or set(renewal) != {
@@ -626,7 +704,10 @@ def _profile_renewal_successor(
         or not 0 <= issued < expiry <= issued + profiles.OPERATOR_CAPABILITY_TTL_MS
     ):
         raise UpgradeError("upgrade_invalid_profile_renewal")
-    old, new = json.loads(before["runtime.json"]), json.loads(after["runtime.json"])
+    old, new = (
+        json.loads(_metadata(before["runtime.json"])),
+        json.loads(_metadata(after["runtime.json"])),
+    )
     changed = {"capabilities", "operator_capability_binding", "keystore"}
     if (
         old["schema"] != "dm.runtime.bundle/v8"
@@ -663,9 +744,9 @@ def _profile_renewal_successor(
             Path(row["profile"]["client_directory"])
             / row["profile"]["client_config_filename"]
         )
-        expected = json.loads(before[filename])
+        expected = json.loads(_metadata(before[filename]))
         expected["capability"] = updated
-        if json.loads(after[filename]) != expected:
+        if json.loads(_metadata(after[filename])) != expected:
             raise UpgradeError("upgrade_client_binding_changed")
         allowed.add(filename)
         renewed += 1
@@ -678,8 +759,8 @@ def _profile_renewal_successor(
 
 
 def _capability_successor(
-    before: dict[str, bytes],
-    after: dict[str, bytes],
+    before: _Snapshot,
+    after: _Snapshot,
     additions: Any,
     *,
     provision_receiving_controller: bool = False,
@@ -720,8 +801,8 @@ def _capability_successor(
         and (provision_receiving_controller or renew_receiving_controller)
         else _additions(additions)
     )
-    old = json.loads(before["runtime.json"])
-    new = json.loads(after["runtime.json"])
+    old = json.loads(_metadata(before["runtime.json"]))
+    new = json.loads(_metadata(after["runtime.json"]))
     changed = {"capabilities", "operator_capability_binding", "keystore"}
     if set(old) != set(new) or any(
         old[key] != new[key] for key in old if key not in changed
@@ -768,9 +849,9 @@ def _capability_successor(
                 / original["profile"]["client_config_filename"]
             )
             allowed_files.add(filename)
-            expected_config = json.loads(before[filename])
+            expected_config = json.loads(_metadata(before[filename]))
             expected_config["capability"] = updated
-            if json.loads(after[filename]) != expected_config:
+            if json.loads(_metadata(after[filename])) != expected_config:
                 raise UpgradeError("upgrade_client_binding_changed")
             renewed = True
             continue
@@ -807,9 +888,9 @@ def _capability_successor(
             Path(profile["client_directory"]) / profile["client_config_filename"]
         )
         allowed_files.add(filename)
-        expected_config = json.loads(before[filename])
+        expected_config = json.loads(_metadata(before[filename]))
         expected_config["capability"] = updated
-        if json.loads(after[filename]) != expected_config:
+        if json.loads(_metadata(after[filename])) != expected_config:
             raise UpgradeError("upgrade_client_binding_changed")
     added_files = set()
     if provision_receiving_controller:
@@ -845,7 +926,7 @@ def _capability_successor(
             profile=profile,
             runtime_id=old["runtime_id"],
             secret_slot=slot,
-        ) or json.loads(after[filename]) != dict(
+        ) or json.loads(_metadata(after[filename])) != dict(
             schema="dm.local.client-config/v3",
             capability=expected.descriptor,
             expected_server=old["local_origin"],
@@ -924,7 +1005,7 @@ def stage_capabilities(
         snapshot = _snapshot(source)
         if _inventory(snapshot) != expected_source_sha256:
             raise UpgradeError("upgrade_source_conflict")
-        bundle = json.loads(snapshot["runtime.json"])
+        bundle = json.loads(_metadata(snapshot["runtime.json"]))
         if (
             bundle.get("schema") not in {"dm.runtime.bundle/v7", "dm.runtime.bundle/v8"}
             or bundle["keystore"]["filename"] != "custody.json"
@@ -1189,7 +1270,7 @@ def stage_capabilities(
         if inventory_digest(source) != expected_source_sha256:
             raise UpgradeError("upgrade_source_conflict")
         _forward_authorization(
-            json.loads(snapshot["runtime.json"]),
+            json.loads(_metadata(snapshot["runtime.json"])),
             expires_at_ms,
             renew_receiving_controller=renew_receiving_controller,
             renew_expired_profiles=renewal_requested,
@@ -1246,7 +1327,7 @@ def publish(
     with _locks(source), _locks(successor):
         # Securely read the owner-private receipt; caller pins the exact bytes.
         artifacts = _snapshot(transaction)
-        raw = artifacts["ready.json"]
+        raw = _metadata(artifacts["ready.json"])
         if hashlib.sha256(raw).hexdigest() != expected_receipt_sha256:
             raise UpgradeError("upgrade_receipt_conflict")
         receipt = json.loads(raw)
@@ -1276,7 +1357,7 @@ def publish(
         if pair == (old, new):
             if "published.json" in artifacts:
                 raise UpgradeError("upgrade_rewind_detected")
-            legacy_bundle = json.loads(artifacts["checkpoint/runtime.json"])
+            legacy_bundle = json.loads(_metadata(artifacts["checkpoint/runtime.json"]))
             _forward_authorization(
                 legacy_bundle,
                 receipt["expires_at_ms"],
@@ -1366,7 +1447,7 @@ def _legacy_time(bundle: dict[str, Any]) -> None:
 
 def _rollback_context(source: Path, transaction: Path, pin: str) -> dict[str, Any]:
     artifacts = _snapshot(transaction)
-    raw = artifacts["ready.json"]
+    raw = _metadata(artifacts["ready.json"])
     forward = json.loads(raw)
     if (
         hashlib.sha256(raw).hexdigest() != pin
@@ -1420,7 +1501,7 @@ def stage_rollback(
         forward = _rollback_context(source, transaction, expected_receipt_sha256)
         ready_path = transaction / "rollback-ready.json"
         if ready_path.exists():
-            ready = json.loads(_snapshot(transaction)["rollback-ready.json"])
+            ready = json.loads(_metadata(_snapshot(transaction)["rollback-ready.json"]))
             _check_reverse(ready, forward, expected_receipt_sha256, source, transaction)
             pair = (
                 inventory_digest(source),
@@ -1436,14 +1517,14 @@ def stage_rollback(
         if _inventory(snapshot) != forward["successor_sha256"]:
             raise UpgradeError("rollback_posteffect_or_unpublished_source")
         old = _snapshot(transaction / "checkpoint")
-        _legacy_time(json.loads(old["runtime.json"]))
+        _legacy_time(json.loads(_metadata(old["runtime.json"])))
         # Validator/open may initialize files: operate only on a disposable copy.
         validation = transaction / "rollback-validation"
         _copy(old, validation)
         _validate(validation, transaction / "legacy-code", password)
         if inventory_digest(validation) != forward["source_sha256"]:
             raise UpgradeError("rollback_legacy_validation_changed_copy")
-        legacy_bundle = json.loads(old["runtime.json"])
+        legacy_bundle = json.loads(_metadata(old["runtime.json"]))
         legacy = EncryptedKeystore(validation / "custody.json").open(
             lambda: bytearray(password)
         )
@@ -1457,7 +1538,7 @@ def stage_rollback(
         )
         if current.counter != forward["counter_after"]:
             raise UpgradeError("rollback_counter_conflict")
-        bundle = json.loads(snapshot["runtime.json"])
+        bundle = json.loads(_metadata(snapshot["runtime.json"]))
         retired = {row["secret_slot"] for row in bundle["capabilities"]}
         secrets = {
             key: value for key, value in current.secrets.items() if key not in retired
@@ -1481,8 +1562,8 @@ def stage_rollback(
         # Restore only the authorized legacy client pair, not encrypted custody.
         for name, data in {
             "runtime.json": canonical_bytes(bundle),
-            "client.json": old["client.json"],
-            "client.key": old["client.key"],
+            "client.json": _metadata(old["client.json"]),
+            "client.key": _metadata(old["client.key"]),
         }.items():
             (candidate / name).unlink()
             _write(candidate / name, data)
@@ -1549,7 +1630,7 @@ def publish_rollback(
     candidate = transaction / "rollback"
     with _locks(source), _locks(candidate):
         artifacts = _snapshot(transaction)
-        raw = artifacts["rollback-ready.json"]
+        raw = _metadata(artifacts["rollback-ready.json"])
         if hashlib.sha256(raw).hexdigest() != expected_receipt_sha256:
             raise UpgradeError("rollback_receipt_conflict")
         ready = json.loads(raw)
@@ -1561,18 +1642,21 @@ def publish_rollback(
         if pair == (old, new):
             if "rolled-back.json" in artifacts:
                 raise UpgradeError("rollback_rewind_detected")
-            expected_bundle = json.loads(artifacts["checkpoint/runtime.json"])
+            expected_bundle = json.loads(
+                _metadata(artifacts["checkpoint/runtime.json"])
+            )
             expected_bundle["keystore"]["counter"] = ready["counter_after"]
             candidate_snapshot = _snapshot(candidate)
             if (
-                json.loads(candidate_snapshot["runtime.json"]) != expected_bundle
-                or json.loads(candidate_snapshot["custody.json"])["counter"]
+                json.loads(_metadata(candidate_snapshot["runtime.json"]))
+                != expected_bundle
+                or json.loads(_metadata(candidate_snapshot["custody.json"]))["counter"]
                 != ready["counter_after"]
             ):
                 raise UpgradeError("rollback_candidate_contract_conflict")
-            _legacy_time(json.loads(candidate_snapshot["runtime.json"]))
+            _legacy_time(json.loads(_metadata(candidate_snapshot["runtime.json"])))
             _validate(candidate, transaction / "legacy-code", password)
-            _legacy_time(json.loads(_snapshot(candidate)["runtime.json"]))
+            _legacy_time(json.loads(_metadata(_snapshot(candidate)["runtime.json"])))
             if (inventory_digest(source), inventory_digest(candidate)) != (old, new):
                 raise UpgradeError("rollback_source_or_candidate_conflict")
             _exchange(source, candidate)

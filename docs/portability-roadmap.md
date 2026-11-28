@@ -378,7 +378,14 @@ activity distinct from who receives the next human intervention.
    `authentication_failed`; the selected local capability descriptors
    expired at 07:31 UTC. Source/Weave publication and remote reception
    remain to be verified through the maintained owner renewal and adoption
-   paths. No peer publication or model wakeup was requested by the install.
+   paths. Ítaca preflight found a 1,495,826,432-byte ledger on the active
+   runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
+   candidate preserves the exact inventory digest, as verified with an
+   equal-sized disposable ledger file. A separate signed SQLite fixture
+   stages and publishes expired-profile renewal while retaining ledger bytes.
+   The live writer was left serving; the candidate and actual renewal still
+   require receiving qualification. The install initiated no peer publication
+   or model wakeup.
 5. **Migrate existing work and tidy the environment.** After the contract pilot
    passes, migrate one existing topic and its linked work. Compare a shadow
    migration first. Reuse its logical ID, native binding, repositories, trackers
