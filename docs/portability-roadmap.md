@@ -398,9 +398,17 @@ activity distinct from who receives the next human intervention.
    attempt was refused before signing. The serving Claude runtime constructs
    the Source registry without a cross-being disclosure authorizer. The
    current registry therefore denies a foreign reader even with a local
-   publication classified as `tribe-shared`. Complete the existing Source
-   exchange with an authorized relationship-backed reader and verify usable
-   receipt of this revision. Same-being receiving uptake also remains open.
+   publication classified as `tribe-shared`. An authenticated owner-local
+   read of the signed ancestor chain found 43 events:
+   the claim and publication, 12 other shareable events and 29 unrelated
+   personal events. No ancestor payload was exported. The candidate refuses
+   a foreign Source diff item when its signed closure requires a personal or
+   private non-Source event, even under a Source origin-closure grant. A
+   distinct-being fixture verifies both denials, same-being local inspection
+   and positive delivery of a shareable ancestor under the explicit grant.
+   Usable cross-being receipt therefore needs a supported disclosure path for
+   this guide that does not transfer the unrelated history. Same-being
+   receiving uptake also remains open.
    Ítaca preflight found a 1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an

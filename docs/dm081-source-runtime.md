@@ -46,7 +46,10 @@ Runtime bundle V7 has an optional `sources` object with one owner-local CAS
 filename and closed `known_beings` authority/ledger entries. Remote disclosure
 is denied unless an injected authorizer accepts the exact requester, source ID
 and classification. DM-082 supplies relationship grants; their absence is
-not inferred from membership or transport success.
+not inferred from membership or transport success. An origin-closure grant
+never reclassifies an unrelated personal or private Weave event for a distinct
+being. A diff item that requires such an ancestor cannot be offered to that
+recipient. Local same-being inspection keeps the full signed chain.
 
 ### Hosted source disclosure through existing resources
 
