@@ -318,8 +318,11 @@ Each item names the behavior to deliver and what to observe in the pilot.
    exposing raw repository locators. The isolated Gateway owner fixture
    checks three links across two projects and omission after correction of
    the cited source. The mobile browser fixture verifies an empty room,
-   new links, a changed revision and an omitted repository. Project entry,
-   pagination, editing across both projects and live acceptance remain
+   new links, a changed revision and an omitted repository. The catalogue
+   can be browsed across pages. The isolated owner fixture verifies ten
+   links and the stale-cursor restart. Mobile Chromium verifies forward,
+   back and return to the current first page after a catalogue change.
+   Project entry, editing across both projects and live acceptance remain
    open. See [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 3. **General Conversation in context.** Keep general Conversation selected
    when the visitor enters. Show the current room and recipient. Send a
