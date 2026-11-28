@@ -792,6 +792,19 @@ Each item names the behavior to deliver and what to observe in the pilot.
    work-state change, open a result from its project table, and answer an
    existing pending question through its original writer. Verify stale and
    inaccessible states and retrieve the attributed history on demand.
+   [Gateway PR1139](https://github.com/AlterMundi/DaimonApp/pull/1139) projects
+   three bounded signals from the existing Session Workspace reader into
+   the exact authorized room: observed execution, a pending human question
+   and a canonical result. The general catalogue and embedded frame keep
+   their original shape. A stale native observation is unknown.
+   [Holodeck PR40](https://github.com/AlterMundi/holodeck/commit/4d7331023d2839834f8fca55375a0b863decdbf8)
+   validates the observation through the paired bridge and shows it on the
+   existing project table. The owner tests cover a binding change and a
+   stale observation. The HTTP and browser fixture exercises the same-room
+   read, a different-room refusal, a new result after activity becomes
+   unknown, and omission of private native metadata. This path reads no
+   transcript and sends no model input. Opening and answering the exact
+   retained item, spatial cues, and live receiving acceptance remain open.
 5. **Explicit direct mode.** Add an in-room choice to address the topic
    directly. Show the topic history in canonical Conversation and make the
    active recipient unmistakable. The general avatar can step aside or
