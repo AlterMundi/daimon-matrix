@@ -387,10 +387,21 @@ activity distinct from who receives the next human intervention.
    found no copy of the corrected event, and reported the Claude peer
    available. The receiving heads lack the predecessor chain needed by the
    existing sync, which pages intervening events without a subject filter.
-   This guide verification did not transfer unrelated events. Same-being
-   receiving uptake and the disclosure-authorized Source exchange with a
-   distinct Tribe participant remain open. Ítaca preflight found a
-   1,495,826,432-byte ledger on the active
+   This guide verification did not transfer unrelated events. The Claude
+   body also signed the Source claim
+   `d563424b-ea95-472c-8cba-c38a220c0b9f` and the `tribe-shared` publication
+   `e8811d4e-28be-4a4c-9cb0-fd17a2569694` for this initiative. Authenticated
+   `source.status` returned one claim and that exact publication with content
+   hash `f770aa47edba1d55f9d918fe14e0be3b336c03e82188505a03553847aa600dc9`.
+   The publication carries a locator and release hashes. Its evidence and
+   provenance objects use canonical JSON; the first noncanonical claim
+   attempt was refused before signing. The serving Claude runtime constructs
+   the Source registry without a cross-being disclosure authorizer. The
+   current registry therefore denies a foreign reader even with a local
+   publication classified as `tribe-shared`. Complete the existing Source
+   exchange with an authorized relationship-backed reader and verify usable
+   receipt of this revision. Same-being receiving uptake also remains open.
+   Ítaca preflight found a 1,495,826,432-byte ledger on the active
    runtime, above the previous 512 MiB owner-tool limit. The bounded streaming
    candidate preserves the exact inventory digest, as verified with an
    equal-sized disposable ledger file. A separate signed SQLite fixture
