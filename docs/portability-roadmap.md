@@ -699,8 +699,19 @@ activity distinct from who receives the next human intervention.
    read grant for that resource. The missing resource registration is
    sufficient to explain the refusal on this publisher. Reconcile the
    registration and exact read authority through the relationship owner
-   before trying the selected pull again. Oliva received the public,
-   immutable Skills locator in a
+   before trying the selected pull again. A later authenticated Codex
+   read found current publisher card `e85346b4-0ebe-450f-aff2-0dcca458e210`.
+   The card has three knowledge resources and no descriptor for this guide.
+   Codex has four active relationship records with Oliva. Its six active
+   publisher relationships use the v2 offer format. The exact additive
+   candidate registers this Source ID with the existing `tribe-shared`
+   classification and only the read operation. The v2 payload validator
+   accepted the candidate against the current card and its predecessor
+   reference. All three existing entries stayed identical. This was a
+   preparation and validation of unsigned data. Keep the current signed
+   relationship and grant history intact; verify current publication-side
+   adoption and the exact guide read authorization before retrying the pull.
+   Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving
    copy with the signed terminal receipt
