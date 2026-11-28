@@ -58,12 +58,25 @@ the shadow and cold-recovery milestones below before migrating existing topics.
 ## Shared project cards
 
 Humans and daimons need a shared view of open work, who is taking it, decisions
-and the exact revision under review. The pilot uses an accessible Git remote
-and Git-versioned cards so participants can work offline and sync changes.
-Each card carries stable identity, attribution, a current state and links to
-its relevant branches or commits. Verify that a human can read and update a
-card without a forge account, and that a daimon sees the same revision through
-its project tools. Test simultaneous updates and recovery from a second copy.
+and the exact revision under review. The pilot uses a shared Git remote for
+project artifacts and one maintained writer for shared cards. Each card has
+stable identity, attribution, revision, state and links to relevant branches
+or commits. Compare a Git-backed card writer with the self-hosted mode in
+[Stage 11's Lattice v2](https://github.com/Stage-11-Agentics/lattice/tree/8736575d11853b1b90c4e49685747a53f13a9e6c).
+The latter has an event log, task snapshots, a dashboard and an HTTP API. Check
+concurrent claims, authenticated attribution with our existing identities,
+state recovery and portable export before choosing a writer. Keep paid or
+model-driven review automation out of the pilot's ordinary card operations.
+
+Daimons read the card model and submit typed operations programmatically.
+An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
+board or review. Its component tree, selection and drafts are view state.
+Both routes use the same card IDs and operation semantics. Writes carry the
+expected revision and an idempotency key. The writer returns the resulting
+revision or a conflict that the view can show and refresh. Ordinary viewing,
+assignment and state changes work without a model turn. Prove that a human
+without a forge account and a daimon can act on the same card and see the
+result from their respective surfaces.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
@@ -92,7 +105,7 @@ and workflow support we need to maintain locally.
 3. **Shared project collaboration.** Pilot versioned cards and commit-based
    review in a real non-code Git project with a shared remote and a mix of
    human and daimon participants. Show assignment, attributed review, offline
-   changes, synchronization and recovery across two receiving workspaces.
+   project edits, card state synchronization and recovery across two workspaces.
    Evaluate additional project-service features against the observed gaps.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
