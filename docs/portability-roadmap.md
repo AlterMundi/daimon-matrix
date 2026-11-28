@@ -100,12 +100,19 @@ dispatches. A subsequent turn on the existing Codex thread received both
 retained Claude exchanges and the same checkpoint.
 
 A separate run simulated Codex Core's missing-rollout error at the first
-Claude-to-Codex input. Gateway retained that new input as unsent, preserved
-the saved Codex binding and submitted no native thread or turn. A supported
-cold continuation into Codex still needs to open a distinct native lineage
-inside the same logical topic, without retiring its project sources or
-changing earlier effect receipts. The useful first turn and live receiving
-qualification in both directions remain open.
+Claude-to-Codex input. The [Gateway adapter](https://github.com/AlterMundi/DaimonApp/commit/02130aa04d6923e7b4c7f1b393d76843fd74496e)
+qualifies the refusal only from the exact thread's metadata resume reply,
+before input submission. The paired Conversation fixture retained the
+original as unsent, preserved the saved Codex binding and topic generation,
+and submitted no native thread or turn. The Telegram fixture also preserved
+the original and presented the specific missing-history notice.
+
+The ordinary Codex replacement advances the topic generation and retires
+old-bound inputs. Cold continuation needs a lineage change in the existing
+owner writer that retains the logical generation and leaves earlier originals
+and receipts on their native lineage. Then the next turn can consume a
+revalidated checkpoint. The useful first turn in cold Codex and live
+receiving qualification in both directions remain open.
 
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
