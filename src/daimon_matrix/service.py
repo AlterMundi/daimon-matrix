@@ -2008,18 +2008,39 @@ class HostedWeave:
                 and payload["action"] != "relinquish"
             ):
                 raise ServiceError("invalid_params")
-            event = self.ledger.append_local_idempotent(
-                client_id=client_id,
-                request_id=request_id,
-                request_hash=request_hash,
-                kind=kind,
-                subject=relationship_event_subject(kind, payload),
-                payload=payload,
-                signer=self.signer,
-                sensitivity="shareable",
-                occurred_at_ms=relationship_event_occurred_at(kind, payload),
-            )
-            store.ingest(event)
+
+            def append_relationship() -> dict[str, Any]:
+                return self.ledger.append_local_idempotent(
+                    client_id=client_id,
+                    request_id=request_id,
+                    request_hash=request_hash,
+                    kind=kind,
+                    subject=relationship_event_subject(kind, payload),
+                    payload=payload,
+                    signer=self.signer,
+                    sensitivity="shareable",
+                    occurred_at_ms=relationship_event_occurred_at(kind, payload),
+                )
+
+            if method == "relationship.card.publish":
+                try:
+                    event = store.publish_card(
+                        payload,
+                        at_ms=self.clock(),
+                        card_verifier=relationships.card_verifier,
+                        already_authored=lambda: (
+                            self.ledger.local_operation_event(client_id, request_id)
+                            is not None
+                        ),
+                        append=append_relationship,
+                    )
+                except LedgerStateError as exception:
+                    if str(exception) != "relationship_card_revision_conflict":
+                        raise
+                    raise ServiceError(str(exception)) from None
+            else:
+                event = append_relationship()
+                store.ingest(event)
             return {
                 "schema": "dm.relationship.mutation-result/v1",
                 "event": event,

@@ -711,6 +711,12 @@ activity distinct from who receives the next human intervention.
    preparation and validation of unsigned data. Keep the current signed
    relationship and grant history intact; verify current publication-side
    adoption and the exact guide read authorization before retrying the pull.
+   The current publication candidate checks the signed card predecessor
+   before authoring. The authenticated local fixture accepted one of two
+   competing proposals. In an interrupted-write fixture, the original
+   request recovered its signed event without an additional ledger event
+   and the competing request was refused. Live registration needs the
+   compatible relationship writer; the unsigned candidate is still retained.
    Oliva received the public, immutable Skills locator in a
    directed signed Tribe message, `38c8d27c-0955-43e4-890e-3332653a7f88`.
    The author's authenticated delivery readback proved Oliva's receiving

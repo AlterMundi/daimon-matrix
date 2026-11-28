@@ -45,6 +45,14 @@ ID and publication classification. A successful earlier transfer of a
 different Source does not confer access. Record the receiver's own pull and
 readback before any adoption claim.
 
+When registering a guide on a relationship card, base the publication on the
+current signed card and keep its other resource descriptors. The guarded
+card writer compares the predecessor and sequence before signing. A competing
+publication returns `relationship_card_revision_conflict`; re-read the current
+card before preparing a successor. If the ledger committed the original card
+before its relationship-store write, continue the original request and keep
+its event ID. A second request must never sign another event at that position.
+
 On the native owner route, read the current projection with the observer
 client that grants `source.projection`. The Source writer authorizes the
 publication and import operations. Check the method on the selected

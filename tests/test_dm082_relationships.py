@@ -20,7 +20,7 @@ from jsonschema import (  # type: ignore[import-untyped]
 from daimon_matrix.canonical import b64url, canonical_bytes
 from daimon_matrix.conformance import _test_exists
 from daimon_matrix.ledger import Ledger
-from daimon_matrix.local_api import create_capability, create_request
+from daimon_matrix.local_api import create_capability, create_request, request_hash
 from daimon_matrix.native_egress import synthetic_visibility
 from daimon_matrix.relationship_store import (
     RelationshipServiceContext,
@@ -1302,6 +1302,74 @@ class RelationshipServiceTests(unittest.TestCase):
                     "authorized": False,
                     "authorization": None,
                 },
+            )
+
+            first_event = first["result"]["event"]
+            successor = {
+                **first_event["payload"],
+                "sequence": 1,
+                "previous_card_event_id": first_event["event_id"],
+                "route_refs": ["dm:route:v1:updated"],
+            }
+
+            def publication(index: int, payload: dict[str, Any]) -> dict[str, Any]:
+                return create_request(
+                    capability,
+                    request_id=f"82000000-0000-4000-8000-00000000021{index}",
+                    issued_at_ms=NOW,
+                    method="relationship.card.publish",
+                    params={"payload": payload},
+                    nonce=bytes([index]) * 16,
+                )
+
+            proposals = [
+                publication(0, successor),
+                publication(1, {**successor, "route_refs": ["dm:route:v1:competing"]}),
+            ]
+            with ThreadPoolExecutor(max_workers=2) as writers:
+                outcomes = list(writers.map(service.handle, proposals))
+            self.assertEqual(sum(response["ok"] for response in outcomes), 1)
+            winner_index = next(i for i, reply in enumerate(outcomes) if reply["ok"])
+            won = outcomes[winner_index]["result"]["event"]
+            lost = outcomes[1 - winner_index]
+            self.assertEqual(
+                lost["error"]["code"], "relationship_card_revision_conflict"
+            )
+            self.assertEqual(
+                service.handle(proposals[winner_index]), outcomes[winner_index]
+            )
+            self.assertEqual(len(ledger.events()), 2)
+
+            # Interrupt after the ledger commit and before the relationship
+            # store records the event. Only the original request can recover it.
+            next_card = {
+                **won["payload"],
+                "sequence": 2,
+                "previous_card_event_id": won["event_id"],
+            }
+            original = publication(2, next_card)
+            interrupted = ledger.append_local_idempotent(
+                client_id=capability.client_id,
+                request_id=original["request_id"],
+                request_hash=request_hash(original),
+                kind="matrix/relationship-card",
+                subject=relationship_event_subject(
+                    "matrix/relationship-card", next_card
+                ),
+                payload=next_card,
+                signer=founder.signer,
+                sensitivity="shareable",
+                occurred_at_ms=NOW,
+            )
+            conflict = service.handle(publication(3, next_card))
+            self.assertEqual(
+                conflict["error"]["code"], "relationship_card_revision_conflict"
+            )
+            self.assertEqual(service.handle(original)["result"]["event"], interrupted)
+            self.assertEqual(len(ledger.events()), 3)
+            view = journey.store.view(at_ms=NOW, card_verifier=journey.card_verifier)
+            self.assertEqual(
+                view.cards[founder.state.being_ref]["current"], interrupted
             )
 
 

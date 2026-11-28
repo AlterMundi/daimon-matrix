@@ -1034,6 +1034,21 @@ class Ledger:
                             and self._state_hash(database) != expected_state_hash
                         ):
                             raise LedgerStateError("ledger_state_changed")
+                        # A card may have been signed before its separate
+                        # relationship-store commit. Preserve its exact retry.
+                        if (
+                            kind == "matrix/relationship-card"
+                            and database.execute(
+                                "SELECT 1 FROM events WHERE kind=? AND subject=? "
+                                "AND json_extract(event_json, '$.payload.sequence') "
+                                ">= ? LIMIT 1",
+                                (kind, subject, payload["sequence"]),
+                            ).fetchone()
+                            is not None
+                        ):
+                            raise LedgerStateError(
+                                "relationship_card_revision_conflict"
+                            )
                         result = self._append_local(
                             database,
                             kind=kind,
