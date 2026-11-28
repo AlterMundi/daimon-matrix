@@ -341,10 +341,13 @@ Each item names the behavior to deliver and what to observe in the pilot.
    tab scope. The Holodeck candidate verifies the actual frame protocol in
    mobile Chromium with a controlled destination reader: direct selection,
    confirmed audience, return on departure and a refusal after revocation.
-   A new Conversation document returns to the general audience. Live native
-   admission and receipt for a direct original, and the avatar's visible
-   handoff, remain open. See [Gateway PR1137][direct-gateway] and
-   [Holodeck PR40][direct-holodeck].
+   A new Conversation document returns to the general audience. In the
+   mobile browser fixture the paired avatar portrait steps aside when the
+   frame confirms the topic and returns when general Conversation is
+   reselected in place. This is the local recipient indicator; visible
+   topic work has its own acceptance above. Live native admission and
+   receipt for a direct original remain open. See
+   [Gateway PR1137][direct-gateway] and [Holodeck PR40][direct-holodeck].
 6. **Optional return to general Conversation.** Offer a way to speak to the
    general conversation after a visit or share a selected attributed update.
    An automatic handoff is an optional setting using that same route. Check
