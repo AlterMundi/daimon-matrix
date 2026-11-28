@@ -72,6 +72,13 @@ subsequent tests. The workspace owner supplies the current binding; Observer
 and the general conversation may supply existing attributed evidence. This
 cut requires no model call and no Gateway deployment.
 
+The [Gateway shadow candidate](https://github.com/AlterMundi/DaimonApp/pull/1137)
+adds the revisioned local store and controller action. Its isolated
+SQLite/Git test verifies the exact link through a store restart and checkout
+move, with matching operation re-reads and conflict detection. Canonical
+conversation audience changes, the receiving controller, and cold harness
+recovery still require their own acceptance evidence.
+
 Record a delta when a decision, result, dependency or next action changes.
 Routine turns can reuse the prior revision. Reference retained originals and
 receipts by ID. Use deterministic readers for routing facts, revisions and
