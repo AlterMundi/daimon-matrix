@@ -47,6 +47,23 @@ start, resume the native session and provide the missing context. A harness
 change keeps the logical topic and its work intact. Validate these rules in
 the shadow and cold-recovery milestones below before migrating existing topics.
 
+## Shared project cards
+
+Humans and daimons need a shared view of open work, who is taking it, decisions
+and the exact revision under review. The pilot uses an accessible Git remote
+and Git-versioned cards so participants can work offline and sync changes.
+Each card carries stable identity, attribution, a current state and links to
+its relevant branches or commits. Verify that a human can read and update a
+card without a forge account, and that a daimon sees the same revision through
+its project tools. Test simultaneous updates and recovery from a second copy.
+
+Project coordination in Matrix refers to those same card identities. Use the
+existing conversation and graph surfaces to find work, announce changes and
+return results. One authoritative writer advances each card. Existing projects
+keep their selected tracker, and shared views link to it by stable identity.
+Run the pilot with a real remote and multiple participants to learn which UI
+and workflow support we need to maintain locally.
+
 ## Milestones
 
 1. **One conversation across surfaces.** Use Holodeck to Char Design as the
@@ -64,11 +81,11 @@ the shadow and cold-recovery milestones below before migrating existing topics.
    other adapters. With native history removed in an isolated fixture, the first
    useful turn finds the right workspace and reconciles an uncertain effect
    without reissuing it.
-3. **Local project collaboration.** Pilot versioned cards and commit-based
-   review in a real non-code Git project with somebody without a forge account.
-   Verify offline changes, review attribution, replication and recovery by a
-   second participant. Existing forge-backed projects keep their tracker.
-   Evaluate a shared project service against gaps observed in the pilot.
+3. **Shared project collaboration.** Pilot versioned cards and commit-based
+   review in a real non-code Git project with a shared remote and a mix of
+   human and daimon participants. Show assignment, attributed review, offline
+   changes, synchronization and recovery across two receiving workspaces.
+   Evaluate additional project-service features against the observed gaps.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
