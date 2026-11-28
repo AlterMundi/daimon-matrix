@@ -129,6 +129,15 @@ direct A2UI projection with a small maintained footprint. Use existing identity
 and project access. Check concurrent claims, state recovery and portable export.
 Keep the first implementation focused on the shared card journey.
 
+The [DaimonCards pilot](../components/daimon-cards/README.md) implements
+the Rust writer and the A2UI 1.0 spatial projection. The local receiver
+test uses Chromium with Proyección and submits a rendered action to the
+same writer as a typed daimon action. One claim commits, the other returns
+the current revision. The card retains the exact Git revision across a
+store reopen. The fixture uses two checkouts of one bare Git remote and
+no provider calls. The authorized Holodeck and tool host route and a real
+multi-participant project are the remaining receiving work.
+
 Daimons read the card model and submit typed operations programmatically.
 An [A2UI](https://a2ui.org/) surface projects that model to humans as a card,
 board or review. Its component tree, selection and drafts are view state.

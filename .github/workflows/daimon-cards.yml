@@ -1,0 +1,29 @@
+name: DaimonCards
+
+on:
+  pull_request:
+    paths:
+      - 'components/daimon-cards/**'
+      - '.github/workflows/daimon-cards.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'components/daimon-cards/**'
+      - '.github/workflows/daimon-cards.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  writer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: components/daimon-cards
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+      - run: cargo +1.95.0 fmt --check
+      - run: cargo +1.95.0 test --locked
+      - run: cargo +1.95.0 clippy --locked --all-targets -- -D warnings
