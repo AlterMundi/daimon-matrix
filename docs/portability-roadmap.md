@@ -40,10 +40,18 @@ own attributed observations. Gateway checks the topic, sources and prior
 revision before accepting the delta. Conflicting or stale observations remain
 inspectable. The system that performed an action is the source for its outcome.
 
+Record a delta when a decision, result, dependency or next action changes.
+Routine turns can reuse the prior revision. Reference retained originals and
+receipts by ID. Use deterministic readers for routing facts, revisions and
+receipt checks. Reuse a summary the worker or Observer already produced when
+it is current and sourced. A checkpoint update can be committed alongside the
+ordinary turn result without a separate model call or approval round.
+
 On a cold start, use the current turn's authority, the topic workspace, the
 latest checkpoint and the relevant retained originals. Read back unfinished
 or uncertain effects through their owning systems before continuing. On a warm
-start, resume the native session and provide the missing context. A harness
+start, resume the native session and provide the missing context. Bound the
+context by the current task and fetch exact sources on demand. A harness
 change keeps the logical topic and its work intact. Validate these rules in
 the shadow and cold-recovery milestones below before migrating existing topics.
 
@@ -108,3 +116,8 @@ capacity for behaviors that those fixtures cannot establish, including resume,
 compaction, steering and cross-harness recovery. Size the sponsorship request
 from measured usage and the remaining test matrix, with a bounded run budget
 and a published evidence deliverable.
+
+Compare checkpoint overhead with a warm resume and a cold recovery. Track
+tokens and provider calls per useful iteration, including retries and manual
+reconstruction. Keep a checkpoint step when it measurably reduces repeated
+work, lost context or unresolved effects.
