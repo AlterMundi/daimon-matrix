@@ -184,6 +184,30 @@ keep their selected tracker, and shared views link to it by stable identity.
 Run the pilot with a real remote and multiple participants to learn which UI
 and workflow support we need to maintain locally.
 
+## References for visible work in topic rooms
+
+- [Star Office UI](https://github.com/ringhyacinth/Star-Office-UI/blob/master/README.en.md)
+  maps a few activity states to visible places and poses. Use that readability
+  in the default room so a visitor can understand it on first entry.
+- [Pixel Agents](https://github.com/pixel-agents-hq/pixel-agents) makes
+  tool activity and requests for human input visible. Use a spatial cue
+  to bring attention to a real question and open its authorized answer action.
+  [PixelOffice](https://github.com/KalebKE/PixelOffice) shows a comparable visual
+  vocabulary across Claude and Codex. Reuse Observer and the current native
+  observations across harnesses as the source for those cues.
+- [OpenClaw Office](https://github.com/WW-AI-Lab/openclaw-office/blob/main/README.en.md)
+  combines a spatial overview with timelines and workbenches. Use progressive
+  detail in Holodeck. The room shows the latest useful result at the relevant
+  project table and opens its actual artifact or revision on selection.
+  A visitor may inspect attributed history as needed.
+
+For the initial room, keep the main cues to current work, a question for the
+visitor, and a result ready to see. Quiet, stale or missing observations should
+stay quiet or show uncertainty. Derive room cues from current authorized
+Observer, Conversation, human-task and project events. Render transitions
+without model calls or duplicating those event streams. Keep ordinary room
+activity distinct from who receives the next human intervention.
+
 ## Milestones
 
 1. **One conversation across surfaces.** Use Holodeck to Char Design as the
