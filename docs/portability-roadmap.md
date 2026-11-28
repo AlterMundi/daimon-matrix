@@ -185,6 +185,17 @@ and workflow support we need to maintain locally.
    Verify that affected projects can still open or build and record what was
    reclaimed. Existing host and preservation holds remain in force.
 
+   Record the ITACA storage baseline separately from the cleanup inventory.
+   On 2026-11-28, Nicolás reported **156 GB free** on ITACA's large disk.
+   At 04:47:40 UTC, `df -B1 --output=source,size,used,avail,target /srv`
+   identified the filesystem as `/dev/md5` mounted on `/srv` and measured
+   **164,422,127,616 available bytes** (153.1 GiB). Use this byte count for
+   the like-for-like comparison and preserve the reported figure as observed.
+   After all topic batches and their cleanup are verified, rerun the same
+   command and record the final free bytes and the difference. Report the
+   inventory's reclaimed bytes separately, since concurrent storage changes
+   can affect the net difference. This baseline requires only a read.
+
    Reconcile each batch with the inventory. Keep original dates and authorship.
    Record missing evidence and topics with no continuing project explicitly.
    The final check resolves the current revision and next actionable work
