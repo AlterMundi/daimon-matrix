@@ -80,11 +80,13 @@ pub fn mount(
         json!({"version":"1.0","createSurface":{"surfaceId":surface,"catalogId":CATALOG}}),
         json!({"version":"1.0","updateComponents":{"surfaceId":surface,"components":[
             {"id":"root","component":"HudPanel","label":journal,
-                "children":["missions","objective","status","assignment","instructions","progress","revisions","edit_title","claim","done"]},
+                "children":["missions","objective","issue","status","assignment","instructions","progress","revisions","edit_title","claim","done"]},
             {"id":"missions","component":"HudChoice","label":missions,"options":{"@path":"/quests"},
                 "value":{"@path":"/selection"},"draft":{"@path":"/questDraft"},
                 "action":{"event":{"name":"select_quest","context":{"card":{"@path":"/questDraft"}}}}},
             {"id":"objective","component":"HudText","label":{"@path":"/title"},"style":"title"},
+            {"id":"issue","component":"HudText","label":{"@path":"/issueDescription"},"lines":4,
+                "visible":{"@path":"/hasIssue"}},
             {"id":"status","component":"HudText","label":{"@path":"/status"}},
             {"id":"assignment","component":"HudText","label":{"@path":"/assignment"}},
             {"id":"instructions","component":"HudText","label":{"@path":"/instructions"},"lines":2,"visible":{"@path":"/hasObjectives"}},
@@ -101,6 +103,8 @@ pub fn mount(
         json!({"version":"1.0","updateDataModel":{"surfaceId":surface,"value":{
             "quests":quests,"selection":selected,
             "id":card.id,"revision":card.revision,"title":card.title,"status":label(card.status),
+            "issueDescription":card.issue_description.as_deref().unwrap_or_default(),
+            "hasIssue":card.issue_description.is_some(),
             "assignment":if card.assignee.is_some() { labels.assigned } else { labels.unassigned },
             "hasObjectives":!card.objectives.is_empty(),"instructions":instructions,"tracking":tracking,
             "hasRevisions":!revisions.is_empty(),"revisions":revisions.join("\n"),

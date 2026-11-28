@@ -130,21 +130,20 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
     };
     let db = fixture.path().join("cards.sqlite");
 
+    let description = "Walk to the beacon in the published scene and record the result.";
+    let create = json!({
+        "type":"apply","command":{
+            "operation":id(1),"card":card,"expected_revision":0,
+            "action":{"type":"create_issue","title":"Review the first playtest","description":description}
+        }
+    });
+    let created = owner_call(&db, &human_access, create.clone());
+    assert_eq!(created["status"], "applied");
+    let retried = owner_call(&db, &human_access, create);
+    assert_eq!(retried["status"], "retained");
+    assert_eq!(retried["event"], created["event"]);
+
     let mut store = Cards::open(&db).unwrap();
-    let created = store
-        .apply(
-            &human_access,
-            action(
-                1,
-                card,
-                0,
-                Action::Create {
-                    title: "Review the first playtest".into(),
-                },
-            ),
-        )
-        .unwrap();
-    assert!(matches!(created, Outcome::Applied { .. }));
     let edited = store
         .apply(
             &human_access,
@@ -174,6 +173,10 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
     );
     let surface_id = surface[0]["createSurface"]["surfaceId"].clone();
     assert_eq!(surface[2]["updateDataModel"]["value"]["revision"], 2);
+    assert_eq!(
+        surface[2]["updateDataModel"]["value"]["issueDescription"],
+        description
+    );
     assert_eq!(surface[2]["updateDataModel"]["value"]["doneDisabled"], true);
     let premature = store
         .apply(&human_access, action(90, card, 2, Action::Complete))
@@ -301,6 +304,7 @@ fn a2ui_and_tools_share_the_card_writer_and_a_forge_independent_revision() {
     let mut reopened = Cards::open(&db).unwrap();
     let stored = reopened.read(&human_access, card).unwrap().unwrap();
     assert_eq!(stored.revision, 5);
+    assert_eq!(stored.issue_description.as_deref(), Some(description));
     assert_eq!(stored.status, Status::Done);
     assert_eq!(stored.evidence, vec![revision.clone()]);
     assert_eq!(reopened.list(&daimon_access, None).unwrap(), vec![stored]);

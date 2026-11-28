@@ -103,6 +103,10 @@ pub enum Action {
     Create {
         title: String,
     },
+    CreateIssue {
+        title: String,
+        description: String,
+    },
     EditTitle {
         title: String,
     },
@@ -141,6 +145,8 @@ pub struct Card {
     pub project: Uuid,
     pub revision: i64,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_description: Option<String>,
     pub status: Status,
     pub assignee: Option<Actor>,
     pub evidence: Vec<GitRevision>,
@@ -312,13 +318,26 @@ impl Cards {
         if current_revision != command.expected_revision {
             return Ok(conflict(Conflict::StaleRevision));
         }
-        let mut card = match (&command.action, card) {
-            (Action::Create { title }, None) if !title.trim().is_empty() && title.len() <= 240 => {
+        let creation = match &command.action {
+            Action::Create { title } => Some((title, None)),
+            Action::CreateIssue { title, description } => Some((title, Some(description))),
+            _ => None,
+        };
+        let mut card = match (creation, card) {
+            (Some((title, description)), None) => {
+                if title.trim().is_empty()
+                    || title.len() > 240
+                    || description
+                        .is_some_and(|value| value.trim().is_empty() || value.len() > 4096)
+                {
+                    return Err(Error::Invalid);
+                }
                 Card {
                     id: command.card,
                     project: access.project,
                     revision: 0,
                     title: title.clone(),
+                    issue_description: description.cloned(),
                     status: Status::Open,
                     assignee: None,
                     evidence: vec![],
@@ -327,17 +346,16 @@ impl Cards {
                     active_since_ms: None,
                 }
             }
-            (Action::Create { .. }, None) => return Err(Error::Invalid),
-            (Action::Create { .. }, Some(_)) => return Err(Error::Exists),
-            (_, None) => return Err(Error::Missing),
-            (_, Some(card)) => card,
+            (Some(_), Some(_)) => return Err(Error::Exists),
+            (None, None) => return Err(Error::Missing),
+            (None, Some(card)) => card,
         };
         let time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|_| Error::Invalid)?;
         let committed_at_ms = u64::try_from(time.as_millis()).map_err(|_| Error::Invalid)?;
         match &command.action {
-            Action::Create { .. } => {}
+            Action::Create { .. } | Action::CreateIssue { .. } => {}
             Action::EditTitle { title } => {
                 if title.trim().is_empty() || title.len() > 240 {
                     return Err(Error::Invalid);

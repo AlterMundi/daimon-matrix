@@ -39,6 +39,19 @@ or the conflict. `receipt` reads the current caller’s committed event by
 operation ID under current project access. The owner retains the same operation ID when the outcome
 is unconfirmed. Close standard input to finish each request.
 
+### Projects without a forge
+
+When the project has no existing issue tracker, use its shared DaimonCards
+board as the issue writer. The typed `create_issue` action takes a title and a
+plain-text description. Use a stable card UUID, an operation UUID and expected
+revision zero for the first issue. An exact retry reads the original event.
+The issue uses the board's existing assignment, state, Git links and receipt
+operations. Questbook projects that same record and shows its description.
+Existing missions and projects with an external tracker retain their writers.
+Install the compatible reader and writer before creating the first issue in
+a shared store. A rollback after issue creation must use a writer that
+understands `create_issue` events, including when reverting the room UI.
+
 ### Holodeck questbook
 
 Use `mount_questbook` with the current project and optional selected card and

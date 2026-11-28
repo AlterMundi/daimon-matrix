@@ -595,6 +595,12 @@ activity distinct from who receives the next human intervention.
    published revision while later work is a draft. Run the
    [Holodeck topic-room delivery sequence](#holodeck-topic-room-delivery)
    in the same pilot with a pair that starts without a house or authored rooms.
+   The [forge-independent issue writer](../components/daimon-cards/README.md#projects-without-a-forge)
+   now records the first issue in the project's existing board. The fixture
+   creates it through the owner adapter, reads its exact retry receipt and
+   projects its description in Questbook. The same issue accepts one of two
+   competing assignments and retains its description and Git link after
+   reopening. Live adoption and the full topic-to-deliverable path remain open.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
