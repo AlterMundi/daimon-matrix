@@ -314,8 +314,13 @@ writer completes that quest and a second narrow Chromium view reads the
 same result. The isolated owner path also uses the existing native Unix
 return lane and fresh, project-specific permission checks. The fixture
 verifies typed completion, read-only receipt recovery, refusal after grant
-revocation and same-key conflicts. Live profile selection and reciprocal
-verification with real project participants remain open.
+revocation and same-key conflicts. The [receiving race test](https://github.com/AlterMundi/holodeck/commit/38f4c7abbed5c77bebce701e6594a15ef236a9a2)
+sends an authenticated browser action and an owned native claim against the
+same card revision. The Rust store records one assignment and refuses the
+stale contender. Both readers observe revision two, and only the winning
+actor can recover the original operation receipt. The protected HTTP/native
+suite and mounted Chromium fixture pass. Live profile selection and
+reciprocal verification with real project participants remain open.
 
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
