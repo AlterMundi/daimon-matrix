@@ -728,6 +728,15 @@ activity distinct from who receives the next human intervention.
    SHA-256 `a258b423c1947a6c4509f5e7bc7cad6fefe0f1245611071ffc61dc2bf3a8cd73`.
    It retains the 30 dependency wheels of the previous qualified SDK.
    Its installation was verified offline in a disposable environment.
+   The installed Cluster builder verified each body's approved baseline and
+   current native release, then sealed an SDK-only successor for each.
+   The Codex candidate digest is
+   `c5b53ea1ee56428b5912378ce6b82f10918fe560202f911004752e62765153cd`;
+   the Claude candidate digest is
+   `89e9f02335fbf00bf7636c5333c146cba43f54c8cb4c1f26050f05023526a3ca`.
+   Each preserves its original context profile and all 127 files outside
+   the SDK and successor marker. These are sealed candidates. The loaded
+   receiver and signed guide publication still require live readback.
    The protected owner route targets the actual Codex group socket, and
    the authenticated process reported the controlled reader active.
    The retained maintenance route's expected values differ from that
