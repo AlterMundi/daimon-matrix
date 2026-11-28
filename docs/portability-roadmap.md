@@ -600,7 +600,14 @@ activity distinct from who receives the next human intervention.
    creates it through the owner adapter, reads its exact retry receipt and
    projects its description in Questbook. The same issue accepts one of two
    competing assignments and retains its description and Git link after
-   reopening. Live adoption and the full topic-to-deliverable path remain open.
+   reopening. The [Holodeck receiver fixture](https://github.com/AlterMundi/holodeck/commit/b1a9decd66ac5703008e1e8628beeb96d410039e)
+   uses that writer at Matrix `1983c43`. In the fixture, the native route
+   creates an issue with the receiving actor's access, the authenticated
+   web route projects that same issue and revision without caching, and
+   the exact retry returns its original receipt with one history event.
+   Revoking the native read grant denies receipt access. Desktop and mobile
+   Chromium both show the issue description and recover its shared state.
+   Live adoption and the full topic-to-deliverable path remain open.
 4. **Continuity between bodies.** Verify signed `/we` request, reply and
    receiving uptake on the same host and across hosts. In a fresh body verify
    its installed orientation, memory access and published skill versions.
