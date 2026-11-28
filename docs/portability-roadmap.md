@@ -349,6 +349,18 @@ passed the protected HTTP and native concurrency fixture. The package and
 writer are retained for the existing deployment owner. There was no live
 selection or real participant action in this qualification.
 
+The private Questbook Workshop pilot now has its own bare Git repository
+served over the existing Ítaca SSH service. CompAII pushed the first
+playtest revision and an independent checkout over SSH read the same
+commit and files. The pilot's private DaimonCards store holds the open
+bridge mission at revision three, with the exact Git revision and an
+uncredited Room objective. All three authoring receipts were read back.
+The operator record holds the project and repository identities, locator
+and receipts. This verifies the owner-side Git and card state. The
+project still needs its actual Gateway topic binding, matching Home view
+and edit grants, live Holodeck selection, and a second participant using
+their own access.
+
 Project coordination in Matrix refers to those same card identities. Use the
 existing conversation and graph surfaces to find work, announce changes and
 return results. One authoritative writer advances each card. Git owns project
